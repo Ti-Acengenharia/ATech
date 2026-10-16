@@ -41,6 +41,19 @@ docker compose --env-file .env exec backend npm run db:seed
 
 Para consultar os logs, use `docker compose --env-file .env logs -f backend`. Se o `.env` estiver ausente ou faltar uma variável obrigatória, o Compose interrompe a inicialização e informa qual variável precisa ser configurada. Não remova o volume `atech_postgres` para corrigir configuração: ele contém os dados do banco.
 
+### Apache2 como proxy HTTPS na VPS
+
+Se o Apache termina o HTTPS e encaminha o tráfego para a porta 8004 do frontend, configure o VirtualHost HTTPS para informar o protocolo original. Habilite os módulos `proxy`, `proxy_http` e `headers` e, dentro do `<VirtualHost *:443>`, use:
+
+```apache
+ProxyPreserveHost On
+RequestHeader set X-Forwarded-Proto "https"
+ProxyPass / http://127.0.0.1:8004/
+ProxyPassReverse / http://127.0.0.1:8004/
+```
+
+O Nginx do container repassa esse `X-Forwarded-Proto` à API. Isso permite que a API reconheça a conexão HTTPS original e aceite o cookie seguro `atech.sid` nas requisições seguintes. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
+
 ## Primeiro acesso
 
 1. Instale as dependências: `npm install`.
