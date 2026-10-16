@@ -47,11 +47,12 @@ Se o Apache termina o HTTPS e encaminha o tráfego para a porta 8004 do frontend
 
 ```apache
 ProxyPreserveHost On
+ProxyTimeout 600
 ProxyPass / http://127.0.0.1:8004/
 ProxyPassReverse / http://127.0.0.1:8004/
 ```
 
-O Nginx do container informa `https` à API, pois o acesso público deve passar pelo VirtualHost HTTPS do Apache. Redirecione HTTP para HTTPS no Apache e acesse a aplicação pelo domínio HTTPS, não diretamente por `http://IP:8004`; a API usa um cookie de sessão `Secure` em produção. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
+`ProxyTimeout 600` e o `proxy_read_timeout 600s` do Nginx interno permitem até 10 minutos para a carga inicial paginada do CVCRM. O Nginx do container informa `https` à API, pois o acesso público deve passar pelo VirtualHost HTTPS do Apache. Redirecione HTTP para HTTPS no Apache e acesse a aplicação pelo domínio HTTPS, não diretamente por `http://IP:8004`; a API usa um cookie de sessão `Secure` em produção. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, valide/recarregue o Apache (`sudo apachectl configtest && sudo systemctl reload apache2`) e recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
 
 ## Primeiro acesso
 
