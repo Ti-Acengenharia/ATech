@@ -12,10 +12,19 @@ Após o login, admins e membros convidados do Workspace usam o mesmo workspace o
 
 ## Execução via Docker Compose
 
-Para subir a aplicação em uma VPS ou servidor Linux com Docker, use o Compose do repositório:
+O arquivo `.env` deve ficar no mesmo diretório do `docker-compose.yml`. O Docker Compose lê esse arquivo no host e injeta somente as variáveis necessárias nos serviços; ele **não** é copiado para a imagem nem fica disponível como `/app/.env` dentro do container. Isso evita gravar segredos na imagem.
 
 ```bash
-docker compose up --build -d
+cp .env.example .env
+nano .env
+```
+
+Antes de subir, configure no `.env` ao menos `POSTGRES_PASSWORD`, `SESSION_SECRET`, `CORPORATE_DOMAIN` e `VITE_CORPORATE_DOMAIN`. Defina `POSTGRES_PASSWORD` com uma senha forte formada por letras e números, e use um `SESSION_SECRET` aleatório com pelo menos 32 caracteres. `VITE_GOOGLE_CLIENT_ID` deve conter o Client ID OAuth para habilitar login Google. Proteja o arquivo com `chmod 600 .env`. Se já houver um volume PostgreSQL criado pela versão anterior do Compose, mantenha em `POSTGRES_PASSWORD` a senha usada quando esse banco foi criado (a configuração antiga usava `atech_dev`); trocar a variável não altera a senha dentro de um volume existente.
+
+Execute os comandos a partir do diretório do projeto e passe o arquivo explicitamente:
+
+```bash
+docker compose --env-file .env up --build -d
 ```
 
 A stack expõe:
@@ -24,13 +33,13 @@ A stack expõe:
 - Backend API: `http://localhost:8003`
 - Frontend: `http://localhost:8004`
 
-No primeiro deploy, rode a criação do administrador:
+O backend aplica as migrações ao iniciar. No primeiro deploy, crie a conta administradora:
 
 ```bash
-docker compose exec backend npm run db:seed
+docker compose --env-file .env exec backend npm run db:seed
 ```
 
-Se você precisar resetar a base de dados local em Docker, remova o volume `atech_postgres` e suba novamente a stack.
+Para consultar os logs, use `docker compose --env-file .env logs -f backend`. Se o `.env` estiver ausente ou faltar uma variável obrigatória, o Compose interrompe a inicialização e informa qual variável precisa ser configurada. Não remova o volume `atech_postgres` para corrigir configuração: ele contém os dados do banco.
 
 ## Primeiro acesso
 
