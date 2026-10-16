@@ -243,6 +243,9 @@ export default function ProgrammingPage() {
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
+  const [ticketsLoaded, setTicketsLoaded] = useState(false)
+  const [ticketsLoadError, setTicketsLoadError] = useState('')
+  const [ticketsRetry, setTicketsRetry] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
@@ -277,18 +280,35 @@ export default function ProgrammingPage() {
   useEffect(() => {
     let cancelled = false
     const params = new URLSearchParams({ date, type: programmingType })
-    Promise.all([
-      apiRequest<{ date: string; collaborators: CollaboratorDay[] }>(`/api/programming?${params}`),
-      apiRequest<{ tickets: TicketSummary[] }>('/api/tickets'),
-    ]).then(([program, calls]) => {
+    apiRequest<{ date: string; collaborators: CollaboratorDay[] }>(`/api/programming?${params}`)
+      .then((program) => {
       if (cancelled) return
       setStaff(program.collaborators)
-      setTickets(calls.tickets)
     }).catch((requestError: unknown) => {
       if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar a programação.')
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [date, programmingType, refresh])
+
+  useEffect(() => {
+    if ((!showForm && !editingAppointment) || ticketsLoaded) return
+    let cancelled = false
+    apiRequest<{ tickets: TicketSummary[] }>('/api/tickets')
+      .then((result) => {
+        if (cancelled) return
+        setTickets(result.tickets)
+        setTicketsLoaded(true)
+        setTicketsLoadError('')
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          const message = requestError instanceof Error ? requestError.message : 'Não foi possível carregar os chamados para programação.'
+          setTicketsLoadError(message)
+          setError(message)
+        }
+      })
+    return () => { cancelled = true }
+  }, [showForm, editingAppointment, ticketsLoaded, ticketsRetry])
 
   function shiftWeek(amount: number) {
     const next = new Date(`${date}T12:00:00`)
@@ -389,7 +409,7 @@ export default function ProgrammingPage() {
       </nav>
 
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={() => setError('')} aria-label="Fechar aviso">×</button></div>}
-      {(showForm || editingAppointment) && <section className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header><TicketProgrammingForm tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} /></section>}
+      {(showForm || editingAppointment) && <section className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
         <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(localDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
 import {
+  ArrowLeft,
+  ArrowRight,
   Check,
   CircleAlert,
   Columns3,
@@ -151,6 +153,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [view, setView] = useState<'board' | 'list'>('board')
   const [faceMenu, setFaceMenu] = useState(false)
   const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
   const [showStatusForm, setShowStatusForm] = useState(false)
   const [statusName, setStatusName] = useState('')
   const [statusColor, setStatusColor] = useState('#3478a8')
@@ -173,6 +176,11 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [editingComment, setEditingComment] = useState<LegalComment | null>(null)
   const [busyComment, setBusyComment] = useState(false)
   const [dragged, setDragged] = useState<number | null>(null)
+  const [savingStatusOrder, setSavingStatusOrder] = useState(false)
+  const boardRef = useRef<HTMLDivElement>(null)
+  const boardDragRef = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
+  const suppressBoardClickRef = useRef(false)
+  const [peopleLoaded, setPeopleLoaded] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [face, setFace] = useState<FaceField[]>(() => {
     try {
@@ -195,21 +203,94 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     Promise.all([
       apiRequest<{ statuses: LegalStatus[] }>('/api/legal-processes/statuses'),
       apiRequest<{ processes: LegalProcess[] }>('/api/legal-processes'),
-      apiRequest<{ people: Assignee[] }>('/api/team/mentions'),
     ]).then((results) => {
       if (cancelled) return
       setStatuses(results[0].statuses)
       setProcesses(results[1].processes)
-      setPeople(results[2].people)
     }).catch((error: unknown) => {
       if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os processos jurídicos.' })
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    if ((!newProcess && !selected) || peopleLoaded) return
+    let cancelled = false
+    apiRequest<{ people: Assignee[] }>('/api/team/mentions')
+      .then((result) => {
+        if (cancelled) return
+        setPeople(result.people)
+        setPeopleLoaded(true)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar as pessoas para responsáveis e menções.' })
+      })
+    return () => { cancelled = true }
+  }, [newProcess, selected, peopleLoaded])
+
   const filtered = useMemo(() => processes.filter((process) =>
+    (!statusFilter || String(process.status_id) === statusFilter) &&
     `${process.title} ${process.claimant} ${process.assignees.map((person) => person.displayName ?? person.display_name).join(' ')}`
-      .toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))), [processes, query])
+      .toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))), [processes, query, statusFilter])
+
+  async function moveStatus(statusId: number, offset: -1 | 1) {
+    if (savingStatusOrder) return
+    const fromIndex = statuses.findIndex((status) => status.id === statusId)
+    const toIndex = fromIndex + offset
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= statuses.length) return
+    const reordered = [...statuses]
+    const [status] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, status)
+    setSavingStatusOrder(true)
+    try {
+      const result = await apiRequest<{ statuses: LegalStatus[] }>('/api/legal-processes/statuses/order', {
+        method: 'PUT',
+        body: JSON.stringify({ statusIds: reordered.map((item) => item.id) }),
+      })
+      setStatuses(result.statuses)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível alterar a ordem dos status.' })
+    } finally {
+      setSavingStatusOrder(false)
+    }
+  }
+
+  function moveBoard(direction: -1 | 1) {
+    const board = boardRef.current
+    if (!board) return
+    const column = board.querySelector<HTMLElement>('.legal-column')
+    board.scrollBy({ left: direction * (column ? column.offsetWidth + 13 : Math.max(board.clientWidth * 0.8, 260)), behavior: 'smooth' })
+  }
+
+  function startBoardDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return
+    const target = event.target
+    if (target instanceof Element && target.closest('.legal-process-card, .legal-new-column, button, input, select, a')) return
+    boardDragRef.current = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: event.currentTarget.scrollLeft, moved: false }
+  }
+
+  function moveBoardDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = boardDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !(event.buttons & 1)) return
+    const delta = event.clientX - drag.startX
+    if (Math.abs(delta) > 5) {
+      if (!drag.moved) event.currentTarget.setPointerCapture(event.pointerId)
+      drag.moved = true
+      event.currentTarget.classList.add('is-dragging')
+    }
+    if (drag.moved) event.currentTarget.scrollLeft = drag.scrollLeft - delta
+  }
+
+  function endBoardDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = boardDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (drag.moved) {
+      suppressBoardClickRef.current = true
+      window.setTimeout(() => { suppressBoardClickRef.current = false }, 100)
+    }
+    boardDragRef.current = null
+    event.currentTarget.classList.remove('is-dragging')
+  }
 
   function toggleFaceField(field: FaceField) {
     const updated = face.includes(field) ? face.filter((item) => item !== field) : [...face, field]
@@ -565,7 +646,9 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       {notice && <div className={`notice notice-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><span className="notice-symbol">{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" onClick={() => setNotice(null)} aria-label="Fechar aviso">×</button></div>}
 
       <div className="legal-toolbar">
-        <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar processos" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar por processo, requerente ou responsável" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <label className="legal-status-filter"><span>Situação</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
+        <button type="button" className="filter-clear-button" disabled={!query && !statusFilter} onClick={() => { setQuery(''); setStatusFilter('') }}><X size={14} /> Limpar filtros</button>
         <div className="legal-toolbar-actions">
           <div className="legal-face-menu-wrap"><button type="button" className="secondary-button" aria-expanded={faceMenu} onClick={() => setFaceMenu((value) => !value)}>Campos do cartão</button>
             {faceMenu && <div className="legal-face-menu">{faceFields.map((field) => <label key={field.id}><input type="checkbox" checked={face.includes(field.id)} onChange={() => toggleFaceField(field.id)} />{field.label}</label>)}</div>}
@@ -578,22 +661,22 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       </div>
 
       <div className="legal-status-toolbar">
-        <span>SITUAÇÕES / FASES</span>{statuses.map((status) => <span className="legal-status-chip" key={status.id}><i style={{ background: status.color }} />{status.name}<button type="button" title={`Excluir status ${status.name}`} aria-label={`Excluir status ${status.name}`} onClick={() => void deleteStatus(status)}><X size={12} /></button></span>)}
+        <span>SITUAÇÕES / FASES</span>{statuses.map((status, index) => <span className="legal-status-chip" key={status.id}><i style={{ background: status.color }} />{status.name}<span className="legal-status-order"><button type="button" title={`Mover ${status.name} para a esquerda`} aria-label={`Mover ${status.name} para a esquerda`} disabled={savingStatusOrder || index === 0} onClick={() => void moveStatus(status.id, -1)}><ArrowLeft size={12} /></button><button type="button" title={`Mover ${status.name} para a direita`} aria-label={`Mover ${status.name} para a direita`} disabled={savingStatusOrder || index === statuses.length - 1} onClick={() => void moveStatus(status.id, 1)}><ArrowRight size={12} /></button></span><button type="button" title={`Excluir status ${status.name}`} aria-label={`Excluir status ${status.name}`} onClick={() => void deleteStatus(status)}><X size={12} /></button></span>)}
         <button type="button" className="text-action-btn" onClick={() => setShowStatusForm((value) => !value)}><Plus size={14} /> Novo status</button>
       </div>
       {showStatusForm && <form className="legal-status-create" onSubmit={(event) => void createStatus(event)}><input value={statusName} onChange={(event) => setStatusName(event.target.value)} placeholder="Nome da situação/fase" maxLength={80} required /><input type="color" value={statusColor} onChange={(event) => setStatusColor(event.target.value)} aria-label="Cor da situação" /><button className="secondary-button" type="submit">Criar status</button><button className="text-action-btn" type="button" onClick={() => setShowStatusForm(false)}>Cancelar</button></form>}
 
       {loading ? <div className="legal-empty">Carregando processos...</div>
         : !processes.length ? <div className="legal-empty"><FileText size={29} /><strong>Ainda não há processos jurídicos</strong><span>Crie um processo ou carregue um exemplo fictício removível para conhecer os campos.</span><div><button className="primary-button" type="button" onClick={() => startCreate()}><Plus size={15} /> Novo processo</button><button className="secondary-button" type="button" onClick={() => void createDemo()}>Carregar exemplo fictício</button></div></div>
-          : view === 'board' ? <div className="legal-board">{statuses.map((status) => {
+          : view === 'board' ? <><div className="legal-board-controls" aria-label="Navegação das situações jurídicas"><span>Deslize ou arraste para ver outras situações</span><button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveBoard(-1)}><ArrowLeft size={17} /></button><button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveBoard(1)}><ArrowRight size={17} /></button></div><div className="legal-board" ref={boardRef} onPointerDown={startBoardDrag} onPointerMove={moveBoardDrag} onPointerUp={endBoardDrag} onPointerCancel={endBoardDrag} onClickCapture={(event) => { if (suppressBoardClickRef.current) { event.preventDefault(); event.stopPropagation(); suppressBoardClickRef.current = false } }}>{statuses.map((status) => {
             const items = filtered.filter((process) => process.status_id === status.id)
             return <section className="legal-column" key={status.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const item = processes.find((process) => process.id === dragged); if (item && item.status_id !== status.id) void changeStatus(item, status.id); setDragged(null) }}>
               <header><i style={{ background: status.color }} /><strong>{status.name}</strong><span>{items.length}</span></header>
               <div className="legal-column-body">{items.map((process) => processCard(process))}<button type="button" className="legal-add-card" onClick={() => startCreate(status.id)}><Plus size={14} /> Adicionar processo</button></div>
             </section>
-          })}<section className="legal-new-column"><button type="button" onClick={() => setShowStatusForm(true)}><Plus size={15} /> Nova situação</button></section></div>
+          })}<section className="legal-new-column"><button type="button" onClick={() => setShowStatusForm(true)}><Plus size={15} /> Nova situação</button></section></div></>
             : <div className="legal-list-wrap"><table className="legal-list"><thead><tr><th>PROCESSO</th><th>SITUAÇÃO / FASE</th><th>REQUERENTE</th><th>RESPONSÁVEIS</th><th>PERÍODO</th><th>VALOR</th><th>PAGO</th></tr></thead><tbody>{filtered.map((process) => <tr key={process.id} onClick={() => void openDetail(process)}><td><strong>{process.title}</strong>{process.is_demo && <small>Exemplo fictício</small>}</td><td><span className="legal-status-label"><i style={{ background: process.status_color }} />{process.status_name}<select aria-label={`Mover ${process.title} para outro status`} value={process.status_id} onClick={(event) => event.stopPropagation()} onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></span></td><td>{process.claimant || '—'}</td><td>{process.assignees.map(assigneeName).join(', ') || '—'}</td><td>{showDate(process.start_date)} – {showDate(process.end_date)}</td><td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td><td>{currency.format(Number(process.paid_total))}</td></tr>)}</tbody></table></div>}
-      {processes.length > 0 && !filtered.length && <div className="legal-empty-inline">Nenhum processo encontrado para “{query}”.</div>}
+      {processes.length > 0 && !filtered.length && <div className="legal-empty-inline">Nenhum processo encontrado com os filtros aplicados.</div>}
 
       {(newProcess || selected) && draft && <div className="legal-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor() }}>
         <section className="legal-modal" role="dialog" aria-modal="true" aria-labelledby="legal-editor-title">

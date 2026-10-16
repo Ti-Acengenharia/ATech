@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowDown,
@@ -7,6 +7,8 @@ import {
   CalendarClock,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   Coins,
@@ -25,6 +27,7 @@ import {
   Trash2,
   UserRound,
   UsersRound,
+  X,
   Zap,
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
@@ -171,6 +174,19 @@ function safeColor(value: string | null, fallback: string) {
   return value && /^#[\da-f]{3,8}$/i.test(value) ? value : fallback
 }
 
+function cvMessageText(value: string) {
+  const formatted = value
+    .replace(/<\/(?:p|div|li|h[1-6])\s*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+  const parsed = new DOMParser().parseFromString(formatted, 'text/html')
+  return (parsed.body.textContent ?? '')
+    .replace(/<\/(?:p|div|li|h[1-6])\s*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    .replace(/\n[ \t]+/g, '\n')
+    .trim()
+}
+
 const ticketSortCollator = new Intl.Collator('pt-BR', { numeric: true, sensitivity: 'base' })
 
 function compareTickets(left: TicketSummary, right: TicketSummary, field: TicketSortField, direction: TicketSortDirection) {
@@ -279,6 +295,9 @@ export default function TicketBoardPage({
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [clock, setClock] = useState(() => Date.now())
   const [refreshKey, setRefreshKey] = useState(0)
+  const kanbanBoardRef = useRef<HTMLDivElement>(null)
+  const kanbanDragRef = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
+  const suppressKanbanClickRef = useRef(false)
 
   // Modal para criar chamado por protocolo
   const [showProtocolModal, setShowProtocolModal] = useState(false)
@@ -543,6 +562,50 @@ export default function TicketBoardPage({
     .sort((left, right) => sortField === 'status'
       ? ticketSortCollator.compare(left.name, right.name) * (sortDirection === 'asc' ? 1 : -1)
       : left.position - right.position)
+  const filteredStatusIds = new Set(filtered.map((ticket) => ticket.statusId).filter((statusId): statusId is number => statusId !== null))
+  const visibleStages = orderedStages.filter((stage) => filteredStatusIds.has(stage.id))
+  const unassignedTickets = filtered.filter((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId))
+
+  function moveKanban(direction: -1 | 1) {
+    const board = kanbanBoardRef.current
+    if (!board) return
+    const column = board.querySelector<HTMLElement>('.kanban-column')
+    const distance = column ? column.offsetWidth + 12 : Math.max(board.clientWidth * 0.8, 260)
+    board.scrollBy({ left: direction * distance, behavior: 'smooth' })
+  }
+
+  function startKanbanDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return
+    kanbanDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: event.currentTarget.scrollLeft,
+      moved: false,
+    }
+  }
+
+  function moveKanbanDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = kanbanDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !(event.buttons & 1)) return
+    const delta = event.clientX - drag.startX
+    if (Math.abs(delta) > 5) {
+      if (!drag.moved) event.currentTarget.setPointerCapture(event.pointerId)
+      drag.moved = true
+      event.currentTarget.classList.add('is-dragging')
+    }
+    if (drag.moved) event.currentTarget.scrollLeft = drag.scrollLeft - delta
+  }
+
+  function endKanbanDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = kanbanDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (drag.moved) {
+      suppressKanbanClickRef.current = true
+      window.setTimeout(() => { suppressKanbanClickRef.current = false }, 100)
+    }
+    kanbanDragRef.current = null
+    event.currentTarget.classList.remove('is-dragging')
+  }
 
   if (selected) {
     return <>
@@ -702,23 +765,53 @@ export default function TicketBoardPage({
           {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
           {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
         </button>
+        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter && !unitFilter && !customerNameFilter && !subjectFilter && !subsubjectFilter} onClick={() => {
+          setSearch('')
+          setEnterpriseFilters([])
+          setBlockFilter('')
+          setUnitFilter('')
+          setCustomerNameFilter('')
+          setSubjectFilter('')
+          setSubsubjectFilter('')
+        }}><X size={14} /> Limpar filtros</button>
         <span className="ticket-filter-count"><Clock3 size={14} /> {filtered.length} chamado(s) ativo(s)</span>
       </div>
       {loading ? <div className="ticket-loading">Carregando chamados...</div> : viewMode === 'list' ? (
         <TicketList tickets={filtered} stages={orderedStages} onOpen={setSelected} />
-      ) : orderedStages.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Workflow ainda não carregado</strong><span>Configure a API e sincronize os atendimentos para trazer as etapas do CVCRM.</span></div> : (
-        <div className="kanban-board" aria-label="Quadro Kanban de chamados">
-          {orderedStages.map((stage) => {
-            const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
-            return <section className="kanban-column" key={stage.id}>
-              <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
-              <div className="kanban-column-body">
-                {stageTickets.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
-                {stageTickets.length === 0 && <p className="kanban-empty-stage">Sem chamados nesta situação.</p>}
-              </div>
-            </section>
-          })}
-          {filtered.some((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId)) && <section className="kanban-column"><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span></header><div className="kanban-column-body">{filtered.filter((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId)).map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}</div></section>}
+      ) : orderedStages.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Workflow ainda não carregado</strong><span>Configure a API e sincronize os atendimentos para trazer as etapas do CVCRM.</span></div> : filtered.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Nenhum chamado corresponde aos filtros.</strong></div> : (
+        <div className="kanban-board-container">
+          <div className="kanban-board-controls" aria-label="Navegação das situações">
+            <span>Deslize ou arraste para ver outras situações</span>
+            <button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveKanban(-1)}><ChevronLeft size={17} /></button>
+            <button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveKanban(1)}><ChevronRight size={17} /></button>
+          </div>
+          <div
+            className="kanban-board"
+            aria-label="Quadro Kanban de chamados"
+            ref={kanbanBoardRef}
+            onPointerDown={startKanbanDrag}
+            onPointerMove={moveKanbanDrag}
+            onPointerUp={endKanbanDrag}
+            onPointerCancel={endKanbanDrag}
+            onClickCapture={(event) => {
+              if (suppressKanbanClickRef.current) {
+                event.preventDefault()
+                event.stopPropagation()
+                suppressKanbanClickRef.current = false
+              }
+            }}
+          >
+            {visibleStages.map((stage) => {
+              const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
+              return <section className="kanban-column" key={stage.id}>
+                <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
+                <div className="kanban-column-body">
+                  {stageTickets.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
+                </div>
+              </section>
+            })}
+            {unassignedTickets.length > 0 && <section className="kanban-column"><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{unassignedTickets.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}</div></section>}
+          </div>
         </div>
       )}
     </section>
@@ -1100,7 +1193,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
           <section className="ticket-info-section"><h2>Dados do atendimento</h2><div className="ticket-facts"><div><span>Cliente</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerName || 'Não informado'}</strong></div><div><span>Telefone</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerPhone || 'Não informado'}</strong></div><div><span>Assunto</span><strong>{ticket.subject}</strong></div><div><span>Subassunto</span><strong>{ticket.subsubject || 'Não informado'}</strong></div><div><span>Aberto em</span><strong>{formatDate(ticket.openedAt)}</strong></div><div><span>Tempo aberto</span><strong>{formatAge(ticket.openSeconds)}</strong></div></div><div className="ticket-opening-description"><span>Descrição informada na abertura</span><p>{ticket.description || 'O CVCRM não retornou uma descrição para este atendimento.'}</p></div></section>
 
           <section className="ticket-info-section cv-conversation-section"><div className="ticket-section-heading"><div><h2>Mensagens do CVCRM</h2><p>{cvMessages.length} resposta(s) sincronizada(s) do chamado.</p></div></div>
-            {cvMessages.length ? <ol>{cvMessages.map((message) => <li key={message.id}><header><strong>{message.author || 'CVCRM'}</strong><time>{formatDate(message.createdAt || null)}</time></header>{message.body && <p>{message.body}</p>}{message.attachments.length > 0 && <ul>{message.attachments.map((file, index) => <li key={file.id ?? `${message.id}-${index}`}><Paperclip size={13} /><span>{file.name}</span>{file.url && <a href={file.url} target="_blank" rel="noreferrer">Abrir</a>}</li>)}</ul>}</li>)}</ol> : <p className="ticket-empty-inline">Nenhuma mensagem retornada pelo CVCRM na última sincronização.</p>}
+            {cvMessages.length ? <ol>{cvMessages.map((message) => <li key={message.id}><header><strong>{message.author || 'CVCRM'}</strong><time>{formatDate(message.createdAt || null)}</time></header>{message.body && <p>{cvMessageText(message.body)}</p>}{message.attachments.length > 0 && <ul>{message.attachments.map((file, index) => <li key={file.id ?? `${message.id}-${index}`}><Paperclip size={13} /><span>{file.name}</span>{file.url && <a href={file.url} target="_blank" rel="noreferrer">Abrir</a>}</li>)}</ul>}</li>)}</ol> : <p className="ticket-empty-inline">Nenhuma mensagem retornada pelo CVCRM na última sincronização.</p>}
             <div className="cv-attachment-list"><h3>Anexos do CVCRM ({cvAttachments.length})</h3>{cvAttachments.length ? <ul>{cvAttachments.map((file, index) => <li key={file.id ?? `${file.name}-${index}`}><Paperclip size={14} /><span><strong>{file.name}</strong><small>{file.type || 'Arquivo'}{file.size ? ` · ${file.size}` : ''}{file.createdAt ? ` · ${formatDate(file.createdAt)}` : ''}</small></span>{file.url ? <a href={file.url} target="_blank" rel="noreferrer">Abrir</a> : <small>Link indisponível</small>}</li>)}</ul> : <p className="ticket-empty-inline">Nenhum anexo CVCRM retornado na última sincronização.</p>}</div>
           </section>
 

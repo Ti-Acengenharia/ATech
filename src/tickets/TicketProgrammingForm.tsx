@@ -453,6 +453,7 @@ export default function TicketProgrammingForm({
             placeholder="Filtrar colaborador por nome, apelido ou função..."
             aria-label="Filtrar colaboradores"
           />
+          {searchFilter && <button type="button" className="collab-search-clear" aria-label="Limpar busca de colaboradores" onClick={() => setSearchFilter('')}><X size={13} /></button>}
         </div>
 
         {/* Lista interativa de colaboradores com checkbox */}

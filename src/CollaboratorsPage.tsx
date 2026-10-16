@@ -12,6 +12,7 @@ import {
   Trash2,
   UserPlus,
   UsersRound,
+  X,
 } from 'lucide-react'
 import { apiRequest } from './api/client'
 
@@ -449,6 +450,7 @@ export default function CollaboratorsPage() {
         <label className="search-box collaborator-search"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome ou apelido" aria-label="Pesquisar por nome ou apelido" /></label>
         <label className="filter-control"><span>Função</span><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">Todas</option>{roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label>
         <label className="filter-control"><span>Situação</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Todas</option><option value="active">Ativos</option><option value="terminated">Desligados</option></select></label>
+        <button className="filter-clear-button" type="button" disabled={!search && roleFilter === 'all' && statusFilter === 'all'} onClick={() => { setSearch(''); setRoleFilter('all'); setStatusFilter('all') }}><X size={14} /> Limpar filtros</button>
       </div>
 
       <div className="collaborator-list-header"><span><UsersRound size={15} /> {loading ? 'Carregando equipe...' : `${collaborators.length} ${collaborators.length === 1 ? 'colaborador' : 'colaboradores'}`}</span><span>Dados pessoais restritos</span></div>

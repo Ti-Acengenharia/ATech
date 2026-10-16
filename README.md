@@ -27,7 +27,7 @@ Execute os comandos a partir do diretório do projeto e passe o arquivo explicit
 docker compose --env-file .env up --build -d
 ```
 
-A stack expõe:
+A stack publica estas portas somente no loopback do host (`127.0.0.1`); elas não devem ser acessíveis diretamente pela rede:
 
 - PostgreSQL: `localhost:5555`
 - Backend API: `http://localhost:8003`
@@ -52,7 +52,7 @@ ProxyPass / http://127.0.0.1:8004/
 ProxyPassReverse / http://127.0.0.1:8004/
 ```
 
-`ProxyTimeout 600` e o `proxy_read_timeout 600s` do Nginx interno permitem até 10 minutos para a carga inicial paginada do CVCRM. O Nginx do container informa `https` à API, pois o acesso público deve passar pelo VirtualHost HTTPS do Apache. Redirecione HTTP para HTTPS no Apache e acesse a aplicação pelo domínio HTTPS, não diretamente por `http://IP:8004`; a API usa um cookie de sessão `Secure` em produção. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, valide/recarregue o Apache (`sudo apachectl configtest && sudo systemctl reload apache2`) e recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
+`ProxyTimeout 600` e o `proxy_read_timeout 600s` do Nginx interno permitem até 10 minutos para a carga inicial paginada do CVCRM. O Nginx do container informa `https` à API, pois o acesso público deve passar pelo VirtualHost HTTPS do Apache. Redirecione HTTP para HTTPS no Apache e acesse a aplicação pelo domínio HTTPS, não diretamente por `http://IP:8004`; as portas publicadas pelo Compose ficam limitadas a `127.0.0.1`, e a API usa um cookie de sessão `Secure` em produção. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, valide/recarregue o Apache (`sudo apachectl configtest && sudo systemctl reload apache2`) e recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
 
 ## Primeiro acesso
 

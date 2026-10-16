@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?Defina POSTGRES_USER no arquivo .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
     ports:
-      - "5555:5432"
+      - "127.0.0.1:5555:5432"
     volumes:
       - atech_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -44,7 +44,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8003:8003"
+      - "127.0.0.1:8003:8003"
     command: >
       sh -c "npm run db:migrate && node dist-server/index.js"
 
@@ -60,7 +60,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "8004:80"
+      - "127.0.0.1:8004:80"
 
 volumes:
   atech_postgres:

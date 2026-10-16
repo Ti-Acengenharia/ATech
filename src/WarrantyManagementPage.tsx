@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CircleAlert, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react'
+import { Check, CircleAlert, RefreshCw, Save, Search, ShieldCheck, X } from 'lucide-react'
 import { apiRequest } from './api/client'
 
 interface WarrantySubsubject {
@@ -116,7 +116,7 @@ export default function WarrantyManagementPage() {
       </section>
 
       <section className="directory-section warranty-directory" aria-labelledby="warranty-list-heading">
-        <div className="directory-heading"><div><h2 id="warranty-list-heading">Subassuntos e respectivos prazos</h2><p>O período é contado em anos corridos a partir da data de entrega, inclusive até o aniversário final.</p></div><label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar subassunto" aria-label="Buscar subassunto" /></label></div>
+        <div className="directory-heading"><div><h2 id="warranty-list-heading">Subassuntos e respectivos prazos</h2><p>O período é contado em anos corridos a partir da data de entrega, inclusive até o aniversário final.</p></div><div className="filter-search-actions"><label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar subassunto" aria-label="Buscar subassunto" /></label><button className="filter-clear-button" type="button" disabled={!search && !showInactive} onClick={() => { setSearch(''); setShowInactive(false) }}><X size={14} /> Limpar filtros</button></div></div>
         <label className="warranty-inactive-toggle"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Mostrar subassuntos que não vieram na última sincronização</label>
         <div className="user-table-wrap">
           <table className="user-table warranty-table"><thead><tr><th>SUBASSUNTO</th><th>GARANTIA (ANOS)</th><th>STATUS</th><th><span className="sr-only">Ação</span></th></tr></thead>

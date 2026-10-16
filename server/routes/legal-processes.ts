@@ -43,6 +43,11 @@ const statusSchema = z.object({
   name: z.string().trim().min(1).max(80),
   color: z.string().regex(/^#[\da-f]{6}$/i),
 })
+const statusOrderSchema = z.object({
+  statusIds: z.array(idSchema).min(1).max(100),
+}).refine(({ statusIds }) => new Set(statusIds).size === statusIds.length, {
+  message: 'A ordem contém status duplicados.',
+})
 const paymentSchema = z.object({
   description: z.string().trim().min(1).max(500),
   amount: z.number().finite().nonnegative().max(99_999_999_999.99),
@@ -81,6 +86,44 @@ router.get('/statuses', async (_req, res, next) => {
     res.json({ statuses: result.rows })
   } catch (error) {
     next(error)
+  }
+})
+
+router.put('/statuses/order', async (req, res, next) => {
+  const parsed = statusOrderSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Ordem dos status inválida.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('LOCK TABLE legal_process_statuses IN SHARE ROW EXCLUSIVE MODE')
+    const existing = await client.query<{ id: number }>(
+      'SELECT id::int AS id FROM legal_process_statuses ORDER BY position, id',
+    )
+    const expectedIds = existing.rows.map((status) => status.id)
+    if (
+      parsed.data.statusIds.length !== expectedIds.length ||
+      parsed.data.statusIds.some((id) => !expectedIds.includes(id))
+    ) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'A lista de status mudou. Atualize a página e tente novamente.' })
+      return
+    }
+    for (const [position, id] of parsed.data.statusIds.entries()) {
+      await client.query('UPDATE legal_process_statuses SET position = $1 WHERE id = $2', [position, id])
+    }
+    const statuses = await client.query(
+      'SELECT id::int AS id, name, position, color FROM legal_process_statuses ORDER BY position, id',
+    )
+    await client.query('COMMIT')
+    res.json({ statuses: statuses.rows })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
   }
 })
 

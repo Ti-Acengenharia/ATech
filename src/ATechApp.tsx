@@ -26,6 +26,7 @@ import {
   UsersRound,
   Wrench,
   Zap,
+  X,
 } from 'lucide-react'
 import './atech.css'
 
@@ -468,7 +469,7 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
           </section>
 
           <section className="directory-section" aria-labelledby="directory-heading">
-            <div className="directory-heading"><div><h2 id="directory-heading">Pessoas e permissões</h2><p>{users.length} {users.length === 1 ? 'pessoa cadastrada' : 'pessoas cadastradas'}</p></div><label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar pessoa" aria-label="Buscar por nome ou e-mail" /></label></div>
+            <div className="directory-heading"><div><h2 id="directory-heading">Pessoas e permissões</h2><p>{users.length} {users.length === 1 ? 'pessoa cadastrada' : 'pessoas cadastradas'}</p></div><div className="filter-search-actions"><label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar pessoa" aria-label="Buscar por nome ou e-mail" /></label><button className="filter-clear-button" type="button" disabled={!search} onClick={() => setSearch('')}><X size={14} /> Limpar</button></div></div>
             <div className="user-table-wrap"><table className="user-table"><thead><tr><th>USUÁRIO</th><th>PERMISSÃO</th><th>PÁGINAS LIBERADAS</th><th>STATUS</th><th>ÚLTIMO ACESSO</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>
               {loading ? <tr><td colSpan={6} className="table-message">Carregando usuários...</td></tr> : filteredUsers.length === 0 ? <tr><td colSpan={6} className="table-message">{users.length ? 'Nenhum resultado para esta busca.' : 'Ainda não há usuários cadastrados.'}</td></tr> : filteredUsers.map((member) => (
                 <tr key={member.id}>

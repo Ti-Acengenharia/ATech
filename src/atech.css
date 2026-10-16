@@ -429,6 +429,7 @@ body, .workspace-shell { background: #f4f7fb; }
 .collaborators-heading p { margin: 0; color: #718096; font-size: 12px; }
 .collaborator-add { min-height: 40px; white-space: nowrap; }
 .collaborator-filters { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(150px, 220px) minmax(140px, 190px); gap: 9px; padding: 12px; background: #fff; border: 1px solid #dfe8f1; border-radius: 5px 5px 0 0; }
+.collaborator-filters { grid-template-columns: minmax(210px, 1fr) minmax(150px, 220px) minmax(140px, 190px) auto; align-items: center; }
 .collaborator-search { width: 100%; height: 38px; }
 .filter-control { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 9px; border: 1px solid #dfe8f1; border-radius: 4px; background: #fff; }
 .filter-control > span { flex: 0 0 auto; color: #77879a; font-size: 9px; }
@@ -605,6 +606,9 @@ body, .workspace-shell { background: #f4f7fb; }
 
 @media (max-width: 760px) {
   .collaborator-table { min-width: 710px; }
+  .collaborator-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .collaborator-filters > .collaborator-search { grid-column: 1 / -1; }
+  .collaborator-filters > .filter-clear-button { grid-column: 1 / -1; justify-self: end; }
   .collaborator-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .child-form-row { grid-template-columns: repeat(2, minmax(0, 1fr)) 30px; }
   .child-form-row .form-field:first-child { grid-column: 1 / -1; }
@@ -649,7 +653,14 @@ body, .workspace-shell { background: #f4f7fb; }
 .ticket-board-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .ticket-board-toolbar .search-box { width: min(100%, 390px); height: 36px; }
 .ticket-board-toolbar > span { display: inline-flex; align-items: center; gap: 6px; color: #6e8298; font-size: 9px; white-space: nowrap; }
-.kanban-board { display: grid; grid-auto-columns: minmax(265px, 310px); grid-auto-flow: column; align-items: start; gap: 12px; overflow-x: auto; min-height: 220px; padding: 0 0 12px; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
+.kanban-board-container { min-width: 0; }
+.kanban-board-controls { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 0 0 7px; }
+.kanban-board-controls > span { margin-right: auto; color: #7a8da0; font-size: 10px; }
+.kanban-board-controls button { width: 32px; height: 30px; display: grid; place-items: center; color: #315d7e; background: #fff; border: 1px solid #dce6ef; border-radius: 7px; cursor: pointer; transition: color .15s ease, background .15s ease, border-color .15s ease; }
+.kanban-board-controls button:hover { color: #155a91; background: #edf5fb; border-color: #bfd4e5; }
+.kanban-board { display: grid; grid-auto-columns: minmax(265px, 310px); grid-auto-flow: column; align-items: start; gap: 12px; overflow-x: auto; min-height: 220px; padding: 0 0 12px; overscroll-behavior-x: contain; scroll-behavior: smooth; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; cursor: grab; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+.kanban-board.is-dragging { cursor: grabbing; user-select: none; scroll-behavior: auto; }
+.kanban-board.is-dragging * { user-select: none; }
 .kanban-column { min-width: 0; overflow: hidden; background: #edf2f7; border: 1px solid #e1e9f1; border-top: 2px solid #3986c2; border-radius: 5px; }
 .kanban-column-header { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 0 10px; background: #f9fbfd; border-bottom: 1px solid #e1e9f1; border-top: 2px solid #2877b8; }
 .kanban-stage-name { overflow: hidden; color: #334b63; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -1045,6 +1056,8 @@ body, .workspace-shell { background: #f4f7fb; }
   font-size: 10px !important;
   background: #fbfdff !important;
 }
+.collab-search-clear { position: absolute; right: 5px; width: 27px; height: 27px; display: grid; place-items: center; color: #647b90; background: #fff; border: 1px solid #dbe5ee; border-radius: 6px; }
+.collab-search-wrap input { padding-right: 38px !important; }
 
 .collab-checklist {
   display: grid;
@@ -2039,7 +2052,7 @@ body, .workspace-shell { background: #f4f7fb; }
   .validation-sections-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-}
+}
 
 .ticket-board-filters { align-items: end; flex-wrap: wrap; gap: 10px; }
 .ticket-board-filters > .search-box { flex: 1 1 240px; }
@@ -2438,16 +2451,31 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .user-page-access label { display: flex; align-items: center; gap: 8px; color: #496279; font-size: 9px; cursor: pointer; }
 .user-page-access input { accent-color: #2e78b1; }
 
+.filter-clear-button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; color: #45657f; background: #fff; border: 1px solid #dbe5ee; border-radius: 8px; font-size: 10px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: color .15s ease, background .15s ease, border-color .15s ease; }
+.filter-clear-button:hover:not(:disabled) { color: #175b91; background: #eff6fb; border-color: #bfd3e3; }
+.filter-clear-button:disabled { color: #a0adba; background: #f8fafc; cursor: default; }
+.filter-search-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.filter-search-actions .search-box { min-width: 0; }
+
 @media (max-width: 900px) {
   .ticket-board-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ticket-board-filters > .search-box { grid-column: span 2; }
+  .collaborator-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .ticket-board-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ticket-board-filters > .search-box, .ticket-board-filters .customer-name-filter { grid-column: 1 / -1; }
+  .ticket-board-filters > .filter-clear-button { grid-column: 1 / -1; justify-self: start; }
   .ticket-filter-count { grid-column: 1 / -1; }
+  .collaborator-filters { grid-template-columns: minmax(0, 1fr); }
+  .collaborator-filters > .filter-clear-button { grid-column: 1; justify-self: start; }
+  .filter-search-actions { width: 100%; align-items: stretch; flex-wrap: wrap; }
+  .filter-search-actions .search-box { flex: 1 1 200px; }
+  .filter-search-actions .filter-clear-button { flex: 0 0 auto; }
   .ticket-list { min-width: 850px; }
   .ticket-tag-manager > form, .ticket-tag-manager > div, .ticket-card-fields > div { left: 0; right: auto; }
+  .kanban-board-controls > span { font-size: 9px; }
+  .kanban-board { grid-auto-columns: minmax(260px, 84vw); }
 }
 .schedule-role-filter-actions { display: flex; gap: 8px; margin-left: auto; }
 .schedule-role-filter-actions button { padding: 4px 2px; color: #3476a6; background: transparent; border: 0; font-size: 9px; cursor: pointer; }
