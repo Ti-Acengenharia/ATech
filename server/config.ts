@@ -12,7 +12,10 @@ const envSchema = z.object({
     .transform((domain) => domain.trim().toLowerCase().replace(/^@/, '')),
   GOOGLE_CLIENT_ID: z.string().default(''),
   ADMIN_EMAIL: z.string().email().default('admin@atech.local'),
-  ADMIN_INITIAL_PASSWORD: z.string().min(12).optional(),
+  ADMIN_INITIAL_PASSWORD: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(12).optional(),
+  ),
   PII_ENCRYPTION_KEY: z.preprocess(
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().regex(/^[\da-f]{64}$/i).optional(),
