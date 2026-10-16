@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: atech-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: atech
+      POSTGRES_USER: atech
+      POSTGRES_PASSWORD: atech_dev
+    ports:
+      - "5555:5432"
+    volumes:
+      - atech_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atech -d atech"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: atech-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 8003
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgresql://atech:atech_dev@db:5432/atech
+      SESSION_SECRET: ${SESSION_SECRET}
+      CORPORATE_DOMAIN: ${CORPORATE_DOMAIN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:-}
+      CVCRM_SUBDOMAIN: ${CVCRM_SUBDOMAIN:-}
+      CVCRM_API_EMAIL: ${CVCRM_API_EMAIL:-}
+      CVCRM_API_TOKEN: ${CVCRM_API_TOKEN:-}
+      CVCRM_SYNC_INTERVAL_SECONDS: ${CVCRM_SYNC_INTERVAL_SECONDS:-3600}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8003:8003"
+    command: >
+      sh -c "npm run db:migrate && node dist-server/index.js"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
+        VITE_CORPORATE_DOMAIN: ${VITE_CORPORATE_DOMAIN}
+    container_name: atech-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8004:80"
+
+volumes:
+  atech_postgres:

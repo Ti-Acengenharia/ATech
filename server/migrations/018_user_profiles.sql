@@ -1,0 +1,3 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS job_title VARCHAR(120) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS signature_data_ciphertext TEXT;
