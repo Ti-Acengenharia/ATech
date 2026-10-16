@@ -43,16 +43,15 @@ Para consultar os logs, use `docker compose --env-file .env logs -f backend`. Se
 
 ### Apache2 como proxy HTTPS na VPS
 
-Se o Apache termina o HTTPS e encaminha o tráfego para a porta 8004 do frontend, configure o VirtualHost HTTPS para informar o protocolo original. Habilite os módulos `proxy`, `proxy_http` e `headers` e, dentro do `<VirtualHost *:443>`, use:
+Se o Apache termina o HTTPS e encaminha o tráfego para a porta 8004 do frontend, habilite os módulos `proxy` e `proxy_http` e, dentro do `<VirtualHost *:443>`, use:
 
 ```apache
 ProxyPreserveHost On
-RequestHeader set X-Forwarded-Proto "https"
 ProxyPass / http://127.0.0.1:8004/
 ProxyPassReverse / http://127.0.0.1:8004/
 ```
 
-O Nginx do container repassa esse `X-Forwarded-Proto` à API. Isso permite que a API reconheça a conexão HTTPS original e aceite o cookie seguro `atech.sid` nas requisições seguintes. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
+O Nginx do container informa `https` à API, pois o acesso público deve passar pelo VirtualHost HTTPS do Apache. Redirecione HTTP para HTTPS no Apache e acesse a aplicação pelo domínio HTTPS, não diretamente por `http://IP:8004`; a API usa um cookie de sessão `Secure` em produção. Mantenha `httpOnly`: essa opção protege o cookie contra leitura por JavaScript e não impede o navegador de enviá-lo. Após atualizar, recrie os containers com `docker compose --env-file .env up -d --build --force-recreate`.
 
 ## Primeiro acesso
 
