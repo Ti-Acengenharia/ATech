@@ -19,7 +19,7 @@ cp .env.example .env
 nano .env
 ```
 
-Antes de subir, configure no `.env` ao menos `POSTGRES_PASSWORD`, `SESSION_SECRET`, `CORPORATE_DOMAIN` e `VITE_CORPORATE_DOMAIN`. Defina `POSTGRES_PASSWORD` com uma senha forte formada por letras e números, e use um `SESSION_SECRET` aleatório com pelo menos 32 caracteres. `VITE_GOOGLE_CLIENT_ID` deve conter o Client ID OAuth para habilitar login Google. Proteja o arquivo com `chmod 600 .env`. Se já houver um volume PostgreSQL criado pela versão anterior do Compose, mantenha em `POSTGRES_PASSWORD` a senha usada quando esse banco foi criado (a configuração antiga usava `atech_dev`); trocar a variável não altera a senha dentro de um volume existente.
+Antes de subir, configure no `.env` `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `SESSION_SECRET`, `CORPORATE_DOMAIN` e `VITE_CORPORATE_DOMAIN`. O Compose usa `POSTGRES_*` tanto para configurar o PostgreSQL quanto para montar a URL de conexão do backend (`db:5432`, na rede privada do Compose); `DATABASE_URL` é usada quando a aplicação roda diretamente no host e não substitui essas variáveis no container. Use uma senha PostgreSQL forte formada por letras e números, e um `SESSION_SECRET` aleatório com pelo menos 32 caracteres. `VITE_GOOGLE_CLIENT_ID` deve conter o Client ID OAuth para habilitar login Google. Proteja o arquivo com `chmod 600 .env`. Se já houver um volume PostgreSQL criado pela versão anterior do Compose, mantenha em `POSTGRES_DB`, `POSTGRES_USER` e `POSTGRES_PASSWORD` os valores usados quando esse banco foi criado (a configuração antiga usava o usuário e banco `atech` e a senha `atech_dev`); trocar essas variáveis não altera os dados ou credenciais dentro de um volume existente.
 
 Execute os comandos a partir do diretório do projeto e passe o arquivo explicitamente:
 
@@ -363,7 +363,7 @@ O seed gera uma senha aleatória de uso inicial e a mostra uma única vez no ter
 
 Senhas existentes não podem ser recuperadas: o banco armazena apenas o hash. Para invalidar a senha atual e gerar outra, execute `npm run db:reset-admin-password`. O comando mostra a nova senha uma única vez no terminal; o seed normal não altera uma conta que já existe.
 
-Para PostgreSQL instalado fora do Docker, ajuste `DATABASE_URL` no `.env`. Os valores do Compose são apenas para desenvolvimento local; altere usuário e senha antes de qualquer implantação compartilhada.
+Para PostgreSQL instalado fora do Docker, ajuste `DATABASE_URL` no `.env`. No Docker Compose, configure as credenciais do serviço com `POSTGRES_DB`, `POSTGRES_USER` e `POSTGRES_PASSWORD`; altere os valores de exemplo antes de qualquer implantação compartilhada.
 
 ### PostgreSQL local no Windows
 
