@@ -3,6 +3,7 @@ export interface TicketSummary {
   protocol: string
   statusId: number | null
   status: string
+  sourceActive: boolean
   openedAt: string | null
   openSeconds: number | null
   customerName: string

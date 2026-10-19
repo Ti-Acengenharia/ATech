@@ -56,6 +56,7 @@
 .legal-new-column button { width: 100%; }
 .legal-process-card select { max-width: 100%; min-height: 30px; padding: 4px 7px; color: var(--ink); background: #f7f9fb; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
 .legal-list-wrap { overflow: auto; margin-top: 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.legal-list-wrap + .list-pagination { margin-top: 10px; }
 .legal-list { width: 100%; border-collapse: collapse; text-align: left; }
 .legal-list th { padding: 11px 13px; color: var(--muted); background: #f7f9fb; font: 9px var(--mono); white-space: nowrap; }
 .legal-list td { padding: 12px 13px; color: #53697a; border-top: 1px solid #edf1f4; font-size: 12px; }

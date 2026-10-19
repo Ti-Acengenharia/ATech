@@ -1295,7 +1295,7 @@ body, .workspace-shell { background: #f4f7fb; }
 .profile-modal-actions .profile-signout { margin-right: auto; }
 .profile-modal-loading { color: #71859a; font-size: 10px; }
 @media (max-width: 600px) {
-  .completion-term-backdrop { place-items: start center; padding: 8px; }
+  .completion-term-backdrop { place-items: start center; padding: 8px;   }
   .completion-term-modal { max-height: calc(100vh - 16px); }
   .completion-term-header, .completion-term-form { padding-right: 13px; padding-left: 13px; }
   .completion-term-auto-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1303,6 +1303,70 @@ body, .workspace-shell { background: #f4f7fb; }
   .completion-term-actions > button { flex: 1 1 auto; }
   .profile-modal-backdrop { place-items: start center; padding: 8px; }
   .profile-modal-header, .profile-modal-form { padding-right: 13px; padding-left: 13px; }
+}
+.ticket-include-inactive { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; color: #526a7f; font-size: 10px; font-weight: 700; cursor: pointer; }
+.ticket-include-inactive input { width: 15px; height: 15px; margin: 0; accent-color: #2e78b1; }
+.ticket-archived-badge { flex: 0 0 auto; padding: 3px 6px; color: #795d34; background: #fff4dc; border: 1px solid #f0d8a6; border-radius: 999px; font-size: 8px; font-weight: 700; }
+.ticket-list-archived { width: fit-content; padding: 2px 5px; color: #795d34 !important; background: #fff4dc; border-radius: 999px; }
+.ticket-archived-notice { grid-column: 1; width: fit-content; padding: 5px 8px; color: #795d34; background: #fff4dc; border: 1px solid #f0d8a6; border-radius: 5px; font-size: 10px; font-weight: 700; }
+@media (max-width: 600px) {
+  .ticket-include-inactive { grid-column: 1 / -1; }
+}
+.ticket-filter-panel { min-width: 0; }
+.ticket-filter-toggle, .legal-filter-toggle { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; color: #49657d; background: #fff; border: 1px solid #d9e5ef; border-radius: 7px; font-size: 10px; font-weight: 700; cursor: pointer; }
+.ticket-filter-toggle { margin-bottom: 8px; }
+.ticket-board-options { justify-content: flex-start; flex-wrap: wrap; margin-bottom: 0; }
+.ticket-board-options .ticket-tag-manager { flex: 0 0 auto; }
+.ticket-filter-toggle svg, .legal-filter-toggle svg { transition: transform .16s ease; }
+.ticket-filter-toggle[aria-expanded="false"] svg, .legal-filter-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.ticket-filter-toggle > span, .legal-filter-toggle > span { padding: 3px 6px; color: #52728d; background: #edf4f9; border-radius: 999px; font-size: 9px; }
+.ticket-board-filters { margin-bottom: 12px; }
+.ticket-board-filters .ticket-filter-count { min-width: 0; }
+.workspace-main:has(.ticket-board-page.ticket-board-kanban) .page-content,
+.workspace-main:has(.legal-page.legal-board-page) .page-content { height: calc(100dvh - 56px); min-height: 0; overflow: hidden; padding: 0; box-sizing: border-box; }
+.ticket-board-page.ticket-board-kanban, .legal-page.legal-board-page { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+.ticket-board-page.ticket-board-kanban { gap: 8px; padding-top: clamp(12px, 2vh, 22px); padding-bottom: 12px; }
+.ticket-board-page.ticket-board-kanban .ticket-board-heading { flex: 0 0 auto; margin-bottom: 6px; }
+.ticket-board-page.ticket-board-kanban .ticket-filter-panel { flex: 0 0 auto; }
+.ticket-board-page.ticket-board-kanban .ticket-board-filters { margin-bottom: 0; }
+.ticket-board-page.ticket-board-kanban .kanban-board-container { flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; }
+.ticket-board-page.ticket-board-kanban .kanban-board-controls { flex: 0 0 auto; }
+.ticket-board-page.ticket-board-kanban .kanban-board { flex: 1 1 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; min-height: 0; overflow-y: hidden; }
+.ticket-board-page.ticket-board-kanban .kanban-column { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.ticket-board-page.ticket-board-kanban .kanban-column-header { flex: 0 0 auto; }
+.ticket-board-page.ticket-board-kanban .kanban-column-body { flex: 1 1 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
+.ticket-board-page.ticket-board-kanban .ticket-card { flex: 0 0 auto; }
+.kanban-load-more { min-height: 36px; flex: 0 0 auto; margin: 3px 0; padding: 0 10px; color: #326b94; background: #fff; border: 1px solid #cbdce9; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer; }
+.kanban-load-more:hover { color: #1d5b88; background: #edf6fc; border-color: #a8c7df; }
+.list-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; padding: 10px 12px; color: #667d91; background: #fff; border: 1px solid #dfe8f0; border-radius: 7px; font-size: 10px; }
+.list-pagination > div { display: flex; align-items: center; gap: 9px; }
+.list-pagination button { min-height: 31px; padding: 0 10px; color: #35698f; background: #fff; border: 1px solid #d5e2ec; border-radius: 5px; font: inherit; font-weight: 700; cursor: pointer; }
+.list-pagination button:hover:not(:disabled) { background: #eef6fb; border-color: #b6d0e3; }
+.list-pagination button:disabled { color: #a1afbb; background: #f6f8fa; cursor: default; }
+@media (max-width: 480px) {
+  .list-pagination { align-items: flex-start; flex-direction: column; }
+  .list-pagination > div { width: 100%; justify-content: space-between; }
+}
+.legal-page.legal-board-page { padding-top: clamp(12px, 2vh, 22px); padding-bottom: 12px; gap: 8px; }
+.legal-board-page .legal-heading { flex: 0 0 auto; margin-bottom: 6px; }
+.legal-board-page .legal-toolbar, .legal-board-page .legal-status-toolbar { flex: 0 0 auto; margin-top: 0; margin-bottom: 0; }
+.legal-board-page .legal-toolbar { justify-content: flex-start; }
+.legal-filter-fields { display: flex; flex: 1 1 480px; align-items: center; flex-wrap: wrap; gap: 9px; }
+.legal-filter-fields .search-box { flex: 1 1 260px; }
+.legal-board-page .legal-board-controls { flex: 0 0 auto; }
+.legal-board-page .legal-board { flex: 1 1 0; align-items: stretch; min-height: 0; overflow-y: hidden; }
+.legal-board-page .legal-column { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.legal-board-page .legal-column > header { flex: 0 0 auto; }
+.legal-board-page .legal-column-body { flex: 1 1 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
+.legal-board-page .legal-process-card, .legal-board-page .legal-add-card { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .workspace-main:has(.ticket-board-page.ticket-board-kanban) .page-content,
+  .workspace-main:has(.legal-page.legal-board-page) .page-content { height: calc(100dvh - 52px); }
+}
+@media (max-width: 600px) {
+  .legal-filter-fields { flex-basis: 100%; align-items: stretch; flex-direction: column; }
+  .legal-filter-fields .search-box { width: 100%; }
+  .legal-filter-fields .filter-clear-button { align-self: flex-start; }
 }
 
 .highlight-action-btn {
@@ -2580,4 +2644,30 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   .schedule-role-filters { padding: 10px 12px; }
   .schedule-role-filter-actions { width: 100%; margin-left: 0; }
   .schedule-staff-cards { grid-template-columns: minmax(0, 1fr); }
+}
+
+.page-content { padding-top: 16px; }
+.page-heading-row { gap: 12px; margin-bottom: 15px; }
+.page-heading-row h1 { font-size: 22px; line-height: 1.18; }
+.page-heading-row p { margin-top: 3px; font-size: 11px; }
+.page-eyebrow { margin-bottom: 4px; }
+.ticket-board-page, .programming-page, .ticket-detail-page { padding-top: 16px; }
+.ticket-board-heading, .programming-heading { align-items: center; gap: 12px; margin-bottom: 12px; }
+.ticket-board-heading h1, .programming-heading h1 { margin: 3px 0; font-size: 21px; line-height: 1.18; }
+.ticket-board-heading p, .programming-heading p { font-size: 10px; }
+.ticket-board-actions { gap: 8px; }
+.ticket-board-actions .primary-button { min-height: 34px; }
+.legal-page { padding-top: 16px; }
+.legal-heading { gap: 12px; margin-bottom: 14px; }
+.legal-heading h1 { margin: 3px 0; font-size: 22px; line-height: 1.18; }
+.legal-heading p { font-size: 11px; line-height: 1.4; }
+.collaborators-heading { gap: 12px; margin-bottom: 14px; }
+.collaborators-heading h1, .enterprise-page-heading h1 { margin-top: 3px; margin-bottom: 3px; font-size: 22px; line-height: 1.18; }
+.collaborators-heading p, .enterprise-page-heading p { font-size: 11px; line-height: 1.4; }
+.enterprise-page-heading { gap: 10px; }
+@media (max-width: 760px) {
+  .page-heading-row { gap: 9px; margin-bottom: 12px; }
+  .page-heading-row h1, .legal-heading h1, .collaborators-heading h1, .enterprise-page-heading h1 { font-size: 20px; }
+  .ticket-board-page, .programming-page, .ticket-detail-page, .legal-page { padding-top: 12px; }
+  .ticket-board-heading, .programming-heading { margin-bottom: 10px; }
 }

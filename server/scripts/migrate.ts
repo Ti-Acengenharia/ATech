@@ -30,6 +30,7 @@ try {
     '023_legal_process_collaboration.sql',
     '024_ticket_tags_and_cv_conversation.sql',
     '025_user_page_access.sql',
+    '026_decimal_ticket_workflow_order.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')

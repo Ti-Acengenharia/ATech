@@ -103,6 +103,7 @@ interface SavedTicketFilters {
   customer: string
   subject: string
   subsubject: string
+  includeInactive: boolean
   viewMode: TicketViewMode
   cardFields: TicketCardField[]
   sortField: TicketSortField
@@ -117,6 +118,8 @@ const ticketSortFields: { value: TicketSortField; label: string }[] = [
   { value: 'enterprise', label: 'Empreendimento' },
   { value: 'openedAt', label: 'Data de abertura' },
 ]
+const kanbanPageSize = 5
+const listPageSize = 50
 
 function readTicketFilters(userId: number): SavedTicketFilters {
   const prefix = `atech-ticket-filters-${userId}`
@@ -135,6 +138,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       customer: typeof saved.customer === 'string' ? saved.customer.slice(0, 160) : '',
       subject: typeof saved.subject === 'string' ? saved.subject.slice(0, 240) : '',
       subsubject: typeof saved.subsubject === 'string' ? saved.subsubject.slice(0, 240) : '',
+      includeInactive: saved.includeInactive === true,
       viewMode: saved.viewMode === 'list' ? 'list' : 'kanban',
       cardFields: Array.isArray(saved.cardFields)
         ? [...new Set(saved.cardFields.filter((field): field is TicketCardField =>
@@ -147,7 +151,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       sortDirection: saved.sortDirection === 'desc' ? 'desc' : 'asc',
     }
   } catch {
-    return { search: '', enterprises: [], block: '', unit: '', customer: '', subject: '', subsubject: '', viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
+    return { search: '', enterprises: [], block: '', unit: '', customer: '', subject: '', subsubject: '', includeInactive: false, viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
   }
 }
 
@@ -263,7 +267,9 @@ export default function TicketBoardPage({
   onTicketOpened?: () => void
 }) {
   const [savedFilters] = useState(() => readTicketFilters(currentUser.id))
+  const [filtersExpanded, setFiltersExpanded] = useState(true)
   const [tickets, setTickets] = useState<TicketSummary[]>([])
+  const [ticketPagination, setTicketPagination] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
   const [completionTerms, setCompletionTerms] = useState<CompletionTermFile[]>([])
   const [enterpriseOptions, setEnterpriseOptions] = useState<string[]>([])
   const [blockOptions, setBlockOptions] = useState<string[]>([])
@@ -282,6 +288,7 @@ export default function TicketBoardPage({
   const [customerNameFilter, setCustomerNameFilter] = useState(savedFilters.customer)
   const [subjectFilter, setSubjectFilter] = useState(savedFilters.subject)
   const [subsubjectFilter, setSubsubjectFilter] = useState(savedFilters.subsubject)
+  const [includeInactive, setIncludeInactive] = useState(savedFilters.includeInactive)
   const [viewMode, setViewMode] = useState<TicketViewMode>(savedFilters.viewMode)
   const [cardFields, setCardFields] = useState<TicketCardField[]>(savedFilters.cardFields)
   const [sortField, setSortField] = useState<TicketSortField>(savedFilters.sortField)
@@ -319,7 +326,7 @@ export default function TicketBoardPage({
     Promise.all([
       apiRequest<{ stages: TicketWorkflowStage[] }>('/api/tickets/workflow'),
       apiRequest<{ configured: boolean; state: SyncState | null }>('/api/tickets/integration'),
-      apiRequest<{ enterprises: string[]; blocks: string[]; units: string[]; subjects: string[]; subsubjects: string[] }>('/api/tickets/filter-options'),
+      apiRequest<{ enterprises: string[]; blocks: string[]; units: string[]; subjects: string[]; subsubjects: string[] }>(`/api/tickets/filter-options${includeInactive ? '?includeInactive=true' : ''}`),
       apiRequest<{ tags: TicketTag[] }>('/api/tickets/tags'),
     ]).then(([stageResult, integration, filterOptions, tags]) => {
       if (cancelled) return
@@ -334,12 +341,13 @@ export default function TicketBoardPage({
       if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os chamados.' })
     })
     return () => { cancelled = true }
-  }, [refreshKey])
+  }, [refreshKey, includeInactive])
 
   useEffect(() => {
     let cancelled = false
     const params = new URLSearchParams()
     for (const enterprise of enterpriseFilters) params.append('enterprise', enterprise)
+    if (includeInactive) params.set('includeInactive', 'true')
     const query = params.toString()
     apiRequest<{ blocks: string[]; units: string[] }>(`/api/tickets/filter-options${query ? `?${query}` : ''}`)
       .then((options) => {
@@ -352,7 +360,7 @@ export default function TicketBoardPage({
         if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar as opções de bloco e unidade.' })
       })
     return () => { cancelled = true }
-  }, [enterpriseFilters, enterpriseFilterKey, refreshKey])
+  }, [enterpriseFilters, enterpriseFilterKey, includeInactive, refreshKey])
 
   useEffect(() => {
     const saved = saveTicketFilters(currentUser.id, {
@@ -363,6 +371,7 @@ export default function TicketBoardPage({
       customer: customerNameFilter,
       subject: subjectFilter,
       subsubject: subsubjectFilter,
+      includeInactive,
       viewMode,
       cardFields,
       sortField,
@@ -371,7 +380,7 @@ export default function TicketBoardPage({
     if (!saved) {
       console.error(new Error('Não foi possível salvar os filtros neste navegador. Reduza a quantidade de empreendimentos selecionados e verifique as permissões de cookies.'))
     }
-  }, [currentUser.id, search, enterpriseFilters, blockOptionsReady, activeBlockFilter, activeUnitFilter, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, viewMode, cardFields, sortField, sortDirection])
+  }, [currentUser.id, search, enterpriseFilters, blockOptionsReady, activeBlockFilter, activeUnitFilter, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, cardFields, sortField, sortDirection])
 
   useEffect(() => {
     let cancelled = false
@@ -396,6 +405,7 @@ export default function TicketBoardPage({
       if (customerNameFilter.trim()) params.set('customerName', customerNameFilter.trim())
       if (subjectFilter) params.set('subject', subjectFilter)
       if (subsubjectFilter) params.set('subsubject', subsubjectFilter)
+      if (includeInactive) params.set('includeInactive', 'true')
       const query = params.toString()
       const suffix = query ? `?${query}` : ''
       apiRequest<{ tickets: TicketSummary[] }>(`/api/tickets${suffix}`)
@@ -406,7 +416,7 @@ export default function TicketBoardPage({
           let target = ticketResult.tickets.find((ticket) => ticket.id === initialTicketId)
           if (!target) {
             const targetResult = await apiRequest<{ tickets: TicketSummary[] }>(
-              `/api/tickets?id=${encodeURIComponent(initialTicketId)}`,
+              `/api/tickets?id=${encodeURIComponent(initialTicketId)}${includeInactive ? '&includeInactive=true' : ''}`,
             )
             target = targetResult.tickets[0]
           }
@@ -415,7 +425,7 @@ export default function TicketBoardPage({
             setSelected(target)
             onTicketOpened?.()
           } else {
-            setNotice({ kind: 'error', text: 'O chamado desta notificação não está na lista de chamados ativos.' })
+            setNotice({ kind: 'error', text: 'O chamado desta notificação não foi encontrado.' })
           }
         }
         }).catch((error: unknown) => {
@@ -423,7 +433,7 @@ export default function TicketBoardPage({
         }).finally(() => { if (!cancelled) setLoading(false) })
     }, 180)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [search, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, initialTicketId, onTicketOpened, refreshKey])
+  }, [search, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, initialTicketId, onTicketOpened, refreshKey])
 
   async function syncNow() {
     setSyncing(true)
@@ -557,11 +567,26 @@ export default function TicketBoardPage({
     () => [...tickets].sort((left, right) => compareTickets(left, right, sortField, sortDirection)),
     [tickets, sortField, sortDirection],
   )
+  const ticketPaginationKey = JSON.stringify([
+    search, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter,
+    subjectFilter, subsubjectFilter, includeInactive, sortField, sortDirection, refreshKey,
+  ])
+  const ticketListKey = JSON.stringify([ticketPaginationKey, filtered.map((ticket) => ticket.id)])
+  const [ticketListPageState, setTicketListPageState] = useState<{ key: string; page: number }>({ key: '', page: 1 })
+  const ticketListPage = ticketListPageState.key === ticketListKey ? ticketListPageState.page : 1
+  const ticketListPageCount = Math.max(1, Math.ceil(filtered.length / listPageSize))
+  const currentTicketListPage = Math.min(ticketListPage, ticketListPageCount)
+  const pagedTickets = filtered.slice((currentTicketListPage - 1) * listPageSize, currentTicketListPage * listPageSize)
+  const visibleTicketCounts = ticketPagination.key === ticketPaginationKey ? ticketPagination.counts : {}
+  function loadMoreTickets(columnKey: string, visibleCount: number) {
+    setTicketPagination((current) => ({
+      key: ticketPaginationKey,
+      counts: { ...(current.key === ticketPaginationKey ? current.counts : {}), [columnKey]: visibleCount + kanbanPageSize },
+    }))
+  }
   const orderedStages = stages
     .filter((stage) => stage.name.trim().length > 0)
-    .sort((left, right) => sortField === 'status'
-      ? ticketSortCollator.compare(left.name, right.name) * (sortDirection === 'asc' ? 1 : -1)
-      : left.position - right.position)
+    .sort((left, right) => left.position - right.position || ticketSortCollator.compare(left.name, right.name))
   const filteredStatusIds = new Set(filtered.map((ticket) => ticket.statusId).filter((statusId): statusId is number => statusId !== null))
   const visibleStages = orderedStages.filter((stage) => filteredStatusIds.has(stage.id))
   const unassignedTickets = filtered.filter((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId))
@@ -626,7 +651,7 @@ export default function TicketBoardPage({
   }
 
   return (
-    <section className="ticket-board-page">
+    <section className={`ticket-board-page${!selected && viewMode === 'kanban' ? ' ticket-board-kanban' : ''}`}>
       <div className="ticket-board-heading">
         <div><span className="eyebrow">ATENDIMENTOS CVCRM</span><h1>Chamados</h1><p>Quadro por situação do workflow do Construtor de Vendas.</p></div>
         <div className="ticket-board-actions">
@@ -724,7 +749,13 @@ export default function TicketBoardPage({
       {!configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
       {syncState?.last_finished_at && <p className="ticket-sync-meta">Última sincronização: {formatDate(syncState.last_finished_at)} · {syncState.imported_count} ativos{syncState.last_success === false && syncState.error_message ? ` · ${syncState.error_message}` : ''}</p>}
 
-      <div className="ticket-board-toolbar ticket-board-filters">
+      <section className="ticket-filter-panel">
+        <button className="ticket-filter-toggle" type="button" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}>
+          <ChevronDown size={15} />
+          {filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}
+          {!filtersExpanded && <span>{[search, ...enterpriseFilters, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
+        </button>
+        {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
         <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Protocolo, assunto ou empreendimento" aria-label="Pesquisar chamados" /></label>
         <details className="enterprise-multiselect">
           <summary><span>Empreendimentos</span><strong>{enterpriseFilters.length ? `${enterpriseFilters.length} selecionado${enterpriseFilters.length === 1 ? '' : 's'}` : 'Todos'}</strong><ChevronDown size={15} /></summary>
@@ -742,6 +773,20 @@ export default function TicketBoardPage({
         <label className="filter-control"><span>Assunto</span><select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)}><option value="">Todos</option>{subjectOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="filter-control"><span>Subassunto</span><select value={subsubjectFilter} onChange={(event) => setSubsubjectFilter(event.target.value)}><option value="">Todos</option>{subsubjectOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="filter-control customer-name-filter"><span>Nome do cliente</span><input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar cliente" /></label>
+        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter && !unitFilter && !customerNameFilter && !subjectFilter && !subsubjectFilter && !includeInactive} onClick={() => {
+          setSearch('')
+          setEnterpriseFilters([])
+          setBlockFilter('')
+          setUnitFilter('')
+          setCustomerNameFilter('')
+          setSubjectFilter('')
+          setSubsubjectFilter('')
+          setIncludeInactive(false)
+        }}><X size={14} /> Limpar filtros</button>
+        <label className="ticket-include-inactive"><input type="checkbox" checked={includeInactive} onChange={(event) => setIncludeInactive(event.target.checked)} /><span>Mostrar finalizados e cancelados</span></label>
+        <span className="ticket-filter-count"><Clock3 size={14} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}</span>
+        </div>}
+        <div className="ticket-board-toolbar ticket-board-options">
         {currentUser.role === 'admin' && <details className="ticket-tag-manager">
           <summary><Tag size={14} /> Gerenciar tags</summary>
           <form onSubmit={(event) => void createTag(event)}><input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} maxLength={60} placeholder="Nome da tag" required /><input aria-label="Cor da tag" type="color" value={newTagColor} onChange={(event) => setNewTagColor(event.target.value)} /><button className="primary-button" type="submit">Criar</button></form>
@@ -765,19 +810,13 @@ export default function TicketBoardPage({
           {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
           {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
         </button>
-        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter && !unitFilter && !customerNameFilter && !subjectFilter && !subsubjectFilter} onClick={() => {
-          setSearch('')
-          setEnterpriseFilters([])
-          setBlockFilter('')
-          setUnitFilter('')
-          setCustomerNameFilter('')
-          setSubjectFilter('')
-          setSubsubjectFilter('')
-        }}><X size={14} /> Limpar filtros</button>
-        <span className="ticket-filter-count"><Clock3 size={14} /> {filtered.length} chamado(s) ativo(s)</span>
-      </div>
+        </div>
+      </section>
       {loading ? <div className="ticket-loading">Carregando chamados...</div> : viewMode === 'list' ? (
-        <TicketList tickets={filtered} stages={orderedStages} onOpen={setSelected} />
+        <>
+          <TicketList tickets={pagedTickets} stages={orderedStages} onOpen={setSelected} />
+          <ListPagination total={filtered.length} page={currentTicketListPage} pageCount={ticketListPageCount} pageSize={listPageSize} onPageChange={(page) => setTicketListPageState({ key: ticketListKey, page })} />
+        </>
       ) : orderedStages.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Workflow ainda não carregado</strong><span>Configure a API e sincronize os atendimentos para trazer as etapas do CVCRM.</span></div> : filtered.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Nenhum chamado corresponde aos filtros.</strong></div> : (
         <div className="kanban-board-container">
           <div className="kanban-board-controls" aria-label="Navegação das situações">
@@ -803,19 +842,47 @@ export default function TicketBoardPage({
           >
             {visibleStages.map((stage) => {
               const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
+              const visibleCount = visibleTicketCounts[String(stage.id)] ?? kanbanPageSize
+              const ticketsToShow = stageTickets.slice(0, visibleCount)
               return <section className="kanban-column" key={stage.id}>
                 <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
                 <div className="kanban-column-body">
-                  {stageTickets.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
+                  {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
+                  {ticketsToShow.length < stageTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(String(stage.id), visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, stageTickets.length - visibleCount)})</button>}
                 </div>
               </section>
             })}
-            {unassignedTickets.length > 0 && <section className="kanban-column"><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{unassignedTickets.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}</div></section>}
+            {unassignedTickets.length > 0 && (() => {
+              const key = 'unassigned'
+              const visibleCount = visibleTicketCounts[key] ?? kanbanPageSize
+              const ticketsToShow = unassignedTickets.slice(0, visibleCount)
+              return <section className="kanban-column" key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
+            })()}
           </div>
         </div>
       )}
     </section>
   )
+}
+
+function ListPagination({ total, page, pageCount, pageSize, onPageChange }: {
+  total: number
+  page: number
+  pageCount: number
+  pageSize: number
+  onPageChange: (page: number) => void
+}) {
+  if (total <= pageSize) return null
+  const first = (page - 1) * pageSize + 1
+  const last = Math.min(page * pageSize, total)
+  return <nav className="list-pagination" aria-label="Paginação da lista">
+    <span>{first}–{last} de {total}</span>
+    <div>
+      <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>Anterior</button>
+      <span>Página {page} de {pageCount}</span>
+      <button type="button" disabled={page >= pageCount} onClick={() => onPageChange(page + 1)}>Próxima</button>
+    </div>
+  </nav>
 }
 
 function ClipboardListIcon() {
@@ -839,7 +906,7 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
   return (
     <article className="ticket-card">
       <button className="ticket-card-open" type="button" onClick={onOpen} aria-label={`Abrir chamado ${ticket.id}, protocolo ${ticket.protocol}`}>
-        <span className="ticket-card-top"><span><strong>ID {ticket.id}</strong><small>Protocolo #{ticket.protocol}</small></span>{ticket.priority && <span className="ticket-priority">{ticket.priority}</span>}</span>
+        <span className="ticket-card-top"><span><strong>ID {ticket.id}</strong><small>Protocolo #{ticket.protocol}</small></span>{!ticket.sourceActive ? <span className="ticket-archived-badge">Inativo</span> : ticket.priority && <span className="ticket-priority">{ticket.priority}</span>}</span>
         <span className="ticket-card-enterprise">{ticket.enterprise || 'Empreendimento não informado'}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</span>
         <span className="ticket-card-subject">{ticket.subject || 'Sem assunto'}{ticket.subsubject ? <small>{ticket.subsubject}</small> : null}</span>
         {fields.includes('tags') && <TicketTagPills tags={ticket.tags ?? []} />}
@@ -868,7 +935,7 @@ function TicketList({ tickets, stages, onOpen }: {
     <thead><tr><th>ID / Protocolo</th><th>Situação</th><th>Empreendimento</th><th>Assunto / Subassunto</th><th>Tags</th><th>Abertura</th><th><span className="sr-only">Abrir chamado</span></th></tr></thead>
     <tbody>{tickets.map((ticket) => <tr key={ticket.id}>
       <td><strong>ID {ticket.id}</strong><small>#{ticket.protocol}</small></td>
-      <td>{ticket.statusId ? statusById.get(ticket.statusId) ?? ticket.status : ticket.status}</td>
+      <td>{ticket.statusId ? statusById.get(ticket.statusId) ?? ticket.status : ticket.status}{!ticket.sourceActive && <small className="ticket-list-archived">Inativo</small>}</td>
       <td>{ticket.enterprise || '—'}{ticket.block && ` · Bloco ${ticket.block}`}{ticket.unit && ` · Unidade ${ticket.unit}`}</td>
       <td><strong>{ticket.subject || 'Sem assunto'}</strong><small>{ticket.subsubject || 'Sem subassunto'}</small></td>
       <td><TicketTagPills tags={ticket.tags ?? []} /></td>
@@ -1175,7 +1242,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
 
   return (
     <section className="ticket-detail-page">
-      <header className="ticket-detail-heading"><button className="secondary-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Voltar ao Kanban</button><span className="eyebrow">CHAMADO · CVCRM</span><h1>Protocolo {ticket.protocol}</h1><p>{ticket.enterprise} {ticket.block ? `· Bloco ${ticket.block}` : ''} {ticket.unit ? `· Unidade ${ticket.unit}` : ''}</p></header>
+      <header className="ticket-detail-heading"><button className="secondary-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Voltar ao Kanban</button><span className="eyebrow">CHAMADO · CVCRM</span><h1>Protocolo {ticket.protocol}</h1><p>{ticket.enterprise} {ticket.block ? `· Bloco ${ticket.block}` : ''} {ticket.unit ? `· Unidade ${ticket.unit}` : ''}</p>{!ticket.sourceActive && <span className="ticket-archived-notice">Chamado finalizado ou cancelado — histórico preservado</span>}</header>
       <div className="ticket-detail-status"><span>{ticket.status}</span></div>
       {ticket.warranty && <section className={`ticket-warranty-detail warranty-${ticket.warranty.status}`} aria-label="Situação da garantia">
         <ShieldCheck size={18} />

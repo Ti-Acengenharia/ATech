@@ -7,7 +7,7 @@ import { getTicketWarranty } from './warranties.js'
 interface CvcrmStage {
   idsituacao: number
   nome: string
-  ordem?: number
+  ordem?: number | string
   cor_bg?: string
   cor_nome?: string
   flags?: Record<string, string>
@@ -74,6 +74,12 @@ function toText(value: unknown) {
 function toNumber(value: unknown) {
   const number = Number(value)
   return Number.isSafeInteger(number) ? number : null
+}
+
+function toOrderNumber(value: unknown) {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function toTimestamp(value: unknown) {
@@ -357,7 +363,7 @@ async function persistWorkflowStages(stages: CvcrmStage[]) {
         [
           sourceStatusId,
           name,
-          toNumber(stage.ordem) ?? index,
+          toOrderNumber(stage.ordem) ?? index,
           toText(stage.cor_bg) || null,
           toText(stage.cor_nome) || null,
           JSON.stringify(stage.flags ?? {}),

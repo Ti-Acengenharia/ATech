@@ -170,7 +170,8 @@ router.post('/integration/import-active', requireAdmin, async (_req, res, next) 
 router.get('/workflow', async (_req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT source_status_id AS id, name, position, background_color, text_color, flags
+      `SELECT source_status_id AS id, name, position::double precision AS position,
+              background_color, text_color, flags
        FROM ticket_workflow_stages
        WHERE name IS NOT NULL AND length(btrim(name)) > 0
        ORDER BY position, source_status_id`,
@@ -307,6 +308,7 @@ router.get('/:id/cv-conversation', async (req, res, next) => {
 })
 
 router.get('/filter-options', async (_req, res, next) => {
+  const includeInactive = z.boolean().catch(false).parse(_req.query.includeInactive === 'true')
   let selectedEnterprises: string[] = []
   if (_req.query.enterprise !== undefined) {
     const enterpriseQuery = z.union([
@@ -324,35 +326,38 @@ router.get('/filter-options', async (_req, res, next) => {
     const [enterprises, blocks, units, subjects, subsubjects] = await Promise.all([
       pool.query<{ value: string }>(
         `SELECT min(btrim(enterprise)) AS value FROM tickets
-         WHERE source_active = TRUE AND btrim(enterprise) <> ''
+         WHERE ($1::boolean OR source_active = TRUE) AND btrim(enterprise) <> ''
          GROUP BY lower(btrim(enterprise)) ORDER BY lower(min(btrim(enterprise)))`,
+        [includeInactive],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(block)) AS value FROM tickets
-         WHERE source_active = TRUE AND btrim(block) <> ''
-           AND (cardinality($1::text[]) = 0 OR lower(enterprise) = ANY($1::text[]))
+         WHERE ($1::boolean OR source_active = TRUE) AND btrim(block) <> ''
+           AND (cardinality($2::text[]) = 0 OR lower(enterprise) = ANY($2::text[]))
          GROUP BY lower(btrim(block)) ORDER BY lower(min(btrim(block)))`,
-        [selectedEnterprises],
+        [includeInactive, selectedEnterprises],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(unit)) AS value FROM tickets
-         WHERE source_active = TRUE AND btrim(unit) <> ''
-           AND (cardinality($1::text[]) = 0 OR lower(enterprise) = ANY($1::text[]))
+         WHERE ($1::boolean OR source_active = TRUE) AND btrim(unit) <> ''
+           AND (cardinality($2::text[]) = 0 OR lower(enterprise) = ANY($2::text[]))
          GROUP BY lower(btrim(unit)) ORDER BY lower(min(btrim(unit)))`,
-        [selectedEnterprises],
+        [includeInactive, selectedEnterprises],
       ),
       pool.query<{ value: string }>(
         `SELECT CASE WHEN source_subject_id = 16 THEN 'Assistência Técnica' ELSE min(btrim(subject)) END AS value
          FROM tickets
-         WHERE source_active = TRUE AND (source_subject_id = 16 OR btrim(subject) <> '')
+         WHERE ($1::boolean OR source_active = TRUE) AND (source_subject_id = 16 OR btrim(subject) <> '')
          GROUP BY (source_subject_id = 16),
                   CASE WHEN source_subject_id = 16 THEN 'Assistência Técnica' ELSE lower(btrim(subject)) END
          ORDER BY value`,
+        [includeInactive],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(subsubject)) AS value FROM tickets
-         WHERE source_active = TRUE AND btrim(subsubject) <> ''
+         WHERE ($1::boolean OR source_active = TRUE) AND btrim(subsubject) <> ''
          GROUP BY lower(btrim(subsubject)) ORDER BY lower(min(btrim(subsubject)))`,
+        [includeInactive],
       ),
     ])
     res.json({
@@ -369,6 +374,7 @@ router.get('/filter-options', async (_req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   const search = z.string().trim().max(100).catch('').parse(req.query.search)
+  const includeInactive = z.boolean().catch(false).parse(req.query.includeInactive === 'true')
   let selectedEnterprises: string[] = []
   if (req.query.enterprise !== undefined) {
     const enterpriseQuery = z.union([
@@ -403,6 +409,7 @@ router.get('/', async (req, res, next) => {
     const result = await pool.query<{
       source_id: string
       protocol: string
+      source_active: boolean
       source_status_id: number | null
       source_status_name: string
       source_modified_at: Date | null
@@ -433,7 +440,7 @@ router.get('/', async (req, res, next) => {
       programming_count: number
       custom_tags: Array<{ id: string; name: string; color: string }>
     }>(
-      `SELECT t.source_id, t.protocol, t.source_status_id, t.source_status_name,
+      `SELECT t.source_id, t.protocol, t.source_active, t.source_status_id, t.source_status_name,
               t.source_modified_at, t.opened_at, t.opened_at::date::text AS opened_date,
               t.source_subject_id, t.source_subsubject_id,
               ei.condominium_delivery_date::text AS delivery_date, warranty.warranty_years,
@@ -465,7 +472,7 @@ router.get('/', async (req, res, next) => {
          ORDER BY CASE WHEN w.source_subsubject_id = t.source_subsubject_id THEN 0 ELSE 1 END
          LIMIT 1
        ) warranty ON TRUE
-       WHERE t.source_active = TRUE
+       WHERE ($9::boolean OR t.source_active = TRUE)
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
            OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1)
          AND (cardinality($2::text[]) = 0 OR lower(t.enterprise) = ANY($2::text[]))
@@ -481,6 +488,7 @@ router.get('/', async (req, res, next) => {
       [
         term, enterpriseNames, blockTerm, unitTerm, customerTerm, subject, subsubject,
         requestedId?.success ? requestedId.data : null,
+        includeInactive,
       ],
     )
 
@@ -490,6 +498,7 @@ router.get('/', async (req, res, next) => {
         protocol: ticket.protocol,
         statusId: ticket.source_status_id,
         status: ticket.source_status_name,
+        sourceActive: ticket.source_active,
         sourceModifiedAt: ticket.source_modified_at,
         openedAt: ticket.opened_at,
         openSeconds: ticket.opened_at ? Math.max(0, Math.floor((Date.now() - ticket.opened_at.valueOf()) / 1000)) : null,
@@ -542,7 +551,7 @@ router.get('/completion-terms', async (_req, res, next) => {
       `SELECT a.id, a.ticket_id, a.file_name, a.file_size, a.created_at, a.uploaded_by,
               COALESCE(u.display_name, 'Usuário removido') AS uploaded_by_name
        FROM ticket_attachments a
-       JOIN tickets t ON t.source_id = a.ticket_id AND t.source_active = TRUE
+       JOIN tickets t ON t.source_id = a.ticket_id
        LEFT JOIN users u ON u.id = a.uploaded_by
        WHERE a.file_name LIKE 'termo-finalizacao-%' AND a.content_type = 'application/pdf'
        ORDER BY a.created_at DESC, a.id`,
