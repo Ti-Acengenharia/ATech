@@ -143,6 +143,31 @@
 .legal-replying-banner { margin-top: 10px; padding: 8px 10px; color: #416b8d; background: #eef6fc; border-radius: 4px; font-size: 11px; }
 .access-module-check { display: inline-flex; align-items: center; gap: 7px; color: #53697a; font-size: 11px; white-space: nowrap; }
 .access-module-check input { width: 16px; height: 16px; accent-color: var(--forest); }
+.legal-csv-upload { margin: 0 0 16px; padding: 16px; background: #fff; border: 1px solid #e4ebf2; border-radius: 10px; box-shadow: 0 8px 24px rgba(25, 55, 82, .055); }
+.legal-csv-heading, .legal-csv-heading > div, .legal-csv-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.legal-csv-heading > div { justify-content: flex-start; color: #315d7e; }
+.legal-csv-heading h2 { margin: 0 0 4px; color: var(--ink); font-size: 14px; }
+.legal-csv-heading p, .legal-csv-temporary-note { margin: 0; color: var(--muted); font-size: 11px; }
+.legal-csv-picker { position: relative; overflow: hidden; flex: 0 0 auto; cursor: pointer; }
+.legal-csv-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.legal-csv-preview { margin-top: 15px; padding-top: 14px; border-top: 1px solid #e8edf2; }
+.legal-csv-preview-heading { color: var(--muted); font-size: 11px; }
+.legal-csv-preview-heading strong { color: var(--ink); overflow-wrap: anywhere; }
+.legal-csv-temporary-note { margin-top: 5px; }
+.legal-csv-search { width: min(360px, 100%); margin: 12px 0; }
+.legal-csv-table-wrap { max-height: 560px; overflow: auto; border: 1px solid #e4ebf2; border-radius: 7px; }
+.legal-csv-table { width: 100%; min-width: 900px; border-collapse: collapse; text-align: left; }
+.legal-csv-table th { position: sticky; z-index: 1; top: 0; padding: 10px; color: #71849a; background: #f6f9fc; font: 9px var(--mono); white-space: nowrap; }
+.legal-csv-table td { max-width: 280px; padding: 10px; color: #53697a; border-top: 1px solid #edf1f4; vertical-align: top; font-size: 11px; }
+.legal-csv-table td:first-child strong, .legal-csv-table td:first-child small { display: block; }
+.legal-csv-table td:first-child strong { color: var(--ink); }
+.legal-csv-table td:first-child small { margin-top: 4px; color: #8494a2; font: 9px var(--mono); }
+.legal-csv-details details + details { margin-top: 7px; }
+.legal-csv-details summary { color: #315d7e; cursor: pointer; }
+.legal-csv-details p { max-height: 240px; overflow: auto; margin: 5px 0 0; color: #53697a; white-space: pre-wrap; overflow-wrap: anywhere; }
+.legal-csv-preview .list-pagination { margin-top: 10px; }
+.legal-csv-import-action { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 13px; }
+.legal-csv-import-action small { color: var(--muted); font-size: 10px; }
 @media (max-width: 760px) {
   .legal-page { padding: 18px 13px; }
   .legal-heading { align-items: flex-start; flex-direction: column; }
@@ -193,6 +218,8 @@
   .legal-list-wrap { overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
   .legal-modal { width: 100%; max-width: 100%; }
   .legal-field select, .legal-process-card select, .legal-status-label select { min-height: 38px; }
+  .legal-csv-heading, .legal-csv-preview-heading { align-items: flex-start; flex-direction: column; }
+  .legal-csv-picker { min-height: 38px; }
 }
 @media (max-width: 480px) {
   .legal-view-switch { width: 100%; }

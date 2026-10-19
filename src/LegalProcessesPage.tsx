@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   Columns3,
   Download,
   FileText,
+  FileSpreadsheet,
   GripVertical,
   List,
   MessageCircle,
@@ -17,14 +18,32 @@ import {
   Save,
   Search,
   Trash2,
+  UploadCloud,
   X,
 } from 'lucide-react'
+import Papa from 'papaparse'
 import { apiRequest } from './api/client'
 import './LegalProcessesPage.css'
 
 interface LegalStatus { id: number; name: string; position: number; color: string }
 interface Assignee { id: number; display_name?: string; displayName?: string; email?: string }
 interface ChildProcess { id?: number; processNumber: string; description: string; statusId: number; movementDate: string | null; isDone: boolean }
+interface CsvLegalTask {
+  id: string
+  name: string
+  status: string
+  assignee: string
+  priority: string
+  dueDate: string
+  taskContent: string
+  latestComment: string
+  commentCount: string
+}
+interface CsvImportResult {
+  importedCount: number
+  skippedCount: number
+  statusesCreated: number
+}
 interface LegalComment {
   id: number
   body: string
@@ -168,6 +187,24 @@ function fileBase64(file: File) {
   })
 }
 
+function decodeCsvFile(file: File) {
+  return file.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer)
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+      return new TextDecoder('utf-16le').decode(bytes.subarray(2))
+    }
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+      return new TextDecoder('utf-16be').decode(bytes.subarray(2))
+    }
+    if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      return new TextDecoder('utf-8').decode(bytes.subarray(3))
+    }
+
+    const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+    return utf8.includes('\uFFFD') ? new TextDecoder('windows-1252').decode(bytes) : utf8
+  })
+}
+
 export default function LegalProcessesPage({ currentUser }: { currentUser: { id: number; role: 'admin' | 'member' } }) {
   const [statuses, setStatuses] = useState<LegalStatus[]>([])
   const [processes, setProcesses] = useState<LegalProcess[]>([])
@@ -202,6 +239,11 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [busyComment, setBusyComment] = useState(false)
   const [dragged, setDragged] = useState<number | null>(null)
   const [savingStatusOrder, setSavingStatusOrder] = useState(false)
+  const [csvTasks, setCsvTasks] = useState<CsvLegalTask[]>([])
+  const [csvFileName, setCsvFileName] = useState('')
+  const [csvQuery, setCsvQuery] = useState('')
+  const [csvPage, setCsvPage] = useState(1)
+  const [importingCsv, setImportingCsv] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
   const boardDragRef = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
   const suppressBoardClickRef = useRef(false)
@@ -213,6 +255,121 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       return saved && saved.every((item) => faceFields.some((field) => field.id === item)) ? saved : defaultFaceFields
     } catch { return defaultFaceFields }
   })
+
+  async function handleLegalCsvSelected(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (!file) return
+
+    setCsvTasks([])
+    setCsvFileName('')
+    setCsvQuery('')
+    setCsvPage(1)
+    setNotice(null)
+    try {
+      if (!file.name.toLocaleLowerCase().endsWith('.csv')) {
+        throw new Error('Selecione um arquivo com extensão .csv.')
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error('O arquivo CSV deve ter no máximo 10 MiB.')
+      }
+
+      const content = await decodeCsvFile(file)
+      const parsed = Papa.parse<string[]>(content.replace(/^\uFEFF/, ''), {
+        header: false,
+        skipEmptyLines: 'greedy',
+        dynamicTyping: false,
+      })
+      const parseError = parsed.errors.find((error) => error.code !== 'UndetectableDelimiter')
+      if (parseError) throw new Error(`Não foi possível ler o CSV: ${parseError.message}`)
+
+      const [headerRow, ...dataRows] = parsed.data
+      if (!headerRow?.length) throw new Error('O arquivo CSV está vazio.')
+
+      const headers = headerRow.map((header) => header.trim().toLocaleLowerCase('pt-BR'))
+      const column = (name: string) => headers.indexOf(name.toLocaleLowerCase('pt-BR'))
+      const nameIndex = column('Task Name')
+      const statusIndex = column('Status')
+      const idIndex = column('Task ID')
+      if (nameIndex < 0 || statusIndex < 0 || idIndex < 0) {
+        throw new Error('CSV incompatível. O cabeçalho precisa conter as colunas "Task ID", "Task Name" e "Status".')
+      }
+      const cell = (row: string[], index: number) => index < 0 ? '' : (row[index] ?? '').trim()
+      const nonEmptyRows = dataRows.filter((row) => cell(row, nameIndex))
+      if (!nonEmptyRows.length) throw new Error('O CSV não contém tarefas com nome.')
+      if (nonEmptyRows.length > 5000) throw new Error('O CSV pode conter no máximo 5.000 tarefas.')
+      if (nonEmptyRows.some((row) => !cell(row, idIndex))) {
+        throw new Error('Há tarefas sem Task ID. Exporte novamente do ClickUp para permitir evitar cartões duplicados.')
+      }
+      if (new Set(nonEmptyRows.map((row) => cell(row, idIndex))).size !== nonEmptyRows.length) {
+        throw new Error('O CSV contém Task IDs duplicados. Revise a exportação antes de importar.')
+      }
+
+      const assigneeIndex = column('Assignee')
+      const priorityIndex = column('Priority')
+      const dueDateIndex = column('Due Date')
+      const contentIndex = column('Task Content')
+      const commentIndex = column('Latest Comment')
+      const commentCountIndex = column('Comment Count')
+      const tasks = nonEmptyRows.map((row) => ({
+        id: cell(row, idIndex),
+        name: cell(row, nameIndex),
+        status: cell(row, statusIndex) || 'Sem situação',
+        assignee: cell(row, assigneeIndex),
+        priority: cell(row, priorityIndex),
+        dueDate: cell(row, dueDateIndex),
+        taskContent: cell(row, contentIndex),
+        latestComment: cell(row, commentIndex),
+        commentCount: cell(row, commentCountIndex),
+      }))
+      setCsvTasks(tasks)
+      setCsvFileName(file.name)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível ler o arquivo CSV.' })
+    } finally {
+      input.value = ''
+    }
+  }
+
+  function clearCsvPreview() {
+    setCsvTasks([])
+    setCsvFileName('')
+    setCsvQuery('')
+    setCsvPage(1)
+  }
+
+  async function importCsvTasks() {
+    if (!csvTasks.length || importingCsv) return
+    const confirmed = window.confirm(
+      `Importar ${csvTasks.length} cartões para Processos Jurídicos? Os dados serão salvos no banco. O arquivo CSV original não será guardado e Task IDs já importados serão ignorados.`,
+    )
+    if (!confirmed) return
+
+    setImportingCsv(true)
+    setNotice(null)
+    try {
+      const body = JSON.stringify({ tasks: csvTasks })
+      if (new TextEncoder().encode(body).byteLength > 7_000_000) {
+        throw new Error('O conteúdo do CSV é grande demais para importar em uma única operação.')
+      }
+      const result = await apiRequest<CsvImportResult>('/api/legal-processes/import-csv', {
+        method: 'POST',
+        body,
+      })
+      await load()
+      setQuery('')
+      setStatusFilter('')
+      setView('board')
+      setNotice({
+        kind: 'success',
+        text: `Importação concluída: ${result.importedCount} cartão(ões) criado(s), ${result.skippedCount} já importado(s) ignorado(s) e ${result.statusesCreated} fase(s) criada(s).`,
+      })
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível importar os cartões do CSV.' })
+    } finally {
+      setImportingCsv(false)
+    }
+  }
 
   const load = useCallback(async () => {
     const [statusResult, processResult] = await Promise.all([
@@ -257,6 +414,16 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     (!statusFilter || String(process.status_id) === statusFilter) &&
     `${process.title} ${process.claimant} ${process.assignees.map((person) => person.displayName ?? person.display_name).join(' ')}`
       .toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))), [processes, query, statusFilter])
+  const filteredCsvTasks = useMemo(() => {
+    const normalizedQuery = csvQuery.toLocaleLowerCase('pt-BR')
+    if (!normalizedQuery) return csvTasks
+    return csvTasks.filter((task) =>
+      `${task.name} ${task.status} ${task.assignee} ${task.priority} ${task.dueDate} ${task.taskContent} ${task.latestComment}`
+        .toLocaleLowerCase('pt-BR').includes(normalizedQuery))
+  }, [csvTasks, csvQuery])
+  const csvPageCount = Math.max(1, Math.ceil(filteredCsvTasks.length / listPageSize))
+  const currentCsvPage = Math.min(csvPage, csvPageCount)
+  const visibleCsvTasks = filteredCsvTasks.slice((currentCsvPage - 1) * listPageSize, currentCsvPage * listPageSize)
   const legalListKey = JSON.stringify([query, statusFilter, filtered.map((process) => process.id)])
   const [legalListPageState, setLegalListPageState] = useState<{ key: string; page: number }>({ key: '', page: 1 })
   const legalListPageCount = Math.max(1, Math.ceil(filtered.length / listPageSize))
@@ -684,6 +851,44 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
         </div>
       </header>
       {notice && <div className={`notice notice-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><span className="notice-symbol">{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" onClick={() => setNotice(null)} aria-label="Fechar aviso">×</button></div>}
+
+      <section className="legal-csv-upload" aria-labelledby="legal-csv-title">
+        <div className="legal-csv-heading">
+          <div><FileSpreadsheet size={19} /><div><h2 id="legal-csv-title">Importar cartões do ClickUp</h2><p>A prévia é lida no navegador. Ao importar, os cartões e seus dados serão salvos; o arquivo CSV original não será guardado.</p></div></div>
+          <label className="secondary-button legal-csv-picker"><UploadCloud size={15} />Selecionar CSV<input className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => void handleLegalCsvSelected(event)} /></label>
+        </div>
+        {csvFileName && <div className="legal-csv-preview">
+          <div className="legal-csv-preview-heading">
+            <span><strong>{csvFileName}</strong> · {csvTasks.length} tarefas prontas para importar</span>
+            <button type="button" className="text-action-btn" onClick={clearCsvPreview}><X size={14} /> Remover prévia</button>
+          </div>
+          <p className="legal-csv-temporary-note">O status do ClickUp será usado como fase do quadro; fases ausentes serão criadas. Task IDs já importados serão ignorados e cartões existentes não serão sobrescritos.</p>
+          <label className="search-box legal-csv-search"><Search size={15} /><input type="search" placeholder="Buscar nas tarefas do CSV" value={csvQuery} onChange={(event) => { setCsvQuery(event.target.value); setCsvPage(1) }} /></label>
+          <div className="legal-csv-table-wrap">
+            <table className="legal-csv-table">
+              <thead><tr><th>Tarefa</th><th>Status</th><th>Responsável</th><th>Prioridade</th><th>Prazo</th><th>Comentários</th><th>Descrição e último comentário</th></tr></thead>
+              <tbody>{visibleCsvTasks.map((task, index) => <tr key={`${task.id}-${(currentCsvPage - 1) * listPageSize + index}`}>
+                <td><strong>{task.name}</strong><small>{task.id}</small></td>
+                <td>{task.status}</td><td>{task.assignee || '—'}</td><td>{task.priority || '—'}</td><td>{task.dueDate || '—'}</td><td>{task.commentCount || '—'}</td>
+                <td className="legal-csv-details">
+                  {task.taskContent && <details><summary>Ver descrição</summary><p>{task.taskContent}</p></details>}
+                  {task.latestComment && <details><summary>Ver último comentário</summary><p>{task.latestComment}</p></details>}
+                  {!task.taskContent && !task.latestComment && '—'}
+                </td>
+              </tr>)}
+                {!visibleCsvTasks.length && <tr><td colSpan={7}>Nenhuma tarefa corresponde à busca.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <LegalListPagination total={filteredCsvTasks.length} page={currentCsvPage} pageCount={csvPageCount} pageSize={listPageSize} onPageChange={setCsvPage} />
+          <div className="legal-csv-import-action">
+            <button type="button" className="primary-button" disabled={importingCsv || !csvTasks.length} onClick={() => void importCsvTasks()}>
+              <Download size={15} />{importingCsv ? 'Importando cartões...' : `Importar ${csvTasks.length} cartões`}
+            </button>
+            <small>Importa todas as tarefas do CSV, mesmo se a prévia estiver filtrada.</small>
+          </div>
+        </div>}
+      </section>
 
       <div className="legal-toolbar">
         <button type="button" className="legal-filter-toggle" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}><ChevronDown size={15} />{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}{!filtersExpanded && <span>{[query, statusFilter].filter(Boolean).length} filtro(s)</span>}</button>

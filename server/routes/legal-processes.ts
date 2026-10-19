@@ -64,6 +64,42 @@ const commentSchema = z.object({
   mentionIds: z.array(z.coerce.number().int().positive()).max(50).default([]),
   parentCommentId: z.coerce.number().int().positive().nullable().optional().default(null),
 })
+const csvImportTaskSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(240),
+  status: z.string().trim().min(1).max(80),
+  assignee: z.string().trim().max(500),
+  priority: z.string().trim().max(100),
+  dueDate: z.string().trim().max(200),
+  taskContent: z.string().max(10_000),
+  latestComment: z.string().max(6_000),
+  commentCount: z.string().trim().max(20),
+})
+type CsvImportTask = z.infer<typeof csvImportTaskSchema>
+
+function csvTaskDescription(task: CsvImportTask) {
+  return [
+    `Task ID ClickUp: ${task.id}`,
+    `Responsável: ${task.assignee || 'Não informado'}`,
+    `Prioridade: ${task.priority || 'Não informada'}`,
+    `Prazo: ${task.dueDate || 'Não informado'}`,
+    `Comentários no ClickUp: ${task.commentCount || '0'}`,
+    task.taskContent ? `Descrição:\n${task.taskContent}` : '',
+    task.latestComment ? `Último comentário:\n${task.latestComment}` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
+const csvImportSchema = z.object({
+  tasks: z.array(csvImportTaskSchema).min(1).max(5000),
+}).refine(({ tasks }) => new Set(tasks.map((task) => task.id)).size === tasks.length, {
+  message: 'O CSV contém Task IDs duplicados.',
+}).refine(({ tasks }) => Buffer.byteLength(JSON.stringify(tasks), 'utf8') <= 7_000_000, {
+  message: 'O conteúdo do CSV é grande demais para importar em uma única operação.',
+}).refine(({ tasks }) => tasks.every((task) => {
+  return csvTaskDescription(task).length <= 20_000
+}), {
+  message: 'Uma ou mais tarefas têm descrição e comentário acima do limite permitido por cartão.',
+})
 
 router.use(requireAuth)
 async function validateChildStatuses(client: PoolClient, children: z.infer<typeof processSchema>['children']) {
@@ -77,6 +113,88 @@ async function validateChildStatuses(client: PoolClient, children: z.infer<typeo
 }
 
 router.use(requirePageAccess('legal-processes'))
+
+router.post('/import-csv', async (req, res, next) => {
+  const parsed = csvImportSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do CSV inválidos.' })
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('LOCK TABLE legal_process_csv_imports IN SHARE ROW EXCLUSIVE MODE')
+    await client.query('LOCK TABLE legal_process_statuses IN SHARE ROW EXCLUSIVE MODE')
+
+    const existingStatuses = await client.query<{ id: string; name: string }>(
+      'SELECT id, name FROM legal_process_statuses ORDER BY position, id',
+    )
+    const statusIds = new Map(existingStatuses.rows.map((status) => [status.name.trim().toLocaleLowerCase(), status.id]))
+    let nextPosition = existingStatuses.rows.length
+    let statusesCreated = 0
+    let importedCount = 0
+    let skippedCount = 0
+    const palette = ['#3478a8', '#a67824', '#7557a5', '#43805b', '#a44f4f', '#5c7183']
+
+    for (const task of parsed.data.tasks) {
+      const alreadyImported = await client.query(
+        'SELECT 1 FROM legal_process_csv_imports WHERE external_task_id = $1',
+        [task.id],
+      )
+      if (alreadyImported.rowCount) {
+        skippedCount += 1
+        continue
+      }
+
+      const normalizedStatus = task.status.trim()
+      let statusId = statusIds.get(normalizedStatus.toLocaleLowerCase())
+      if (!statusId) {
+        const created = await client.query<{ id: string; name: string }>(
+          `INSERT INTO legal_process_statuses (name, position, color, created_by)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (lower(name)) DO NOTHING
+           RETURNING id, name`,
+          [normalizedStatus, nextPosition, palette[statusesCreated % palette.length], req.session.user!.id],
+        )
+        if (created.rowCount) {
+          statusId = created.rows[0].id
+          nextPosition += 1
+          statusesCreated += 1
+        } else {
+          const existing = await client.query<{ id: string; name: string }>(
+            'SELECT id, name FROM legal_process_statuses WHERE lower(name) = lower($1)',
+            [normalizedStatus],
+          )
+          statusId = existing.rows[0]?.id
+        }
+        if (!statusId) throw new Error(`Não foi possível obter a fase "${normalizedStatus}" do CSV.`)
+        statusIds.set(normalizedStatus.toLocaleLowerCase(), statusId)
+      }
+
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO legal_processes (title, status_id, description, created_by)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [task.name, statusId, csvTaskDescription(task), req.session.user!.id],
+      )
+      await client.query(
+        `INSERT INTO legal_process_csv_imports (external_task_id, process_id, imported_by)
+         VALUES ($1, $2, $3)`,
+        [task.id, inserted.rows[0].id, req.session.user!.id],
+      )
+      importedCount += 1
+    }
+
+    await client.query('COMMIT')
+    res.status(201).json({ importedCount, skippedCount, statusesCreated })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
 
 router.get('/statuses', async (_req, res, next) => {
   try {
