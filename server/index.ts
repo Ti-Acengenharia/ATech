@@ -15,6 +15,7 @@ import profileRoutes from './routes/profile.js'
 import enterpriseInformationRoutes from './routes/enterprise-information.js'
 import warrantyRoutes from './routes/warranties.js'
 import legalProcessRoutes from './routes/legal-processes.js'
+import personalActivityRoutes from './routes/personal-activities.js'
 import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, cvcrmSyncIntervalMs, syncCvcrmTickets } from './services/cvcrm.js'
 
 const app = express()
@@ -73,6 +74,7 @@ app.use('/api/team', teamRoutes)
 app.use('/api/enterprise-information', enterpriseInformationRoutes)
 app.use('/api/warranties', warrantyRoutes)
 app.use('/api/legal-processes', legalProcessRoutes)
+app.use('/api/personal-activities', personalActivityRoutes)
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Erro na API:', error)

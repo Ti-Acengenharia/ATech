@@ -33,6 +33,7 @@ import {
 import { apiRequest } from '../api/client'
 import CompletionTermModal from './CompletionTermModal'
 import TicketProgrammingForm from './TicketProgrammingForm'
+import SearchableMultiSelect from '../SearchableMultiSelect'
 import type { CvTicketAttachment, CvTicketMessage, TeamMentionTarget, TicketProgramming, TicketSummary, TicketTag, TicketWorkflowStage } from './types'
 
 interface SyncState {
@@ -98,11 +99,11 @@ type TicketSortDirection = 'asc' | 'desc'
 interface SavedTicketFilters {
   search: string
   enterprises: string[]
-  block: string
-  unit: string
+  block: string[]
+  unit: string[]
   customer: string
-  subject: string
-  subsubject: string
+  subject: string[]
+  subsubject: string[]
   includeInactive: boolean
   viewMode: TicketViewMode
   cardFields: TicketCardField[]
@@ -130,14 +131,18 @@ function readTicketFilters(userId: number): SavedTicketFilters {
     const encoded = Array.from({ length: chunkCount }, (_, index) => readCookie(`${prefix}-${index}`)).join('')
     if (!encoded) throw new Error('Empty cookie')
     const saved = JSON.parse(decodeURIComponent(encoded)) as Partial<SavedTicketFilters>
+    const values = (value: unknown, maxLength: number) => (Array.isArray(value) ? value : typeof value === 'string' && value ? [value] : [])
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.slice(0, maxLength))
+      .slice(0, 50)
     return {
       search: typeof saved.search === 'string' ? saved.search.slice(0, 100) : '',
-      enterprises: Array.isArray(saved.enterprises) ? saved.enterprises.filter((value): value is string => typeof value === 'string').slice(0, 50) : [],
-      block: typeof saved.block === 'string' ? saved.block.slice(0, 120) : '',
-      unit: typeof saved.unit === 'string' ? saved.unit.slice(0, 120) : '',
+      enterprises: values(saved.enterprises, 240),
+      block: values(saved.block, 120),
+      unit: values(saved.unit, 120),
       customer: typeof saved.customer === 'string' ? saved.customer.slice(0, 160) : '',
-      subject: typeof saved.subject === 'string' ? saved.subject.slice(0, 240) : '',
-      subsubject: typeof saved.subsubject === 'string' ? saved.subsubject.slice(0, 240) : '',
+      subject: values(saved.subject, 240),
+      subsubject: values(saved.subsubject, 240),
       includeInactive: saved.includeInactive === true,
       viewMode: saved.viewMode === 'list' ? 'list' : 'kanban',
       cardFields: Array.isArray(saved.cardFields)
@@ -151,7 +156,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       sortDirection: saved.sortDirection === 'desc' ? 'desc' : 'asc',
     }
   } catch {
-    return { search: '', enterprises: [], block: '', unit: '', customer: '', subject: '', subsubject: '', includeInactive: false, viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
+    return { search: '', enterprises: [], block: [], unit: [], customer: '', subject: [], subsubject: [], includeInactive: false, viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
   }
 }
 
@@ -283,11 +288,11 @@ export default function TicketBoardPage({
   const [configured, setConfigured] = useState(false)
   const [search, setSearch] = useState(savedFilters.search)
   const [enterpriseFilters, setEnterpriseFilters] = useState<string[]>(savedFilters.enterprises)
-  const [blockFilter, setBlockFilter] = useState(savedFilters.block)
-  const [unitFilter, setUnitFilter] = useState(savedFilters.unit)
+  const [blockFilter, setBlockFilter] = useState<string[]>(savedFilters.block)
+  const [unitFilter, setUnitFilter] = useState<string[]>(savedFilters.unit)
   const [customerNameFilter, setCustomerNameFilter] = useState(savedFilters.customer)
-  const [subjectFilter, setSubjectFilter] = useState(savedFilters.subject)
-  const [subsubjectFilter, setSubsubjectFilter] = useState(savedFilters.subsubject)
+  const [subjectFilter, setSubjectFilter] = useState<string[]>(savedFilters.subject)
+  const [subsubjectFilter, setSubsubjectFilter] = useState<string[]>(savedFilters.subsubject)
   const [includeInactive, setIncludeInactive] = useState(savedFilters.includeInactive)
   const [viewMode, setViewMode] = useState<TicketViewMode>(savedFilters.viewMode)
   const [cardFields, setCardFields] = useState<TicketCardField[]>(savedFilters.cardFields)
@@ -312,9 +317,16 @@ export default function TicketBoardPage({
   const [lookingUpProtocol, setLookingUpProtocol] = useState(false)
   const [protocolError, setProtocolError] = useState('')
   const enterpriseFilterKey = JSON.stringify([...enterpriseFilters].sort((left, right) => left.localeCompare(right)))
-  const blockOptionsReady = blockUnitOptionsScope === enterpriseFilterKey
-  const activeBlockFilter = blockOptionsReady && blockOptions.includes(blockFilter) ? blockFilter : ''
-  const activeUnitFilter = blockOptionsReady && unitOptions.includes(unitFilter) ? unitFilter : ''
+  const blockUnitFilterKey = `${enterpriseFilterKey}|${JSON.stringify([...blockFilter].sort())}`
+  const blockOptionsReady = blockUnitOptionsScope === blockUnitFilterKey
+  const activeBlockFilter = useMemo(
+    () => blockOptionsReady ? blockFilter.filter((value) => blockOptions.includes(value)) : [],
+    [blockOptionsReady, blockFilter, blockOptions],
+  )
+  const activeUnitFilter = useMemo(
+    () => blockOptionsReady ? unitFilter.filter((value) => unitOptions.includes(value)) : [],
+    [blockOptionsReady, unitFilter, unitOptions],
+  )
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 60_000)
@@ -347,6 +359,7 @@ export default function TicketBoardPage({
     let cancelled = false
     const params = new URLSearchParams()
     for (const enterprise of enterpriseFilters) params.append('enterprise', enterprise)
+    for (const block of blockFilter) params.append('block', block)
     if (includeInactive) params.set('includeInactive', 'true')
     const query = params.toString()
     apiRequest<{ blocks: string[]; units: string[] }>(`/api/tickets/filter-options${query ? `?${query}` : ''}`)
@@ -354,13 +367,13 @@ export default function TicketBoardPage({
         if (cancelled) return
         setBlockOptions(options.blocks)
         setUnitOptions(options.units)
-        setBlockUnitOptionsScope(enterpriseFilterKey)
+        setBlockUnitOptionsScope(blockUnitFilterKey)
       })
       .catch((error: unknown) => {
         if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar as opções de bloco e unidade.' })
       })
     return () => { cancelled = true }
-  }, [enterpriseFilters, enterpriseFilterKey, includeInactive, refreshKey])
+  }, [enterpriseFilters, enterpriseFilterKey, blockFilter, blockUnitFilterKey, includeInactive, refreshKey])
 
   useEffect(() => {
     const saved = saveTicketFilters(currentUser.id, {
@@ -400,11 +413,11 @@ export default function TicketBoardPage({
       const params = new URLSearchParams()
       if (search.trim()) params.set('search', search.trim())
       for (const enterprise of enterpriseFilters) params.append('enterprise', enterprise)
-      if (activeBlockFilter) params.set('block', activeBlockFilter)
-      if (activeUnitFilter) params.set('unit', activeUnitFilter)
+      for (const block of activeBlockFilter) params.append('block', block)
+      for (const unit of activeUnitFilter) params.append('unit', unit)
       if (customerNameFilter.trim()) params.set('customerName', customerNameFilter.trim())
-      if (subjectFilter) params.set('subject', subjectFilter)
-      if (subsubjectFilter) params.set('subsubject', subsubjectFilter)
+      for (const subject of subjectFilter) params.append('subject', subject)
+      for (const subsubject of subsubjectFilter) params.append('subsubject', subsubject)
       if (includeInactive) params.set('includeInactive', 'true')
       const query = params.toString()
       const suffix = query ? `?${query}` : ''
@@ -753,34 +766,31 @@ export default function TicketBoardPage({
         <button className="ticket-filter-toggle" type="button" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}>
           <ChevronDown size={15} />
           {filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}
-          {!filtersExpanded && <span>{[search, ...enterpriseFilters, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
+          {!filtersExpanded && <span>{[search, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
         </button>
         {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
         <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Protocolo, assunto ou empreendimento" aria-label="Pesquisar chamados" /></label>
-        <details className="enterprise-multiselect">
-          <summary><span>Empreendimentos</span><strong>{enterpriseFilters.length ? `${enterpriseFilters.length} selecionado${enterpriseFilters.length === 1 ? '' : 's'}` : 'Todos'}</strong><ChevronDown size={15} /></summary>
-          <div className="enterprise-multiselect-popover">
-            <header><strong>Filtrar empreendimentos</strong><button type="button" onClick={() => setEnterpriseFilters([])} disabled={!enterpriseFilters.length}>Limpar</button></header>
-            <div className="enterprise-multiselect-options">
-              {enterpriseOptions.length ? enterpriseOptions.map((value) => (
-                <label key={value}><input type="checkbox" checked={enterpriseFilters.includes(value)} onChange={() => setEnterpriseFilters((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} /><span>{value}</span></label>
-              )) : <span className="filter-options-empty">Nenhum empreendimento disponível.</span>}
-            </div>
-          </div>
-        </details>
-        <label className="filter-control"><span>Bloco</span><select value={activeBlockFilter} disabled={!blockOptionsReady} onChange={(event) => setBlockFilter(event.target.value)}><option value="">Todos</option>{blockOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="filter-control"><span>Unidade</span><select value={activeUnitFilter} disabled={!blockOptionsReady} onChange={(event) => setUnitFilter(event.target.value)}><option value="">Todas</option>{unitOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="filter-control"><span>Assunto</span><select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)}><option value="">Todos</option>{subjectOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="filter-control"><span>Subassunto</span><select value={subsubjectFilter} onChange={(event) => setSubsubjectFilter(event.target.value)}><option value="">Todos</option>{subsubjectOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <SearchableMultiSelect label="Empreendimentos" options={enterpriseOptions} value={enterpriseFilters} onChange={(value) => {
+          setEnterpriseFilters(value)
+          setBlockFilter([])
+          setUnitFilter([])
+        }} />
+        <SearchableMultiSelect label="Bloco" options={blockOptions} value={activeBlockFilter} disabled={!blockOptionsReady} onChange={(value) => {
+          setBlockFilter(value)
+          setUnitFilter([])
+        }} />
+        <SearchableMultiSelect label="Unidade" options={unitOptions} value={activeUnitFilter} disabled={!blockOptionsReady} onChange={setUnitFilter} />
+        <SearchableMultiSelect label="Assunto" options={subjectOptions} value={subjectFilter} onChange={(value) => { setSubjectFilter(value); setSubsubjectFilter([]) }} />
+        <SearchableMultiSelect label="Subassunto" options={subsubjectOptions} value={subsubjectFilter} onChange={setSubsubjectFilter} />
         <label className="filter-control customer-name-filter"><span>Nome do cliente</span><input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar cliente" /></label>
-        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter && !unitFilter && !customerNameFilter && !subjectFilter && !subsubjectFilter && !includeInactive} onClick={() => {
+        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter.length && !unitFilter.length && !customerNameFilter && !subjectFilter.length && !subsubjectFilter.length && !includeInactive} onClick={() => {
           setSearch('')
           setEnterpriseFilters([])
-          setBlockFilter('')
-          setUnitFilter('')
+          setBlockFilter([])
+          setUnitFilter([])
           setCustomerNameFilter('')
-          setSubjectFilter('')
-          setSubsubjectFilter('')
+          setSubjectFilter([])
+          setSubsubjectFilter([])
           setIncludeInactive(false)
         }}><X size={14} /> Limpar filtros</button>
         <label className="ticket-include-inactive"><input type="checkbox" checked={includeInactive} onChange={(event) => setIncludeInactive(event.target.checked)} /><span>Mostrar finalizados e cancelados</span></label>
@@ -1284,7 +1294,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
           </section>
 
           <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Programação de atividades</h2><p>Colaboradores, horário e descritivo do serviço.</p></div><button className="secondary-button" type="button" onClick={() => { setEditingSchedule(null); setShowScheduleForm((value) => !value) }}><Plus size={15} /> Programar</button></div>
-            {(showScheduleForm || editingSchedule) && <TicketProgrammingForm tickets={tickets} initialTicketId={ticket.id} editingAppointment={editingSchedule ?? undefined} onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }} onSaved={() => { setShowScheduleForm(false); setEditingSchedule(null); setRefresh((value) => value + 1); onNotice({ kind: 'success', text: 'Programação salva.' }) }} />}
+            {(showScheduleForm || editingSchedule) && <TicketProgrammingForm key={editingSchedule ? `${editingSchedule.id}-${editingSchedule.programming_type}` : 'new-ticket-programming'} tickets={tickets} initialTicketId={ticket.id} allowMixedCollaborators editingAppointment={editingSchedule ?? undefined} onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }} onSaved={() => { setShowScheduleForm(false); setEditingSchedule(null); setRefresh((value) => value + 1); onNotice({ kind: 'success', text: 'Programação salva.' }) }} />}
             {programming.length ? <div className="ticket-programming-list">{programming.map((entry) => <article className="ticket-programming-item" key={entry.id}><span className="programming-time">{formatDate(entry.starts_at)}–{new Date(entry.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span><strong>{entry.collaborator_name}{entry.collaborator_nickname ? ` · ${entry.collaborator_nickname}` : ''}</strong><p>{entry.activity_description}</p><div className="schedule-appointment-actions"><label className={`schedule-completion-check ${entry.completed ? 'is-complete' : ''}`}><input type="checkbox" checked={entry.completed} disabled={updatingProgramming.has(entry.id)} onChange={(event) => void updateProgrammingCompletion(entry, event.target.checked)} /><span>{entry.completed ? 'Realizada' : 'Marcar como realizada'}</span></label><button type="button" className="text-action-btn" onClick={() => { setShowScheduleForm(false); setEditingSchedule(entry) }}><Pencil size={13} /> Editar</button><button type="button" className="text-action-btn danger-action" onClick={() => void deleteProgramming(entry)}><Trash2 size={13} /> Excluir</button></div></article>)}</div> : !showScheduleForm && !editingSchedule && <p className="ticket-empty-inline">Nenhuma atividade programada.</p>}
           </section>
 

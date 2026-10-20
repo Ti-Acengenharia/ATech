@@ -363,17 +363,21 @@ router.post('/', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const collaboratorNames = await client.query<{ id: string; name: string }>(
-      'SELECT id, name FROM collaborators WHERE id = ANY($1::bigint[])',
+    const collaboratorNames = await client.query<{ id: string; name: string; role: string }>(
+      'SELECT id, name, role FROM collaborators WHERE id = ANY($1::bigint[])',
       [collaboratorIds],
     )
     const collaboratorNameById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.name]))
+    const collaboratorRoleById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.role]))
     for (const collaboratorId of collaboratorIds) {
+      const collaboratorProgrammingType = data.activityType === 'ticket' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+        ? 'foreman'
+        : data.programmingType
       for (const occurrence of data.occurrences) {
         await validateAvailability(
           client,
           collaboratorId,
-          data.programmingType,
+          collaboratorProgrammingType,
           data.ticketId ?? null,
           new Date(occurrence.startsAt),
           new Date(occurrence.endsAt),
@@ -383,6 +387,9 @@ router.post('/', async (req, res, next) => {
 
     const ids: string[] = []
     for (const collaboratorId of collaboratorIds) {
+      const collaboratorProgrammingType = data.activityType === 'ticket' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+        ? 'foreman'
+        : data.programmingType
       for (const occurrence of data.occurrences) {
         const result = await client.query<{ id: string }>(
           `INSERT INTO ticket_programming
@@ -394,7 +401,7 @@ router.post('/', async (req, res, next) => {
               data.ticketId ?? null, collaboratorId, data.activityDescription, occurrence.startsAt, occurrence.endsAt,
               data.enterprise, data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools,
               data.standaloneLocation,
-              data.programmingType,
+              collaboratorProgrammingType,
               req.session.user!.id,
             ],
         )

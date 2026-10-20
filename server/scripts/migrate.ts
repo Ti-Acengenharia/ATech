@@ -32,6 +32,10 @@ try {
     '025_user_page_access.sql',
     '026_decimal_ticket_workflow_order.sql',
     '027_legal_process_csv_imports.sql',
+    '028_personal_activities.sql',
+    '029_personal_activity_default_columns.sql',
+    '030_seed_personal_activity_boards.sql',
+    '031_personal_activity_details.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')

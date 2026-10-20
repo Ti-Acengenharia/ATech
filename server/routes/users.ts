@@ -31,6 +31,7 @@ router.get('/', async (_req, res, next) => {
       created_at: Date
       last_login_at: Date | null
       can_access_legal_processes: boolean
+      can_view_other_personal_activities: boolean
       page_access: string[]
     }>(
       `SELECT u.id, u.email, u.display_name, u.role, u.status, u.created_at, u.last_login_at,
@@ -41,6 +42,9 @@ router.get('/', async (_req, res, next) => {
                 SELECT array_agg(p.page_key ORDER BY p.page_key)
                 FROM user_page_access p WHERE p.user_id = u.id
               ), ARRAY[]::varchar[]) AS page_access
+              , COALESCE((
+                SELECT can_view_others FROM user_personal_activity_permissions p WHERE p.user_id = u.id
+              ), FALSE) AS can_view_other_personal_activities
        FROM users u LEFT JOIN legal_process_access a ON a.user_id = u.id
        ORDER BY CASE u.role WHEN 'admin' THEN 0 ELSE 1 END, u.created_at DESC`,
     )
@@ -55,6 +59,7 @@ router.get('/', async (_req, res, next) => {
       lastLoginAt: user.last_login_at?.toISOString() ?? null,
       canAccessLegalProcesses: user.can_access_legal_processes,
       pageAccess: user.role === 'admin' ? [...pageAccessKeys] : user.page_access,
+      canViewOtherPersonalActivities: user.can_view_other_personal_activities,
     }))
     res.json({ users })
   } catch (error) {
@@ -104,7 +109,7 @@ router.post('/invitations', async (req, res, next) => {
     await pool.query(
       `INSERT INTO user_page_access (user_id, page_key, granted_by)
        SELECT $1, page_key, $2
-       FROM (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('information')) AS defaults(page_key)
+       FROM (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('information'), ('personal-activities')) AS defaults(page_key)
        ON CONFLICT (user_id, page_key) DO NOTHING`,
       [user.id, req.session.user!.id],
     )
@@ -120,6 +125,7 @@ router.post('/invitations', async (req, res, next) => {
         lastLoginAt: user.last_login_at?.toISOString() ?? null,
       },
     })
+
   } catch (error) {
     next(error)
   }
@@ -249,6 +255,37 @@ router.patch('/:id/page-access', async (req, res, next) => {
     next(error)
   } finally {
     client.release()
+  }
+})
+
+router.patch('/:id/personal-activities-view-access', async (req, res, next) => {
+  const userId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body)
+  if (!userId.success || !parsed.success) {
+    res.status(400).json({ error: 'Permissão de visualização inválida.' })
+    return
+  }
+  try {
+    const member = await pool.query(
+      `SELECT id FROM users WHERE id = $1 AND role = 'member'`,
+      [userId.data],
+    )
+    if (!member.rowCount) {
+      res.status(404).json({ error: 'Usuário da equipe não encontrado.' })
+      return
+    }
+    await pool.query(
+      `INSERT INTO user_personal_activity_permissions (user_id, can_view_others, granted_by, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (user_id) DO UPDATE
+       SET can_view_others = EXCLUDED.can_view_others,
+           granted_by = EXCLUDED.granted_by,
+           updated_at = now()`,
+      [userId.data, parsed.data.enabled, req.session.user!.id],
+    )
+    res.status(204).end()
+  } catch (error) {
+    next(error)
   }
 })
 

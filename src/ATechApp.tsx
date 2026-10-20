@@ -16,6 +16,7 @@ import {
   Info,
   KeyRound,
   LayoutDashboard,
+  ListTodo,
   Mail,
   PanelLeftClose,
   PanelLeftOpen,
@@ -32,7 +33,7 @@ import './atech.css'
 
 type UserRole = 'admin' | 'member'
 type UserStatus = 'invited' | 'active' | 'suspended'
-type AdminPage = 'home' | 'tickets' | 'schedule' | 'collaborators' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes'
+type AdminPage = 'home' | 'tickets' | 'schedule' | 'collaborators' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities'
 
 interface SessionUser {
   id: number
@@ -77,6 +78,7 @@ interface ManagedUser extends SessionUser {
   createdAt: string
   lastLoginAt: string | null
   canAccessLegalProcesses: boolean
+  canViewOtherPersonalActivities: boolean
   pageAccess: AdminPage[]
 }
 
@@ -84,6 +86,7 @@ interface SessionResponse {
   user: SessionUser | null
   corporateDomain: string
   canAccessLegalProcesses: boolean
+  canViewOtherPersonalActivities: boolean
   pageAccess: AdminPage[]
 }
 
@@ -108,6 +111,7 @@ const EnterpriseInformationPage = lazy(() => import('./EnterpriseInformationPage
 const WarrantyManagementPage = lazy(() => import('./WarrantyManagementPage'))
 const UserProfileModal = lazy(() => import('./UserProfileModal'))
 const LegalProcessesPage = lazy(() => import('./LegalProcessesPage'))
+const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 
 function formatDate(value: string | null) {
   if (!value) return 'Ainda não acessou'
@@ -120,6 +124,7 @@ export default function ATechApp() {
   const [loading, setLoading] = useState(true)
   const [apiAvailable, setApiAvailable] = useState(true)
   const [pageAccess, setPageAccess] = useState<AdminPage[]>([])
+  const [canViewOtherPersonalActivities, setCanViewOtherPersonalActivities] = useState(false)
 
   useEffect(() => {
     apiRequest<SessionResponse>('/api/auth/session')
@@ -127,6 +132,7 @@ export default function ATechApp() {
         setUser(session.user)
         setDomain(session.corporateDomain)
         setPageAccess(session.pageAccess)
+        setCanViewOtherPersonalActivities(session.canViewOtherPersonalActivities)
       })
       .catch(() => setApiAvailable(false))
       .finally(() => setLoading(false))
@@ -143,11 +149,12 @@ export default function ATechApp() {
     const login = <LoginScreen domain={domain} apiAvailable={apiAvailable} onAuthenticated={(session) => {
       setUser(session.user)
       setPageAccess(session.pageAccess)
+      setCanViewOtherPersonalActivities(session.canViewOtherPersonalActivities)
     }} />
     return googleClientId ? <GoogleOAuthProvider clientId={googleClientId}>{login}</GoogleOAuthProvider> : login
   }
 
-  return <AdminScreen user={user} domain={domain} pageAccess={pageAccess} onSignOut={signOut} onUserUpdated={(displayName) => setUser((current) => current ? { ...current, displayName } : current)} />
+  return <AdminScreen user={user} domain={domain} pageAccess={pageAccess} canViewOtherPersonalActivities={canViewOtherPersonalActivities} onSignOut={signOut} onUserUpdated={(displayName) => setUser((current) => current ? { ...current, displayName } : current)} />
 }
 
 function LoginScreen({ domain, apiAvailable, onAuthenticated }: {
@@ -243,7 +250,7 @@ function Brand() {
   return <div className="brand-lockup"><span className="brand-mark"><Wrench size={19} strokeWidth={2.2} /></span><span className="brand-name">ATech<span>.</span></span></div>
 }
 
-function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
+function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; canViewOtherPersonalActivities: boolean; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
   const [page, setPage] = useState<AdminPage>('home')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('atech.sidebar-collapsed') === 'true')
   const [users, setUsers] = useState<ManagedUser[]>([])
@@ -266,6 +273,7 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
     { key: 'api-validation', label: 'Validação da API' },
     { key: 'warranties', label: 'Prazos de garantia' },
     { key: 'legal-processes', label: 'Processos Jurídicos' },
+    { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
   const canAccessPage = (key: AdminPage) => user.role === 'admin' || pageAccess.includes(key)
   const openPage = (key: AdminPage) => {
@@ -387,6 +395,22 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
     }
   }
 
+  async function changePersonalActivitiesViewAccess(member: ManagedUser, enabled: boolean) {
+    setNotice(null)
+    try {
+      await apiRequest(`/api/users/${member.id}/personal-activities-view-access`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      })
+      setUsers((current) => current.map((entry) => entry.id === member.id
+        ? { ...entry, canViewOtherPersonalActivities: enabled }
+        : entry))
+      setNotice({ kind: 'success', text: `Visualização de outros quadros ${enabled ? 'liberada' : 'removida'} para ${member.displayName}.` })
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar a permissão dos quadros.' })
+    }
+  }
+
   const activeCount = users.filter((member) => member.role === 'member' && member.status === 'active').length
   const invitedCount = users.filter((member) => member.status === 'invited').length
   const suspendedCount = users.filter((member) => member.status === 'suspended').length
@@ -401,6 +425,7 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
     'api-validation': 'Validação da API',
     warranties: 'Prazos de garantia',
     'legal-processes': 'Processos Jurídicos',
+    'personal-activities': 'Atividades pessoais',
   }
 
   return (
@@ -416,6 +441,7 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
           {canAccessPage('api-validation') && <button type="button" title="Validação da API" aria-label="Ir para validação da API" className={`nav-item ${page === 'api-validation' ? 'nav-item-active' : ''}`} onClick={() => setPage('api-validation')}><Zap size={17} /><span>Validação API</span></button>}
           {canAccessPage('warranties') && <button type="button" title="Prazos de garantia" aria-label="Ir para prazos de garantia" className={`nav-item ${page === 'warranties' ? 'nav-item-active' : ''}`} onClick={() => setPage('warranties')}><ShieldCheck size={17} /><span>Garantias</span></button>}
           {canAccessPage('legal-processes') && <button type="button" title="Processos Jurídicos" aria-label="Ir para processos jurídicos" className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`} onClick={() => setPage('legal-processes')}><BriefcaseBusiness size={17} /><span>Processos Jurídicos</span></button>}
+          {canAccessPage('personal-activities') && <button type="button" title="Atividades pessoais" aria-label="Ir para atividades pessoais" className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`} onClick={() => setPage('personal-activities')}><ListTodo size={17} /><span>Atividades pessoais</span></button>}
           {canAccessPage('information') && <button type="button" title="Informações" aria-label="Ir para informações" className={`nav-item ${page === 'information' ? 'nav-item-active' : ''}`} onClick={() => setPage('information')}><Info size={17} /><span>Informações</span></button>}
           {user.role === 'admin' && <button type="button" title="Acessos" aria-label="Ir para acessos" className={`nav-item ${page === 'accesses' ? 'nav-item-active' : ''}`} onClick={() => setPage('accesses')}><UsersRound size={17} /><span>Acessos</span></button>}
         </nav>
@@ -451,6 +477,8 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
             <WarrantyManagementPage />
           ) : page === 'legal-processes' && canAccessPage('legal-processes') ? (
             <LegalProcessesPage currentUser={{ id: user.id, role: user.role }} />
+          ) : page === 'personal-activities' && canAccessPage('personal-activities') ? (
+            <PersonalActivitiesPage currentUser={user} canViewOtherActivities={canViewOtherPersonalActivities} />
           ) : page === 'accesses' ? (
             <>
           <div className="page-heading-row"><div><div className="eyebrow page-eyebrow">CONTROLE DE ACESSO</div><h1>Gestão de usuários</h1><p>Convide e acompanhe quem pode acessar a ATech.</p></div><span className="domain-badge"><ShieldCheck size={15} /> @{domain}</span></div>
@@ -478,9 +506,12 @@ function AdminScreen({ user, domain, pageAccess, onSignOut, onUserUpdated }: { u
                   <td>{member.role === 'admin' ? <span className="role-label role-admin">Acesso total</span> : (
                     <details className="user-page-access">
                       <summary>{member.pageAccess.length} de {availablePages.length} páginas</summary>
-                      <div>{availablePages.map(({ key, label }) => (
-                        <label key={key}><input type="checkbox" checked={member.pageAccess.includes(key)} disabled={member.status === 'suspended'} onChange={(event) => void changePageAccess(member, key, event.target.checked)} /><span>{label}</span></label>
-                      ))}</div>
+                      <div>
+                        {availablePages.map(({ key, label }) => (
+                          <label key={key}><input type="checkbox" checked={member.pageAccess.includes(key)} disabled={member.status === 'suspended'} onChange={(event) => void changePageAccess(member, key, event.target.checked)} /><span>{label}</span></label>
+                        ))}
+                        <label className="personal-activity-view-permission"><input type="checkbox" checked={member.canViewOtherPersonalActivities} disabled={member.status === 'suspended'} onChange={(event) => void changePersonalActivitiesViewAccess(member, event.target.checked)} /><span>Selecionar quadro de outra pessoa</span></label>
+                      </div>
                     </details>
                   )}</td>
                   <td><span className={`status-pill status-${member.status}`}><i />{member.status === 'active' ? 'Ativo' : member.status === 'invited' ? 'Convite enviado' : 'Suspenso'}</span></td>
@@ -593,6 +624,7 @@ function HomeDashboard({ user, users, loading, pageAccess, onOpenCollaborators, 
         {canAccess('schedule') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('schedule')}><span className="module-icon"><CalendarDays size={17} /></span><span className="module-copy"><strong>Programação</strong><small>Agenda e atividades técnicas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('api-validation') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('api-validation')}><span className="module-icon"><Zap size={17} /></span><span className="module-copy"><strong>Validação API</strong><small>Integração CVCRM e carga CSV</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('warranties') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('warranties')}><span className="module-icon"><ShieldCheck size={17} /></span><span className="module-copy"><strong>Prazos de garantia</strong><small>Subassuntos de assistência técnica</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
+        {canAccess('personal-activities') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('personal-activities')}><span className="module-icon"><ListTodo size={17} /></span><span className="module-copy"><strong>Atividades pessoais</strong><small>Seu quadro pessoal de atividades</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('information') && <button className="module-item" type="button" onClick={() => onOpenPage('information')}><span className="module-icon"><Info size={17} /></span><span className="module-copy"><strong>Informações</strong><small>Referências e dados operacionais</small></span><span className="module-tag">EM PREPARAÇÃO</span></button>}
       </section>
       <footer className="workspace-footer"><span>ATech · Assistência técnica</span><span>Administração segura <i /> {users.length} {users.length === 1 ? 'conta' : 'contas'}</span></footer>
@@ -609,6 +641,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     'api-validation': { title: 'Validação da API', description: 'Painel de testes e controle da API CVCRM.', icon: Zap },
     warranties: { title: 'Prazos de garantia', description: 'Gestão dos prazos de garantia por subassunto.', icon: ShieldCheck },
     'legal-processes': { title: 'Processos Jurídicos', description: 'Gestão de processos, fases, responsáveis e pagamentos.', icon: BriefcaseBusiness },
+    'personal-activities': { title: 'Atividades pessoais', description: 'Seu quadro privado para organizar atividades.', icon: ListTodo },
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
   }[page]

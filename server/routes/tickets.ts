@@ -18,6 +18,17 @@ import {
 
 const router = Router()
 
+function parseTextFilter(value: unknown, maxLength: number) {
+  if (value === undefined) return []
+  const parsed = z.union([
+    z.string().trim().min(1).max(maxLength),
+    z.array(z.string().trim().min(1).max(maxLength)).min(1).max(50),
+  ]).safeParse(value)
+  if (!parsed.success) return null
+  return (Array.isArray(parsed.data) ? parsed.data : [parsed.data])
+    .map((entry) => entry.toLocaleLowerCase('pt-BR'))
+}
+
 const ticketIdSchema = z.coerce.number().int().positive()
 const protocolSchema = z.object({
   protocol: z.string().trim().min(1).max(100),
@@ -309,18 +320,11 @@ router.get('/:id/cv-conversation', async (req, res, next) => {
 
 router.get('/filter-options', async (_req, res, next) => {
   const includeInactive = z.boolean().catch(false).parse(_req.query.includeInactive === 'true')
-  let selectedEnterprises: string[] = []
-  if (_req.query.enterprise !== undefined) {
-    const enterpriseQuery = z.union([
-      z.string().trim().min(1).max(240),
-      z.array(z.string().trim().min(1).max(240)).min(1).max(50),
-    ]).safeParse(_req.query.enterprise)
-    if (!enterpriseQuery.success) {
-      res.status(400).json({ error: 'Filtro de empreendimentos inválido.' })
-      return
-    }
-    selectedEnterprises = (Array.isArray(enterpriseQuery.data) ? enterpriseQuery.data : [enterpriseQuery.data])
-      .map((value) => value.toLocaleLowerCase('pt-BR'))
+  const selectedEnterprises = parseTextFilter(_req.query.enterprise, 240)
+  const selectedBlocks = parseTextFilter(_req.query.block, 120)
+  if (selectedEnterprises === null || selectedBlocks === null) {
+    res.status(400).json({ error: 'Filtro de empreendimentos ou blocos inválido.' })
+    return
   }
   try {
     const [enterprises, blocks, units, subjects, subsubjects] = await Promise.all([
@@ -333,16 +337,17 @@ router.get('/filter-options', async (_req, res, next) => {
       pool.query<{ value: string }>(
         `SELECT min(btrim(block)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(block) <> ''
-           AND (cardinality($2::text[]) = 0 OR lower(enterprise) = ANY($2::text[]))
+           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]))
          GROUP BY lower(btrim(block)) ORDER BY lower(min(btrim(block)))`,
         [includeInactive, selectedEnterprises],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(unit)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(unit) <> ''
-           AND (cardinality($2::text[]) = 0 OR lower(enterprise) = ANY($2::text[]))
+           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]))
+           AND (cardinality($3::text[]) = 0 OR lower(btrim(block)) = ANY($3::text[]))
          GROUP BY lower(btrim(unit)) ORDER BY lower(min(btrim(unit)))`,
-        [includeInactive, selectedEnterprises],
+        [includeInactive, selectedEnterprises, selectedBlocks],
       ),
       pool.query<{ value: string }>(
         `SELECT CASE WHEN source_subject_id = 16 THEN 'Assistência Técnica' ELSE min(btrim(subject)) END AS value
@@ -375,23 +380,22 @@ router.get('/filter-options', async (_req, res, next) => {
 router.get('/', async (req, res, next) => {
   const search = z.string().trim().max(100).catch('').parse(req.query.search)
   const includeInactive = z.boolean().catch(false).parse(req.query.includeInactive === 'true')
-  let selectedEnterprises: string[] = []
-  if (req.query.enterprise !== undefined) {
-    const enterpriseQuery = z.union([
-      z.string().trim().min(1).max(240),
-      z.array(z.string().trim().min(1).max(240)).min(1).max(50),
-    ]).safeParse(req.query.enterprise)
-    if (!enterpriseQuery.success) {
-      res.status(400).json({ error: 'Filtro de empreendimentos inválido.' })
-      return
-    }
-    selectedEnterprises = Array.isArray(enterpriseQuery.data) ? enterpriseQuery.data : [enterpriseQuery.data]
+  const selectedEnterprises = parseTextFilter(req.query.enterprise, 240)
+  const selectedBlocks = parseTextFilter(req.query.block, 120)
+  const selectedUnits = parseTextFilter(req.query.unit, 120)
+  const selectedSubjects = parseTextFilter(req.query.subject, 240)
+  const selectedSubsubjects = parseTextFilter(req.query.subsubject, 240)
+  if (
+    selectedEnterprises === null ||
+    selectedBlocks === null ||
+    selectedUnits === null ||
+    selectedSubjects === null ||
+    selectedSubsubjects === null
+  ) {
+    res.status(400).json({ error: 'Um ou mais filtros de chamados são inválidos.' })
+    return
   }
-  const block = z.string().trim().max(120).catch('').parse(req.query.block)
-  const unit = z.string().trim().max(120).catch('').parse(req.query.unit)
   const customerName = z.string().trim().max(160).catch('').parse(req.query.customerName)
-  const subject = z.string().trim().max(240).catch('').parse(req.query.subject)
-  const subsubject = z.string().trim().max(240).catch('').parse(req.query.subsubject)
   const requestedId = req.query.id === undefined
     ? null
     : ticketIdSchema.safeParse(req.query.id)
@@ -400,9 +404,6 @@ router.get('/', async (req, res, next) => {
     return
   }
   const term = search ? `%${search.toLowerCase()}%` : ''
-  const enterpriseNames = selectedEnterprises.map((value) => value.toLocaleLowerCase('pt-BR'))
-  const blockTerm = block ? `%${block.toLowerCase()}%` : ''
-  const unitTerm = unit ? `%${unit.toLowerCase()}%` : ''
   const customerTerm = customerName ? `%${customerName.toLowerCase()}%` : ''
 
   try {
@@ -475,18 +476,18 @@ router.get('/', async (req, res, next) => {
        WHERE ($9::boolean OR t.source_active = TRUE)
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
            OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1)
-         AND (cardinality($2::text[]) = 0 OR lower(t.enterprise) = ANY($2::text[]))
-         AND ($3 = '' OR lower(t.block) LIKE $3)
-         AND ($4 = '' OR lower(t.unit) LIKE $4)
+         AND (cardinality($2::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($2::text[]))
+         AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
+         AND (cardinality($4::text[]) = 0 OR lower(btrim(t.unit)) = ANY($4::text[]))
          AND ($5 = '' OR lower(t.customer_name) LIKE $5)
-         AND ($6 = '' OR (t.source_subject_id = 16 AND $6 = 'Assistência Técnica')
-           OR lower(t.subject) = lower($6))
-         AND ($7 = '' OR lower(t.subsubject) = lower($7))
+         AND (cardinality($6::text[]) = 0 OR (t.source_subject_id = 16 AND 'assistência técnica' = ANY($6::text[]))
+           OR lower(btrim(t.subject)) = ANY($6::text[]))
+         AND (cardinality($7::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($7::text[]))
          AND ($8::bigint IS NULL OR t.source_id = $8)
        ORDER BY t.opened_at ASC NULLS LAST, t.protocol
        LIMIT 1000`,
       [
-        term, enterpriseNames, blockTerm, unitTerm, customerTerm, subject, subsubject,
+        term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
         includeInactive,
       ],

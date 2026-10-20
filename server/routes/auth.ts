@@ -38,15 +38,18 @@ function setSessionUser(req: Request, user: SessionUser) {
 router.get('/session', async (req, res, next) => {
   const sessionUser = req.session.user
   if (!sessionUser) {
-    res.json({ user: null, corporateDomain: env.CORPORATE_DOMAIN, canAccessLegalProcesses: false, pageAccess: [] })
+    res.json({ user: null, corporateDomain: env.CORPORATE_DOMAIN, canAccessLegalProcesses: false, canViewOtherPersonalActivities: false, pageAccess: [] })
     return
   }
   try {
-    const result = await pool.query<{ page_access: string[] }>(
+    const result = await pool.query<{ page_access: string[]; can_view_other_personal_activities: boolean }>(
       `SELECT COALESCE((
          SELECT array_agg(page_key ORDER BY page_key)
          FROM user_page_access WHERE user_id = $1
-       ), ARRAY[]::varchar[]) AS page_access
+       ), ARRAY[]::varchar[]) AS page_access,
+       COALESCE((
+         SELECT can_view_others FROM user_personal_activity_permissions WHERE user_id = $1
+       ), FALSE) OR $2 = 'admin' AS can_view_other_personal_activities
        FROM users WHERE id = $1 AND role = $2 AND status = 'active'`,
       [sessionUser.id, sessionUser.role],
     )
@@ -56,6 +59,7 @@ router.get('/session', async (req, res, next) => {
         user: sessionUser,
         corporateDomain: env.CORPORATE_DOMAIN,
         canAccessLegalProcesses: sessionUser.role === 'admin' || pageAccess.includes('legal-processes'),
+        canViewOtherPersonalActivities: result.rows[0].can_view_other_personal_activities,
         pageAccess,
       })
       return
@@ -66,7 +70,7 @@ router.get('/session', async (req, res, next) => {
         return
       }
       res.clearCookie('atech.sid')
-      res.json({ user: null, corporateDomain: env.CORPORATE_DOMAIN, canAccessLegalProcesses: false, pageAccess: [] })
+      res.json({ user: null, corporateDomain: env.CORPORATE_DOMAIN, canAccessLegalProcesses: false, canViewOtherPersonalActivities: false, pageAccess: [] })
     })
   } catch (error) {
     next(error)

@@ -81,6 +81,15 @@
 .legal-field textarea { min-height: 86px; resize: vertical; line-height: 1.5; }
 .legal-field select[multiple] { min-height: 96px; }
 .legal-field small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.legal-assignee-field .searchable-multiselect { width: 100%; }
+.legal-assignee-field > span { margin-bottom: -1px; }
+.legal-assignee-field .searchable-multiselect-label { display: none; }
+.legal-assignee-field .searchable-multiselect-trigger { min-height: 40px; border-radius: 5px; font-size: 13px; }
+.legal-assignee-field .searchable-multiselect-popover { width: 100%; max-width: min(420px, calc(100vw - 40px)); }
+.legal-assignee-selected { display: flex; flex-wrap: wrap; gap: 5px; }
+.legal-assignee-selected > span { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 6px 4px 8px; color: #315d7e; background: #edf5fb; border: 1px solid #dceaf4; border-radius: 14px; font-size: 10px; }
+.legal-assignee-selected button { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; padding: 0; color: #54758d; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.legal-assignee-selected button:hover { color: #9c4b45; background: #fff; }
 .legal-subsection-title { justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .legal-subsection-title strong, .legal-subsection-title small { display: block; }
 .legal-subsection-title strong { color: var(--ink); font-size: 13px; }

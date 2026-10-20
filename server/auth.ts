@@ -10,6 +10,7 @@ export const pageAccessKeys = [
   'api-validation',
   'warranties',
   'legal-processes',
+  'personal-activities',
 ] as const
 
 export type PageAccessKey = typeof pageAccessKeys[number]

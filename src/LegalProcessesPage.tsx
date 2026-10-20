@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import Papa from 'papaparse'
 import { apiRequest } from './api/client'
+import SearchableMultiSelect from './SearchableMultiSelect'
 import './LegalProcessesPage.css'
 
 interface LegalStatus { id: number; name: string; position: number; color: string }
@@ -813,6 +814,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   }
 
   const assigneeName = (person: Assignee) => person.displayName ?? person.display_name ?? person.email ?? 'Usuário'
+  const assigneeOptions = people.map((person) => ({ value: String(person.id), label: assigneeName(person) }))
   const faceValue = (process: LegalProcess, field: FaceField) => {
     if (field === 'claimant') return process.claimant || 'Requerente não informado'
     if (field === 'assignees') return process.assignees.map(assigneeName).join(', ') || 'Sem responsáveis'
@@ -934,7 +936,11 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
           <form className="legal-process-form" onSubmit={(event) => void saveProcess(event)}>
             <label className="legal-field legal-field-full"><span>Nome do processo</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={240} required autoFocus /></label>
             <label className="legal-field"><span>Situação / Fase</span><select value={draft.statusId} onChange={(event) => setDraft({ ...draft, statusId: Number(event.target.value) })} required>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
-            <label className="legal-field"><span>Responsáveis</span><select multiple value={draft.assigneeIds.map(String)} onChange={(event) => setDraft({ ...draft, assigneeIds: [...event.currentTarget.selectedOptions].map((option) => Number(option.value)) })}>{people.map((person) => <option key={person.id} value={person.id}>{assigneeName(person)}</option>)}</select><small>Use Ctrl ou Command para selecionar vários.</small></label>
+            <div className="legal-field legal-assignee-field"><span>Responsáveis</span><SearchableMultiSelect label="Selecionar responsáveis" options={assigneeOptions} value={draft.assigneeIds.map(String)} onChange={(values) => setDraft({ ...draft, assigneeIds: values.map(Number) })} emptyLabel="Nenhum responsável cadastrado." />
+              {draft.assigneeIds.length > 0 && <div className="legal-assignee-selected" aria-label="Responsáveis selecionados">
+                {people.filter((person) => draft.assigneeIds.includes(person.id)).map((person) => <span key={person.id}>{assigneeName(person)}<button type="button" aria-label={`Remover ${assigneeName(person)}`} onClick={() => setDraft({ ...draft, assigneeIds: draft.assigneeIds.filter((id) => id !== person.id) })}><X size={12} /></button></span>)}
+              </div>}
+            </div>
             <label className="legal-field"><span>Data de início</span><input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} /></label>
             <label className="legal-field"><span>Data de finalização</span><input type="date" value={draft.endDate} min={draft.startDate || undefined} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} /></label>
             <label className="legal-field legal-field-full"><span>Descrição</span><textarea rows={3} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} maxLength={20_000} /></label>

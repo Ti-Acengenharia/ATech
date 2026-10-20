@@ -71,7 +71,7 @@ const csvImportTaskSchema = z.object({
   assignee: z.string().trim().max(500),
   priority: z.string().trim().max(100),
   dueDate: z.string().trim().max(200),
-  taskContent: z.string().max(10_000),
+  taskContent: z.string().max(20_000),
   latestComment: z.string().max(6_000),
   commentCount: z.string().trim().max(20),
 })
@@ -190,6 +190,18 @@ router.post('/import-csv', async (req, res, next) => {
     res.status(201).json({ importedCount, skippedCount, statusesCreated })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (
+      error !== null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === '42P01' &&
+      'message' in error &&
+      typeof error.message === 'string' &&
+      error.message.includes('legal_process_csv_imports')
+    ) {
+      res.status(503).json({ error: 'A estrutura para importar CSV ainda não foi aplicada neste banco. Execute "npm run db:migrate" no servidor e tente novamente.' })
+      return
+    }
     next(error)
   } finally {
     client.release()

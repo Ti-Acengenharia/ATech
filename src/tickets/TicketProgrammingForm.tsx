@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { CalendarDays, Check, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import type { TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
@@ -131,6 +131,7 @@ export default function TicketProgrammingForm({
   initialTicketId,
   initialDate,
   programmingType = 'general',
+  allowMixedCollaborators = false,
   editingAppointment,
   onSaved,
   onCancel,
@@ -139,6 +140,7 @@ export default function TicketProgrammingForm({
   initialTicketId?: string
   initialDate?: string
   programmingType?: 'general' | 'foreman'
+  allowMixedCollaborators?: boolean
   editingAppointment?: EditingAppointment
   onSaved: () => void
   onCancel?: () => void
@@ -173,6 +175,9 @@ export default function TicketProgrammingForm({
   const [tools, setTools] = useState((editingAppointment?.tools ?? []).join('\n'))
   const [standaloneLocation, setStandaloneLocation] = useState(editingAppointment?.standalone_location ?? '')
   const [searchFilter, setSearchFilter] = useState('')
+  const [ticketSearchFilter, setTicketSearchFilter] = useState('')
+  const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
+  const ticketPickerRef = useRef<HTMLDivElement>(null)
   const [appointmentsByCollaborator, setAppointmentsByCollaborator] = useState<Record<string, AvailabilityEntry[]>>({})
   const [loadingPeople, setLoadingPeople] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -186,7 +191,7 @@ export default function TicketProgrammingForm({
         const hiddenRoles = new Set(result.hiddenRoleKeys)
         setHiddenRoleKeys(hiddenRoles)
         setRoleVisibilityLoaded(true)
-        if (!editingAppointment) {
+        if (!editingAppointment && !allowMixedCollaborators) {
           setCollaboratorIds((current) => current.filter((id) => {
             const collaborator = collaborators.find((person) => person.id === id)
             return collaborator && (selectedProgrammingType === 'foreman'
@@ -207,7 +212,7 @@ export default function TicketProgrammingForm({
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [collaborators, editingAppointment, selectedProgrammingType])
+  }, [allowMixedCollaborators, collaborators, editingAppointment, selectedProgrammingType])
 
   useEffect(() => {
     let cancelled = false
@@ -222,6 +227,24 @@ export default function TicketProgrammingForm({
       })
       .finally(() => { if (!cancelled) setLoadingPeople(false) })
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    function closePicker(event: PointerEvent) {
+      if (event.target instanceof Node && !ticketPickerRef.current?.contains(event.target)) {
+        setTicketPickerOpen(false)
+        setTicketSearchFilter('')
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setTicketPickerOpen(false)
+    }
+    document.addEventListener('pointerdown', closePicker)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closePicker)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [])
 
   useEffect(() => {
@@ -252,11 +275,23 @@ export default function TicketProgrammingForm({
   ))
 
   const filteredCollaborators = collaborators.filter((person) => {
-    if (selectedProgrammingType === 'foreman' ? person.role !== 'encarregado' : person.role === 'encarregado' || hiddenRoleKeys.has(person.role)) return false
+    if (!allowMixedCollaborators && selectedProgrammingType === 'foreman' ? person.role !== 'encarregado' : !allowMixedCollaborators && person.role === 'encarregado') return false
+    if (person.role !== 'encarregado' && hiddenRoleKeys.has(person.role)) return false
     const term = searchFilter.toLowerCase()
     return person.name.toLowerCase().includes(term) ||
       (person.nickname && person.nickname.toLowerCase().includes(term)) ||
       roleLabel(person.role, person.role_label).toLowerCase().includes(term)
+  })
+  const filteredTickets = tickets.filter((ticket) => {
+    if (!ticket.sourceActive) return false
+    const term = ticketSearchFilter.trim().toLocaleLowerCase('pt-BR')
+    return !term || [
+      ticket.protocol,
+      ticket.subject,
+      ticket.enterprise,
+      ticket.block,
+      ticket.unit,
+    ].some((value) => value?.toLocaleLowerCase('pt-BR').includes(term))
   })
 
   function toggleCollaborator(id: string) {
@@ -284,6 +319,10 @@ export default function TicketProgrammingForm({
       setError('Selecione pelo menos um colaborador para a atividade.')
       return
     }
+    if (activityType === 'ticket' && !ticketId) {
+      setError('Selecione um chamado ativo para a atividade.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -297,7 +336,9 @@ export default function TicketProgrammingForm({
         await apiRequest(`/api/programming/${editingAppointment.id}`, {
           method: 'PUT',
           body: JSON.stringify({
-            programmingType: selectedProgrammingType,
+            programmingType: allowMixedCollaborators
+              ? collaborators.find((person) => person.id === collaboratorIds[0])?.role === 'encarregado' ? 'foreman' : 'general'
+              : selectedProgrammingType,
             activityType,
             ticketId: activityType === 'ticket' ? Number(ticketId) : null,
             collaboratorId: Number(collaboratorIds[0]),
@@ -319,7 +360,7 @@ export default function TicketProgrammingForm({
         await apiRequest('/api/programming', {
           method: 'POST',
           body: JSON.stringify({
-            programmingType: selectedProgrammingType,
+            programmingType: allowMixedCollaborators ? 'general' : selectedProgrammingType,
             activityType,
             ticketId: activityType === 'ticket' ? Number(ticketId) : null,
             collaboratorIds: collaboratorIds.map(Number),
@@ -377,27 +418,36 @@ export default function TicketProgrammingForm({
       )}
 
       {activityType === 'ticket' && (!initialTicketId || editingAppointment) && (
-        <label className="ticket-form-field">
+        <div className="ticket-form-field">
           <span>Chamado</span>
-          <select value={ticketId} onChange={(event) => {
-            const nextTicketId = event.target.value
-            const ticket = tickets.find((item) => item.id === nextTicketId)
-            setTicketId(nextTicketId)
-            if (ticket) {
-              setEnterprise(ticket.enterprise)
-              setBlock(ticket.block)
-              setUnit(ticket.unit)
-              setCommonAreaLocation('')
-            }
-          }} required>
-            <option value="">Selecione um protocolo</option>
-            {tickets.map((ticket) => (
-              <option key={ticket.id} value={ticket.id}>
-                {ticket.protocol} · {ticket.subject || ticket.enterprise}
-              </option>
-            ))}
-          </select>
-        </label>
+          <div className="programming-ticket-picker" ref={ticketPickerRef}>
+            <button type="button" className="programming-ticket-trigger" aria-haspopup="listbox" aria-expanded={ticketPickerOpen} onClick={() => setTicketPickerOpen((open) => !open)}>
+              <span>{tickets.find((ticket) => ticket.id === ticketId)?.protocol
+                ? `${tickets.find((ticket) => ticket.id === ticketId)?.protocol} · ${tickets.find((ticket) => ticket.id === ticketId)?.subject || tickets.find((ticket) => ticket.id === ticketId)?.enterprise}`
+                : 'Selecione um protocolo'}</span>
+              <ChevronDown size={15} />
+            </button>
+            {ticketPickerOpen && <div className="programming-ticket-popover">
+              <label className="programming-ticket-search"><Search size={15} /><input type="search" value={ticketSearchFilter} onChange={(event) => setTicketSearchFilter(event.target.value)} placeholder="Pesquisar chamado" autoFocus /></label>
+              <div className="programming-ticket-options" role="listbox" aria-label="Chamados ativos">
+                {filteredTickets.length ? filteredTickets.map((ticket) => (
+                  <button type="button" key={ticket.id} role="option" aria-selected={ticket.id === ticketId} className={ticket.id === ticketId ? 'selected' : ''} onClick={() => {
+                    const nextTicketId = ticket.id
+                    setTicketId(nextTicketId)
+                    setTicketPickerOpen(false)
+                    setTicketSearchFilter('')
+                    setEnterprise(ticket.enterprise)
+                    setBlock(ticket.block)
+                    setUnit(ticket.unit)
+                    setCommonAreaLocation('')
+                  }}>
+                    <strong>{ticket.protocol}</strong><span>{ticket.subject || ticket.enterprise}</span><small>{ticket.enterprise}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</small>
+                  </button>
+                )) : <span className="programming-ticket-empty">Nenhum chamado ativo corresponde à pesquisa.</span>}
+              </div>
+            </div>}
+          </div>
+        </div>
       )}
 
       {!editingAppointment && <div className="ticket-form-field multi-collab-section">
@@ -498,8 +548,12 @@ export default function TicketProgrammingForm({
         <label className="ticket-form-field">
           <span><UsersRound size={15} /> Colaborador da atividade</span>
           <select value={collaboratorIds[0] ?? ''} onChange={(event) => setCollaboratorIds([event.target.value])} required>
-            {collaborators.filter((person) => !hiddenRoleKeys.has(person.role)).map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-            {collaborators.some((person) => person.id === collaboratorIds[0] && hiddenRoleKeys.has(person.role)) && (
+            {collaborators.filter((person) =>
+              (selectedProgrammingType === 'foreman' ? person.role === 'encarregado' : person.role !== 'encarregado' && !hiddenRoleKeys.has(person.role)),
+            ).map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+            {collaborators.some((person) => person.id === collaboratorIds[0] &&
+              (selectedProgrammingType === 'foreman' ? person.role === 'encarregado' : hiddenRoleKeys.has(person.role)),
+            ) && (
               <option value={collaboratorIds[0]}>Colaborador atual (função oculta)</option>
             )}
           </select>
