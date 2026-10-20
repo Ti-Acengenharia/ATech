@@ -18,6 +18,7 @@ const externalUrlSchema = z.string().trim().max(2000).refine((value) => {
 const processSchema = z.object({
   title: z.string().trim().min(1).max(240),
   statusId: z.number().int().positive(),
+  enterpriseKey: z.string().trim().toLowerCase().max(240).nullable(),
   startDate: dateSchema,
   endDate: dateSchema,
   description: z.string().max(20_000),
@@ -112,9 +113,32 @@ async function validateChildStatuses(client: PoolClient, children: z.infer<typeo
   return result.rowCount === statusIds.length
 }
 
+async function validateEnterpriseKey(client: PoolClient, enterpriseKey: string | null) {
+  if (!enterpriseKey) return true
+  const result = await client.query(
+    `SELECT 1
+     FROM (
+       SELECT lower(btrim(enterprise)) AS enterprise_key
+       FROM tickets
+       WHERE btrim(enterprise) <> ''
+       UNION
+       SELECT enterprise_key FROM enterprise_information
+     ) enterprises
+     WHERE enterprise_key = $1`,
+    [enterpriseKey],
+  )
+  return Boolean(result.rowCount)
+}
+
 router.use(requirePageAccess('legal-processes'))
 
-router.post('/import-csv', async (req, res, next) => {
+router.post('/import-csv', (req, res, next) => {
+  if (req.session.user?.role !== 'admin') {
+    res.status(403).json({ error: 'A importação do CSV é restrita à administração.' })
+    return
+  }
+  next()
+}, async (req, res, next) => {
   const parsed = csvImportSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do CSV inválidos.' })
@@ -215,6 +239,57 @@ router.get('/statuses', async (_req, res, next) => {
     )
     res.json({ statuses: result.rows })
   } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/enterprises', async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `WITH enterprise_sources AS (
+         SELECT lower(btrim(enterprise)) AS enterprise_key, btrim(enterprise) AS enterprise_name
+         FROM tickets
+         WHERE btrim(enterprise) <> ''
+         UNION ALL
+         SELECT enterprise_key, enterprise_name
+         FROM enterprise_information
+       )
+       SELECT enterprise_key, min(enterprise_name) AS enterprise_name
+       FROM enterprise_sources
+       GROUP BY enterprise_key
+       ORDER BY lower(min(enterprise_name))`,
+    )
+    res.json({ enterprises: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.patch('/statuses/:id', async (req, res, next) => {
+  const statusId = idSchema.safeParse(req.params.id)
+  const parsed = statusSchema.safeParse(req.body)
+  if (!statusId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador de status inválido.' : parsed.error.issues[0]?.message ?? 'Status inválido.' })
+    return
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE legal_process_statuses
+       SET name = $1, color = $2
+       WHERE id = $3
+       RETURNING id::int AS id, name, position, color`,
+      [parsed.data.name, parsed.data.color, statusId.data],
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Situação não encontrada.' })
+      return
+    }
+    res.json({ status: result.rows[0] })
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+      res.status(409).json({ error: 'Já existe uma situação com esse nome.' })
+      return
+    }
     next(error)
   }
 })
@@ -328,6 +403,8 @@ router.get('/', async (_req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT p.id::int AS id, p.title, p.status_id::int AS status_id, s.name AS status_name, s.color AS status_color,
+              p.enterprise_key,
+              COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS enterprise_name,
               p.start_date, p.end_date, p.description, p.case_value::text, p.claimant,
               p.drive_url, p.notebook_url, p.distribution_date, p.is_demo,
               p.created_at, p.updated_at,
@@ -344,6 +421,18 @@ router.get('/', async (_req, res, next) => {
               (SELECT count(*)::int FROM legal_process_payments pay WHERE pay.process_id = p.id) AS payment_count
        FROM legal_processes p
        JOIN legal_process_statuses s ON s.id = p.status_id
+       LEFT JOIN LATERAL (
+         SELECT min(source.enterprise_name) AS enterprise_name
+         FROM (
+           SELECT btrim(t.enterprise) AS enterprise_name
+           FROM tickets t
+           WHERE lower(btrim(t.enterprise)) = p.enterprise_key
+           UNION ALL
+           SELECT i.enterprise_name
+           FROM enterprise_information i
+           WHERE i.enterprise_key = p.enterprise_key
+         ) source
+       ) enterprise ON TRUE
        ORDER BY s.position, p.updated_at DESC, p.id DESC`,
     )
     res.json({ processes: result.rows })
@@ -411,7 +500,10 @@ router.get('/:id', async (req, res, next) => {
   }
   try {
     const process = await pool.query(
-      `SELECT p.id::int AS id, p.title, p.status_id::int AS "statusId", p.start_date AS "startDate",
+      `SELECT p.id::int AS id, p.title, p.status_id::int AS "statusId",
+              p.enterprise_key AS "enterpriseKey",
+              COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS "enterpriseName",
+              p.start_date AS "startDate",
               p.end_date AS "endDate", p.description, p.case_value::text AS "caseValue",
               p.claimant, p.drive_url AS "driveUrl", p.notebook_url AS "notebookUrl",
               p.distribution_date AS "distributionDate", p.is_demo AS "isDemo",
@@ -450,7 +542,20 @@ router.get('/:id', async (req, res, next) => {
                 FROM legal_process_payments pay WHERE pay.process_id = p.id), '[]'::json) AS payments,
               COALESCE((SELECT sum(amount) FROM legal_process_payments
                         WHERE process_id = p.id AND is_paid), 0)::text AS "paidTotal"
-       FROM legal_processes p WHERE p.id = $1`,
+       FROM legal_processes p
+       LEFT JOIN LATERAL (
+         SELECT min(source.enterprise_name) AS enterprise_name
+         FROM (
+           SELECT btrim(t.enterprise) AS enterprise_name
+           FROM tickets t
+           WHERE lower(btrim(t.enterprise)) = p.enterprise_key
+           UNION ALL
+           SELECT i.enterprise_name
+           FROM enterprise_information i
+           WHERE i.enterprise_key = p.enterprise_key
+         ) source
+       ) enterprise ON TRUE
+       WHERE p.id = $1`,
       [processId.data],
     )
     if (!process.rowCount) {
@@ -472,6 +577,11 @@ router.post('/', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    if (!(await validateEnterpriseKey(client, parsed.data.enterpriseKey))) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Selecione um empreendimento válido.' })
+      return
+    }
     const status = await client.query('SELECT 1 FROM legal_process_statuses WHERE id = $1', [parsed.data.statusId])
     if (!status.rowCount) {
       await client.query('ROLLBACK')
@@ -498,10 +608,10 @@ router.post('/', async (req, res, next) => {
     const values = parsed.data
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO legal_processes
-        (title, status_id, start_date, end_date, description, case_value, claimant,
+        (title, status_id, enterprise_key, start_date, end_date, description, case_value, claimant,
          drive_url, notebook_url, distribution_date, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id::int AS id`,
-      [values.title, values.statusId, values.startDate, values.endDate, values.description,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id::int AS id`,
+      [values.title, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
         values.caseValue, values.claimant, values.driveUrl, values.notebookUrl,
         values.distributionDate, req.session.user!.id],
     )
@@ -537,6 +647,11 @@ router.put('/:id', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    if (!(await validateEnterpriseKey(client, parsed.data.enterpriseKey))) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Selecione um empreendimento válido.' })
+      return
+    }
     const status = await client.query('SELECT 1 FROM legal_process_statuses WHERE id = $1', [parsed.data.statusId])
     if (!status.rowCount) {
       await client.query('ROLLBACK')
@@ -559,11 +674,11 @@ router.put('/:id', async (req, res, next) => {
     }
     const values = parsed.data
     const updated = await client.query(
-      `UPDATE legal_processes SET title = $1, status_id = $2, start_date = $3, end_date = $4,
-         description = $5, case_value = $6, claimant = $7, drive_url = $8, notebook_url = $9,
-         distribution_date = $10, updated_at = now()
-       WHERE id = $11 RETURNING id`,
-      [values.title, values.statusId, values.startDate, values.endDate, values.description,
+      `UPDATE legal_processes SET title = $1, status_id = $2, enterprise_key = $3,
+         start_date = $4, end_date = $5, description = $6, case_value = $7, claimant = $8,
+         drive_url = $9, notebook_url = $10, distribution_date = $11, updated_at = now()
+       WHERE id = $12 RETURNING id`,
+      [values.title, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
         values.caseValue, values.claimant, values.driveUrl, values.notebookUrl, values.distributionDate, processId.data],
     )
     if (!updated.rowCount) {

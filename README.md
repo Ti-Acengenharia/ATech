@@ -417,6 +417,12 @@ O menu **Colaboradores** mantém fichas profissionais separadas das contas de lo
 
 CPF, telefone, data de nascimento e dados dos filhos são criptografados com AES-256-GCM usando `PII_ENCRYPTION_KEY`. A chave é criada localmente por `npm run security:setup-pii-key`; mantenha backup seguro e não a troque sem recriptografar os dados. O relatório individual exige confirmação, exibe aviso de dados pessoais e registra quem acessou e quando. A página inicial mostra três quadros: aniversários pessoais dos meses anterior, atual e próximo (datas em dia/mês, sem ano de nascimento), aniversários de empresa deste mês e aniversários de empresa do mês anterior e do próximo. Nos aniversários de empresa, são exibidos a data do marco no formato dia/mês/ano, a data de admissão e o tempo de empresa decorrido em anos, meses e dias.
 
+## Empreendimentos e Processos Jurídicos
+
+Na tela **Processos Jurídicos**, edite o nome de uma fase pelo ícone de lápis ao lado dela; nomes duplicados não são aceitos.
+
+**Informações dos empreendimentos** oferece busca por nome, síndico, supervisor e contatos, além de filtros por situação da data de entrega. Nos **Processos Jurídicos**, cada cartão pode ser associado a um empreendimento existente; o empreendimento também aparece na lista e pode ser usado como filtro e termo de pesquisa. Execute `npm run db:migrate` em instalações existentes para aplicar `032_legal_process_enterprises.sql`.
+
 ## Estrutura
 
 - `src/`: telas React e estilos da aplicação.
@@ -439,3 +445,7 @@ CPF, telefone, data de nascimento e dados dos filhos são criptografados com AES
 As situações e atendimentos ativos são consultados no CVCRM; os campos de gestão diária descritos acima pertencem à ATech. Mantenha `CVCRM_API_TOKEN` apenas no ambiente do backend e renove-o conforme a validade definida no CVCRM.
 
 Em produção, use HTTPS, segredos fortes fora do repositório, um PostgreSQL gerenciado e configure a origem permitida do Google para o domínio real. O cookie de sessão é `HttpOnly`, `SameSite=Lax` e `Secure` em produção.
+
+cd /caminho/da/ATech
+git pull
+docker compose --env-file .env up -d --build --force-recreate

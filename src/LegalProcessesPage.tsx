@@ -27,6 +27,7 @@ import SearchableMultiSelect from './SearchableMultiSelect'
 import './LegalProcessesPage.css'
 
 interface LegalStatus { id: number; name: string; position: number; color: string }
+interface EnterpriseOption { enterprise_key: string; enterprise_name: string }
 interface Assignee { id: number; display_name?: string; displayName?: string; email?: string }
 interface ChildProcess { id?: number; processNumber: string; description: string; statusId: number; movementDate: string | null; isDone: boolean }
 interface CsvLegalTask {
@@ -90,6 +91,8 @@ interface LegalProcess {
   status_id: number
   status_name: string
   status_color: string
+  enterprise_key: string | null
+  enterprise_name: string
   start_date: string | null
   end_date: string | null
   description: string
@@ -109,6 +112,8 @@ interface ProcessDetail {
   id: number
   title: string
   statusId: number
+  enterpriseKey: string | null
+  enterpriseName: string
   startDate: string | null
   endDate: string | null
   description: string
@@ -127,6 +132,7 @@ interface ProcessDetail {
 interface ProcessDraft {
   title: string
   statusId: number
+  enterpriseKey: string
   startDate: string
   endDate: string
   description: string
@@ -139,8 +145,9 @@ interface ProcessDraft {
   children: ChildProcess[]
 }
 
-type FaceField = 'claimant' | 'assignees' | 'dates' | 'caseValue' | 'children' | 'paidTotal' | 'distributionDate'
+type FaceField = 'enterprise' | 'claimant' | 'assignees' | 'dates' | 'caseValue' | 'children' | 'paidTotal' | 'distributionDate'
 const faceFields: { id: FaceField; label: string }[] = [
+  { id: 'enterprise', label: 'Empreendimento' },
   { id: 'claimant', label: 'Requerente' },
   { id: 'assignees', label: 'Responsáveis' },
   { id: 'dates', label: 'Início e finalização' },
@@ -149,7 +156,7 @@ const faceFields: { id: FaceField; label: string }[] = [
   { id: 'paidTotal', label: 'Total pago' },
   { id: 'distributionDate', label: 'Data de distribuição' },
 ]
-const defaultFaceFields: FaceField[] = ['claimant', 'assignees', 'dates', 'caseValue', 'paidTotal']
+const defaultFaceFields: FaceField[] = ['enterprise', 'claimant', 'assignees', 'dates', 'caseValue', 'paidTotal']
 const kanbanPageSize = 5
 const listPageSize = 50
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -162,13 +169,13 @@ function showDate(value: string | null | undefined) {
 }
 function blankDraft(statusId: number): ProcessDraft {
   return {
-    title: '', statusId, startDate: '', endDate: '', description: '', caseValue: '',
+    title: '', statusId, enterpriseKey: '', startDate: '', endDate: '', description: '', caseValue: '',
     claimant: '', driveUrl: '', notebookUrl: '', distributionDate: '', assigneeIds: [], children: [],
   }
 }
 function toDraft(process: ProcessDetail): ProcessDraft {
   return {
-    title: process.title, statusId: process.statusId, startDate: dateInput(process.startDate),
+    title: process.title, statusId: process.statusId, enterpriseKey: process.enterpriseKey ?? '', startDate: dateInput(process.startDate),
     endDate: dateInput(process.endDate), description: process.description,
     caseValue: process.caseValue ?? '', claimant: process.claimant, driveUrl: process.driveUrl,
     notebookUrl: process.notebookUrl, distributionDate: dateInput(process.distributionDate),
@@ -209,6 +216,7 @@ function decodeCsvFile(file: File) {
 export default function LegalProcessesPage({ currentUser }: { currentUser: { id: number; role: 'admin' | 'member' } }) {
   const [statuses, setStatuses] = useState<LegalStatus[]>([])
   const [processes, setProcesses] = useState<LegalProcess[]>([])
+  const [enterprises, setEnterprises] = useState<EnterpriseOption[]>([])
   const [processPagination, setProcessPagination] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
   const [people, setPeople] = useState<Assignee[]>([])
   const [loading, setLoading] = useState(true)
@@ -217,9 +225,12 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [filtersExpanded, setFiltersExpanded] = useState(true)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [enterpriseFilter, setEnterpriseFilter] = useState('')
   const [showStatusForm, setShowStatusForm] = useState(false)
   const [statusName, setStatusName] = useState('')
   const [statusColor, setStatusColor] = useState('#3478a8')
+  const [editingStatusId, setEditingStatusId] = useState<number | null>(null)
+  const [editingStatusName, setEditingStatusName] = useState('')
   const [newProcess, setNewProcess] = useState(false)
   const [selected, setSelected] = useState<ProcessDetail | null>(null)
   const [draft, setDraft] = useState<ProcessDraft | null>(null)
@@ -373,12 +384,14 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   }
 
   const load = useCallback(async () => {
-    const [statusResult, processResult] = await Promise.all([
+    const [statusResult, processResult, enterpriseResult] = await Promise.all([
       apiRequest<{ statuses: LegalStatus[] }>('/api/legal-processes/statuses'),
       apiRequest<{ processes: LegalProcess[] }>('/api/legal-processes'),
+      apiRequest<{ enterprises: EnterpriseOption[] }>('/api/legal-processes/enterprises'),
     ])
     setStatuses(statusResult.statuses)
     setProcesses(processResult.processes)
+    setEnterprises(enterpriseResult.enterprises)
   }, [])
 
   useEffect(() => {
@@ -386,10 +399,12 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     Promise.all([
       apiRequest<{ statuses: LegalStatus[] }>('/api/legal-processes/statuses'),
       apiRequest<{ processes: LegalProcess[] }>('/api/legal-processes'),
+      apiRequest<{ enterprises: EnterpriseOption[] }>('/api/legal-processes/enterprises'),
     ]).then((results) => {
       if (cancelled) return
       setStatuses(results[0].statuses)
       setProcesses(results[1].processes)
+      setEnterprises(results[2].enterprises)
     }).catch((error: unknown) => {
       if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os processos jurídicos.' })
     }).finally(() => { if (!cancelled) setLoading(false) })
@@ -413,8 +428,9 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
 
   const filtered = useMemo(() => processes.filter((process) =>
     (!statusFilter || String(process.status_id) === statusFilter) &&
-    `${process.title} ${process.claimant} ${process.assignees.map((person) => person.displayName ?? person.display_name).join(' ')}`
-      .toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))), [processes, query, statusFilter])
+    (!enterpriseFilter || process.enterprise_key === enterpriseFilter) &&
+    `${process.title} ${process.enterprise_name} ${process.claimant} ${process.assignees.map((person) => person.displayName ?? person.display_name).join(' ')}`
+      .toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))), [processes, query, statusFilter, enterpriseFilter])
   const filteredCsvTasks = useMemo(() => {
     const normalizedQuery = csvQuery.toLocaleLowerCase('pt-BR')
     if (!normalizedQuery) return csvTasks
@@ -425,13 +441,13 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const csvPageCount = Math.max(1, Math.ceil(filteredCsvTasks.length / listPageSize))
   const currentCsvPage = Math.min(csvPage, csvPageCount)
   const visibleCsvTasks = filteredCsvTasks.slice((currentCsvPage - 1) * listPageSize, currentCsvPage * listPageSize)
-  const legalListKey = JSON.stringify([query, statusFilter, filtered.map((process) => process.id)])
+  const legalListKey = JSON.stringify([query, statusFilter, enterpriseFilter, filtered.map((process) => process.id)])
   const [legalListPageState, setLegalListPageState] = useState<{ key: string; page: number }>({ key: '', page: 1 })
   const legalListPageCount = Math.max(1, Math.ceil(filtered.length / listPageSize))
   const legalListPage = Math.min(legalListPageState.key === legalListKey ? legalListPageState.page : 1, legalListPageCount)
   const pagedProcesses = filtered.slice((legalListPage - 1) * listPageSize, legalListPage * listPageSize)
 
-  const processPaginationKey = JSON.stringify([query, statusFilter, processes.map((process) => [process.id, process.status_id])])
+  const processPaginationKey = JSON.stringify([query, statusFilter, enterpriseFilter, processes.map((process) => [process.id, process.status_id, process.enterprise_key])])
   const visibleProcessCounts = processPagination.key === processPaginationKey ? processPagination.counts : {}
 
   function loadMoreProcesses(statusKey: string, visibleCount: number) {
@@ -543,6 +559,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     try {
       const body = {
         ...draft,
+        enterpriseKey: draft.enterpriseKey || null,
         startDate: draft.startDate || null,
         endDate: draft.endDate || null,
         caseValue: draft.caseValue === '' ? null : Number(draft.caseValue),
@@ -699,6 +716,22 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     }
   }
 
+  async function updateStatus(event: FormEvent<HTMLFormElement>, status: LegalStatus) {
+    event.preventDefault()
+    try {
+      const result = await apiRequest<{ status: LegalStatus }>(`/api/legal-processes/statuses/${status.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: editingStatusName, color: status.color }),
+      })
+      setStatuses((current) => current.map((item) => item.id === status.id ? result.status : item))
+      setEditingStatusId(null)
+      setEditingStatusName('')
+      setNotice({ kind: 'success', text: 'Nome da situação atualizado.' })
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar o nome da situação.' })
+    }
+  }
+
   async function deleteStatus(status: LegalStatus) {
     if (!window.confirm(`Excluir o status “${status.name}”?`)) return
     try {
@@ -816,6 +849,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const assigneeName = (person: Assignee) => person.displayName ?? person.display_name ?? person.email ?? 'Usuário'
   const assigneeOptions = people.map((person) => ({ value: String(person.id), label: assigneeName(person) }))
   const faceValue = (process: LegalProcess, field: FaceField) => {
+    if (field === 'enterprise') return process.enterprise_name || 'Empreendimento não associado'
     if (field === 'claimant') return process.claimant || 'Requerente não informado'
     if (field === 'assignees') return process.assignees.map(assigneeName).join(', ') || 'Sem responsáveis'
     if (field === 'dates') return `${showDate(process.start_date)} — ${showDate(process.end_date)}`
@@ -854,7 +888,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       </header>
       {notice && <div className={`notice notice-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><span className="notice-symbol">{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" onClick={() => setNotice(null)} aria-label="Fechar aviso">×</button></div>}
 
-      <section className="legal-csv-upload" aria-labelledby="legal-csv-title">
+      {currentUser.role === 'admin' && <section className="legal-csv-upload" aria-labelledby="legal-csv-title">
         <div className="legal-csv-heading">
           <div><FileSpreadsheet size={19} /><div><h2 id="legal-csv-title">Importar cartões do ClickUp</h2><p>A prévia é lida no navegador. Ao importar, os cartões e seus dados serão salvos; o arquivo CSV original não será guardado.</p></div></div>
           <label className="secondary-button legal-csv-picker"><UploadCloud size={15} />Selecionar CSV<input className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => void handleLegalCsvSelected(event)} /></label>
@@ -890,14 +924,15 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
             <small>Importa todas as tarefas do CSV, mesmo se a prévia estiver filtrada.</small>
           </div>
         </div>}
-      </section>
+      </section>}
 
       <div className="legal-toolbar">
-        <button type="button" className="legal-filter-toggle" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}><ChevronDown size={15} />{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}{!filtersExpanded && <span>{[query, statusFilter].filter(Boolean).length} filtro(s)</span>}</button>
+        <button type="button" className="legal-filter-toggle" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}><ChevronDown size={15} />{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}{!filtersExpanded && <span>{[query, statusFilter, enterpriseFilter].filter(Boolean).length} filtro(s)</span>}</button>
         {filtersExpanded && <div className="legal-filter-fields">
-          <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar por processo, requerente ou responsável" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar processo, empreendimento, requerente ou responsável" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <label className="legal-status-filter"><span>Situação</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
-          <button type="button" className="filter-clear-button" disabled={!query && !statusFilter} onClick={() => { setQuery(''); setStatusFilter('') }}><X size={14} /> Limpar filtros</button>
+          <label className="legal-status-filter"><span>Empreendimento</span><select value={enterpriseFilter} onChange={(event) => setEnterpriseFilter(event.target.value)}><option value="">Todos</option>{enterprises.map((enterprise) => <option key={enterprise.enterprise_key} value={enterprise.enterprise_key}>{enterprise.enterprise_name}</option>)}</select></label>
+          <button type="button" className="filter-clear-button" disabled={!query && !statusFilter && !enterpriseFilter} onClick={() => { setQuery(''); setStatusFilter(''); setEnterpriseFilter('') }}><X size={14} /> Limpar filtros</button>
         </div>}
         <div className="legal-toolbar-actions">
           <div className="legal-face-menu-wrap"><button type="button" className="secondary-button" aria-expanded={faceMenu} onClick={() => setFaceMenu((value) => !value)}>Campos do cartão</button>
@@ -910,11 +945,16 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
         </div>
       </div>
 
-      <div className="legal-status-toolbar">
-        <span>SITUAÇÕES / FASES</span>{statuses.map((status, index) => <span className="legal-status-chip" key={status.id}><i style={{ background: status.color }} />{status.name}<span className="legal-status-order"><button type="button" title={`Mover ${status.name} para a esquerda`} aria-label={`Mover ${status.name} para a esquerda`} disabled={savingStatusOrder || index === 0} onClick={() => void moveStatus(status.id, -1)}><ArrowLeft size={12} /></button><button type="button" title={`Mover ${status.name} para a direita`} aria-label={`Mover ${status.name} para a direita`} disabled={savingStatusOrder || index === statuses.length - 1} onClick={() => void moveStatus(status.id, 1)}><ArrowRight size={12} /></button></span><button type="button" title={`Excluir status ${status.name}`} aria-label={`Excluir status ${status.name}`} onClick={() => void deleteStatus(status)}><X size={12} /></button></span>)}
-        <button type="button" className="text-action-btn" onClick={() => setShowStatusForm((value) => !value)}><Plus size={14} /> Novo status</button>
-      </div>
-      {showStatusForm && <form className="legal-status-create" onSubmit={(event) => void createStatus(event)}><input value={statusName} onChange={(event) => setStatusName(event.target.value)} placeholder="Nome da situação/fase" maxLength={80} required /><input type="color" value={statusColor} onChange={(event) => setStatusColor(event.target.value)} aria-label="Cor da situação" /><button className="secondary-button" type="submit">Criar status</button><button className="text-action-btn" type="button" onClick={() => setShowStatusForm(false)}>Cancelar</button></form>}
+      {filtersExpanded && <>
+        <div className="legal-status-toolbar">
+          <span>SITUAÇÕES / FASES</span>{statuses.map((status, index) => <span className="legal-status-chip" key={status.id}><i style={{ background: status.color }} />{editingStatusId === status.id
+            ? <form className="legal-status-edit-form" onSubmit={(event) => void updateStatus(event, status)}><input aria-label={`Novo nome para ${status.name}`} value={editingStatusName} onChange={(event) => setEditingStatusName(event.target.value)} maxLength={80} required autoFocus /><button type="submit" title="Salvar nome" aria-label="Salvar nome"><Check size={13} /></button><button type="button" title="Cancelar edição" aria-label="Cancelar edição" onClick={() => { setEditingStatusId(null); setEditingStatusName('') }}><X size={13} /></button></form>
+            : <><span>{status.name}</span><button type="button" title={`Editar nome de ${status.name}`} aria-label={`Editar nome de ${status.name}`} onClick={() => { setEditingStatusId(status.id); setEditingStatusName(status.name) }}><Pencil size={12} /></button></>}
+            <span className="legal-status-order"><button type="button" title={`Mover ${status.name} para a esquerda`} aria-label={`Mover ${status.name} para a esquerda`} disabled={savingStatusOrder || index === 0} onClick={() => void moveStatus(status.id, -1)}><ArrowLeft size={12} /></button><button type="button" title={`Mover ${status.name} para a direita`} aria-label={`Mover ${status.name} para a direita`} disabled={savingStatusOrder || index === statuses.length - 1} onClick={() => void moveStatus(status.id, 1)}><ArrowRight size={12} /></button></span><button type="button" title={`Excluir status ${status.name}`} aria-label={`Excluir status ${status.name}`} onClick={() => void deleteStatus(status)}><X size={12} /></button></span>)}
+          <button type="button" className="text-action-btn" onClick={() => setShowStatusForm((value) => !value)}><Plus size={14} /> Novo status</button>
+        </div>
+        {showStatusForm && <form className="legal-status-create" onSubmit={(event) => void createStatus(event)}><input value={statusName} onChange={(event) => setStatusName(event.target.value)} placeholder="Nome da situação/fase" maxLength={80} required /><input type="color" value={statusColor} onChange={(event) => setStatusColor(event.target.value)} aria-label="Cor da situação" /><button className="secondary-button" type="submit">Criar status</button><button className="text-action-btn" type="button" onClick={() => setShowStatusForm(false)}>Cancelar</button></form>}
+      </>}
 
       {loading ? <div className="legal-empty">Carregando processos...</div>
         : !processes.length ? <div className="legal-empty"><FileText size={29} /><strong>Ainda não há processos jurídicos</strong><span>Crie um processo ou carregue um exemplo fictício removível para conhecer os campos.</span><div><button className="primary-button" type="button" onClick={() => startCreate()}><Plus size={15} /> Novo processo</button><button className="secondary-button" type="button" onClick={() => void createDemo()}>Carregar exemplo fictício</button></div></div>
@@ -927,7 +967,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
               <div className="legal-column-body">{itemsToShow.map((process) => processCard(process))}{itemsToShow.length < items.length && <button type="button" className="kanban-load-more" onClick={() => loadMoreProcesses(String(status.id), visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, items.length - visibleCount)})</button>}<button type="button" className="legal-add-card" onClick={() => startCreate(status.id)}><Plus size={14} /> Adicionar processo</button></div>
             </section>
           })}<section className="legal-new-column"><button type="button" onClick={() => setShowStatusForm(true)}><Plus size={15} /> Nova situação</button></section></div></>
-            : <><div className="legal-list-wrap"><table className="legal-list"><thead><tr><th>PROCESSO</th><th>SITUAÇÃO / FASE</th><th>REQUERENTE</th><th>RESPONSÁVEIS</th><th>PERÍODO</th><th>VALOR</th><th>PAGO</th></tr></thead><tbody>{pagedProcesses.map((process) => <tr key={process.id} onClick={() => void openDetail(process)}><td><strong>{process.title}</strong>{process.is_demo && <small>Exemplo fictício</small>}</td><td><span className="legal-status-label"><i style={{ background: process.status_color }} />{process.status_name}<select aria-label={`Mover ${process.title} para outro status`} value={process.status_id} onClick={(event) => event.stopPropagation()} onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></span></td><td>{process.claimant || '—'}</td><td>{process.assignees.map(assigneeName).join(', ') || '—'}</td><td>{showDate(process.start_date)} – {showDate(process.end_date)}</td><td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td><td>{currency.format(Number(process.paid_total))}</td></tr>)}</tbody></table></div><LegalListPagination total={filtered.length} page={legalListPage} pageCount={legalListPageCount} pageSize={listPageSize} onPageChange={(page) => setLegalListPageState({ key: legalListKey, page })} /></>}
+            : <><div className="legal-list-wrap"><table className="legal-list"><thead><tr><th>PROCESSO</th><th>EMPREENDIMENTO</th><th>SITUAÇÃO / FASE</th><th>REQUERENTE</th><th>RESPONSÁVEIS</th><th>PERÍODO</th><th>VALOR</th><th>PAGO</th></tr></thead><tbody>{pagedProcesses.map((process) => <tr key={process.id} onClick={() => void openDetail(process)}><td><strong>{process.title}</strong>{process.is_demo && <small>Exemplo fictício</small>}</td><td>{process.enterprise_name || '—'}</td><td><span className="legal-status-label"><i style={{ background: process.status_color }} />{process.status_name}<select aria-label={`Mover ${process.title} para outro status`} value={process.status_id} onClick={(event) => event.stopPropagation()} onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></span></td><td>{process.claimant || '—'}</td><td>{process.assignees.map(assigneeName).join(', ') || '—'}</td><td>{showDate(process.start_date)} – {showDate(process.end_date)}</td><td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td><td>{currency.format(Number(process.paid_total))}</td></tr>)}</tbody></table></div><LegalListPagination total={filtered.length} page={legalListPage} pageCount={legalListPageCount} pageSize={listPageSize} onPageChange={(page) => setLegalListPageState({ key: legalListKey, page })} /></>}
       {processes.length > 0 && !filtered.length && <div className="legal-empty-inline">Nenhum processo encontrado com os filtros aplicados.</div>}
 
       {(newProcess || selected) && draft && <div className="legal-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor() }}>
@@ -936,6 +976,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
           <form className="legal-process-form" onSubmit={(event) => void saveProcess(event)}>
             <label className="legal-field legal-field-full"><span>Nome do processo</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={240} required autoFocus /></label>
             <label className="legal-field"><span>Situação / Fase</span><select value={draft.statusId} onChange={(event) => setDraft({ ...draft, statusId: Number(event.target.value) })} required>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
+            <label className="legal-field"><span>Empreendimento</span><select value={draft.enterpriseKey} onChange={(event) => setDraft({ ...draft, enterpriseKey: event.target.value })}><option value="">Sem empreendimento associado</option>{enterprises.map((enterprise) => <option key={enterprise.enterprise_key} value={enterprise.enterprise_key}>{enterprise.enterprise_name}</option>)}</select></label>
             <div className="legal-field legal-assignee-field"><span>Responsáveis</span><SearchableMultiSelect label="Selecionar responsáveis" options={assigneeOptions} value={draft.assigneeIds.map(String)} onChange={(values) => setDraft({ ...draft, assigneeIds: values.map(Number) })} emptyLabel="Nenhum responsável cadastrado." />
               {draft.assigneeIds.length > 0 && <div className="legal-assignee-selected" aria-label="Responsáveis selecionados">
                 {people.filter((person) => draft.assigneeIds.includes(person.id)).map((person) => <span key={person.id}>{assigneeName(person)}<button type="button" aria-label={`Remover ${assigneeName(person)}`} onClick={() => setDraft({ ...draft, assigneeIds: draft.assigneeIds.filter((id) => id !== person.id) })}><X size={12} /></button></span>)}

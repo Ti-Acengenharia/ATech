@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Building2, CalendarDays, Check, CircleAlert, Mail, Pencil, Phone, Plus, Save, ShieldCheck, UserRound, X } from 'lucide-react'
+import { Building2, CalendarDays, Check, CircleAlert, Mail, Pencil, Phone, Plus, Save, Search, ShieldCheck, UserRound, X } from 'lucide-react'
 import { apiRequest } from './api/client'
 
 interface EnterpriseInformation {
@@ -109,6 +109,8 @@ export default function EnterpriseInformationPage() {
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [refresh, setRefresh] = useState(0)
   const [now, setNow] = useState(() => Date.now())
+  const [search, setSearch] = useState('')
+  const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'planned' | 'missing'>('all')
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
@@ -175,6 +177,28 @@ export default function EnterpriseInformationPage() {
     setForm((current) => current ? { ...current, [key]: value } : current)
   }
 
+  const todayDate = new Date(now)
+  const today = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`
+  const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR')
+  const filteredEnterprises = enterprises.filter((enterprise) => {
+    const matchesSearch = !normalizedSearch || [
+      enterprise.enterprise_name,
+      enterprise.syndic_name,
+      enterprise.syndic_phone,
+      enterprise.syndic_email,
+      enterprise.supervisor_name,
+      enterprise.supervisor_phone,
+      enterprise.supervisor_email,
+      enterprise.condominium_email,
+    ].some((value) => value?.toLocaleLowerCase('pt-BR').includes(normalizedSearch))
+    const deliveryDate = inputDate(enterprise.condominium_delivery_date)
+    const matchesDelivery = deliveryFilter === 'all' ||
+      (deliveryFilter === 'missing' && !deliveryDate) ||
+      (deliveryFilter === 'planned' && deliveryDate > today) ||
+      (deliveryFilter === 'delivered' && Boolean(deliveryDate) && deliveryDate <= today)
+    return matchesSearch && matchesDelivery
+  })
+
   return (
     <section className="enterprise-information-page">
       <header className="enterprise-page-heading">
@@ -188,11 +212,22 @@ export default function EnterpriseInformationPage() {
         <header className="enterprise-card-heading"><span className="enterprise-card-icon"><Building2 size={18} /></span><div><h2>Novo empreendimento</h2><span>Preencha o nome e os dados que já tiver disponíveis.</span></div><button type="button" className="icon-button enterprise-cancel-create" aria-label="Cancelar cadastro" onClick={cancelEdit}><X size={16} /></button></header>
         <EnterpriseEditForm form={form} onUpdate={update} onSubmit={(event) => void save(event)} saving={saving} onCancel={cancelEdit} creating />
       </article>}
+      {!loading && enterprises.length > 0 && <div className="enterprise-filters">
+        <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar empreendimento, síndico, supervisor ou contato" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <label><span>Entrega do condomínio</span><select value={deliveryFilter} onChange={(event) => setDeliveryFilter(event.target.value as typeof deliveryFilter)}>
+          <option value="all">Todas as datas</option>
+          <option value="delivered">Já entregue</option>
+          <option value="planned">Entrega prevista</option>
+          <option value="missing">Sem data informada</option>
+        </select></label>
+        <span className="enterprise-filter-count">{filteredEnterprises.length} de {enterprises.length}</span>
+        <button className="filter-clear-button" type="button" disabled={!search && deliveryFilter === 'all'} onClick={() => { setSearch(''); setDeliveryFilter('all') }}><X size={14} /> Limpar filtros</button>
+      </div>}
       {loading ? <div className="enterprise-empty-state">Carregando empreendimentos...</div> : enterprises.length === 0 ? (
         <div className="enterprise-empty-state"><Building2 size={28} /><strong>Nenhum empreendimento encontrado</strong><span>Os empreendimentos serão listados assim que estiverem presentes nos chamados.</span></div>
       ) : (
         <div className="enterprise-list">
-          {enterprises.map((enterprise) => {
+          {filteredEnterprises.map((enterprise) => {
             const duration = deliveredDuration(enterprise.condominium_delivery_date, now)
             const isEditing = editing === enterprise.enterprise_key && form !== null
             return (
@@ -221,6 +256,7 @@ export default function EnterpriseInformationPage() {
               </article>
             )
           })}
+          {!filteredEnterprises.length && <div className="enterprise-empty-state"><Search size={24} /><strong>Nenhum empreendimento corresponde aos filtros</strong><span>Altere os termos ou limpe os filtros para ver os empreendimentos.</span></div>}
         </div>
       )}
       <p className="enterprise-readonly-note"><ShieldCheck size={14} /> Todos os usuários podem cadastrar e atualizar as informações dos empreendimentos.</p>

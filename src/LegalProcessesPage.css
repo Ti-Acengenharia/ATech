@@ -23,6 +23,9 @@
 .legal-status-chip i, .legal-column > header i, .legal-status-label i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; }
 .legal-status-chip button { display: grid; place-items: center; padding: 0; color: var(--muted); background: transparent; border: 0; }
 .legal-status-chip button:disabled { opacity: .35; cursor: default; }
+.legal-status-edit-form { display: inline-flex; align-items: center; gap: 3px; }
+.legal-status-edit-form input { width: min(180px, 30vw); min-width: 70px; height: 27px; padding: 3px 6px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+.legal-status-edit-form button { width: 22px; height: 22px; place-items: center; border-radius: 4px; }
 .legal-status-order { display: inline-flex; align-items: center; gap: 1px; }
 .legal-status-order button { width: 22px; height: 22px; border-radius: 4px; }
 .legal-status-order button:hover:not(:disabled) { color: var(--forest); background: #eaf3fa; }
@@ -177,6 +180,26 @@
 .legal-csv-preview .list-pagination { margin-top: 10px; }
 .legal-csv-import-action { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 13px; }
 .legal-csv-import-action small { color: var(--muted); font-size: 10px; }
+@media (max-width: 900px) {
+  .legal-page, .legal-toolbar, .legal-status-toolbar, .legal-csv-upload { width: 100%; min-width: 0; box-sizing: border-box; }
+  .legal-heading { align-items: flex-start; flex-wrap: wrap; min-width: 0; }
+  .legal-heading > div:first-child { min-width: 0; flex: 1 1 100%; }
+  .legal-heading-actions { max-width: 100%; flex-wrap: wrap; }
+  .legal-toolbar { justify-content: flex-start; }
+  .legal-filter-fields { width: 100%; min-width: 0; flex: 1 1 100%; }
+  .legal-filter-fields .search-box { width: 100%; min-width: 0; flex: 1 1 100%; box-sizing: border-box; }
+  .legal-status-filter { min-width: 0; max-width: 100%; flex: 1 1 220px; box-sizing: border-box; }
+  .legal-status-filter select { min-width: 0; max-width: 100%; flex: 1 1 auto; }
+  .legal-toolbar-actions { width: 100%; min-width: 0; justify-content: space-between; flex-wrap: wrap; }
+  .legal-status-toolbar { align-items: flex-start; }
+  .legal-status-toolbar > span:first-child { flex: 1 1 100%; }
+  .legal-status-chip { min-width: 0; max-width: 100%; flex-wrap: wrap; overflow-wrap: anywhere; }
+  .legal-status-chip > span:not(.legal-status-order) { min-width: 0; overflow-wrap: anywhere; }
+  .legal-csv-heading { align-items: flex-start; flex-wrap: wrap; }
+  .legal-csv-heading > div { min-width: 0; flex: 1 1 100%; align-items: flex-start; }
+  .legal-csv-heading > div > div { min-width: 0; }
+  .legal-csv-heading p { overflow-wrap: anywhere; }
+}
 @media (max-width: 760px) {
   .legal-page { padding: 18px 13px; }
   .legal-heading { align-items: flex-start; flex-direction: column; }
