@@ -193,7 +193,6 @@ ADMIN_INITIAL_PASSWORD=DEFINA_UMA_SENHA_FORTE_COM_12_CARACTERES_OU_MAIS
 CVCRM_SUBDOMAIN=
 CVCRM_API_EMAIL=
 CVCRM_API_TOKEN=
-CVCRM_SYNC_INTERVAL_SECONDS=3600
 PII_ENCRYPTION_KEY=
 ```
 
@@ -351,12 +350,11 @@ No `.env` do backend, configure as variáveis abaixo. Use o subdomínio do ender
 CVCRM_SUBDOMAIN=seu-subdominio
 CVCRM_API_EMAIL=usuario-administrativo@empresa.com.br
 CVCRM_API_TOKEN=token-gerado-no-cvcrm
-CVCRM_SYNC_INTERVAL_SECONDS=3600
 ```
 
 O valor de `CVCRM_SUBDOMAIN` pode ser apenas o subdomínio ou o endereço completo do CVCRM; a API normaliza a entrada para o subdomínio. O usuário administrativo do CVCRM precisa de permissão para consultar atendimentos e workflows. Reinicie a API depois de salvar o `.env`. A integração usa somente chamadas de leitura à API padrão v1 (`GET`), sem enviar alterações de situação ou outros dados ao CVCRM. Não usa o CVDW.
 
-O endpoint paginado é `GET /api/v1/relacionamento/atendimentos/listar`, com `pagina` e `registros_por_pagina=500`; os totais são lidos dos headers `X-Total-Registros` e `X-Total-Paginas`. A validação testa as duas primeiras páginas e interrompe importações/sincronizações se os IDs se repetirem, faltarem metadados de total ou a quantidade recebida não corresponder à informada, para evitar uma carga incompleta. Na tela **Validação da API**, valide a conexão e use **Importar/atualizar histórico completo** para percorrer todas as páginas e persistir chamados ativos, finalizados e cancelados. A sincronização manual e a periódica também atualizam todos os registros; apenas os chamados ativos são exibidos por padrão no quadro. A primeira carga completa pode levar mais tempo conforme o volume de registros; o processamento fica no servidor e os dados não são enviados em lote ao navegador. As etapas são lidas por `GET /api/v1/configuracoes/workflows/atendimentos`; somente etapas com nome não vazio são exibidas.
+O endpoint paginado é `GET /api/v1/relacionamento/atendimentos/listar`, com `pagina` e `registros_por_pagina=500`; os totais são lidos dos headers `X-Total-Registros` e `X-Total-Paginas`. A validação testa as duas primeiras páginas e interrompe importações/sincronizações se os IDs se repetirem, faltarem metadados de total ou a quantidade recebida não corresponder à informada, para evitar uma carga incompleta. Na tela **Validação da API**, valide a conexão e use **Importar/atualizar histórico completo** para percorrer todas as páginas e persistir chamados ativos, finalizados e cancelados. Com a sincronização automática ativada, o servidor atualiza todos os registros silenciosamente a cada 30 minutos, nos horários de Brasília entre 7h30 e 18h; fica pausada das 18h até 7h30. A sincronização manual continua disponível fora desse período. Apenas os chamados ativos são exibidos por padrão no quadro. A primeira carga completa pode levar mais tempo conforme o volume de registros; o processamento fica no servidor e os dados não são enviados em lote ao navegador. As etapas são lidas por `GET /api/v1/configuracoes/workflows/atendimentos`; somente etapas com nome não vazio são exibidas.
 
 ## Chamados e programação
 

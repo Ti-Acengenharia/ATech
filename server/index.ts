@@ -16,7 +16,7 @@ import enterpriseInformationRoutes from './routes/enterprise-information.js'
 import warrantyRoutes from './routes/warranties.js'
 import legalProcessRoutes from './routes/legal-processes.js'
 import personalActivityRoutes from './routes/personal-activities.js'
-import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, cvcrmSyncIntervalMs, syncCvcrmTickets } from './services/cvcrm.js'
+import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, syncCvcrmTickets } from './services/cvcrm.js'
 
 const app = express()
 const PgSession = connectPgSimple(session)
@@ -86,25 +86,47 @@ const server = app.listen(env.PORT, env.API_HOST, () => {
 })
 
 if (cvcrmIsConfigured()) {
+  const brasiliaClock = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+  let lastSyncSlot = ''
+
   const checkAndRunSync = async () => {
+    const parts = Object.fromEntries(
+      brasiliaClock.formatToParts(new Date())
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value]),
+    )
+    const minute = Number(parts.minute)
+    const minuteOfDay = Number(parts.hour) * 60 + minute
+    if ((minute !== 0 && minute !== 30) || minuteOfDay < 450 || minuteOfDay >= 1080) {
+      return
+    }
+    const slot = `${parts.year}-${parts.month}-${parts.day}-${parts.hour}-${parts.minute}`
+    if (slot === lastSyncSlot) return
+    lastSyncSlot = slot
+
     try {
       const isEnabled = await cvcrmAutoSyncIsEnabled()
       if (!isEnabled) {
         return
       }
-      console.log('[CVCRM] Iniciando atualização horária automática dos chamados...')
-      const result = await syncCvcrmTickets()
-      console.log(`[CVCRM] Atualização horária concluída com sucesso: ${result.importedCount} chamados ativos sincronizados.`)
+      await syncCvcrmTickets()
     } catch (error: unknown) {
       console.error('[CVCRM] Falha na atualização periódica:', error instanceof Error ? error.message : 'erro desconhecido')
     }
   }
 
-  // Não inicia imediatamente no boot para evitar rajada de requisições.
-  // A sincronização roda a cada 1 hora se a validação inicial e o auto_sync estiverem ativos.
+  // Check short intervals so sync starts at the scheduled half-hour slots.
   const syncTimer = setInterval(() => {
     void checkAndRunSync()
-  }, cvcrmSyncIntervalMs())
+  }, 30_000)
   syncTimer.unref()
 }
 

@@ -36,7 +36,6 @@ const envSchema = z.object({
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().min(10).optional(),
   ),
-  CVCRM_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(60).default(3600),
 })
 
 const parsedEnv = envSchema.safeParse(process.env)

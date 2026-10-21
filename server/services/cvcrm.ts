@@ -1077,10 +1077,6 @@ export function cvcrmIsConfigured() {
   return integrationConfigured()
 }
 
-export function cvcrmSyncIntervalMs() {
-  return env.CVCRM_SYNC_INTERVAL_SECONDS * 1000
-}
-
 export async function cvcrmAutoSyncIsEnabled() {
   const state = await pool.query<{ auto_sync_enabled: boolean; baseline_completed: boolean; api_validated_at: Date | null }>(
     'SELECT auto_sync_enabled, baseline_completed, api_validated_at FROM ticket_sync_state WHERE id = 1',
@@ -1140,7 +1136,7 @@ export async function getCvcrmIntegrationStatus() {
   return {
     configured: cvcrmIsConfigured(),
     hasToken: Boolean(env.CVCRM_API_TOKEN),
-    syncIntervalSeconds: env.CVCRM_SYNC_INTERVAL_SECONDS,
+    syncIntervalSeconds: 1800,
     state: stateResult.rows[0] ?? {
       api_validated_at: null,
       baseline_completed: false,

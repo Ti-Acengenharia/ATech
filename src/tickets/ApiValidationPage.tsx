@@ -121,7 +121,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
   const [importingCsv, setImportingCsv] = useState(false)
   const [csvResult, setCsvResult] = useState<ImportCsvResponse | null>(null)
 
-  // Sincronização horária
+  // Sincronização automática
   const [togglingAutoSync, setTogglingAutoSync] = useState(false)
   const [manualSyncing, setManualSyncing] = useState(false)
   const [importingAllTickets, setImportingAllTickets] = useState(false)
@@ -298,7 +298,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
       setNotice({
         kind: 'success',
         text: newState
-          ? 'Sincronização automática a cada 1 hora ativada!'
+          ? 'Sincronização automática a cada 30 minutos ativada!'
           : 'Sincronização automática pausada.',
       })
       loadStatus()
@@ -357,7 +357,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
           <h1>Painel de Validação da API CVCRM</h1>
           <p>
             Valide credenciais com segurança sem sobrecarregar a API, teste protocolos individuais,
-            importe sua carga inicial via CSV e configure a atualização periódica a cada 1 hora.
+            importe sua carga inicial via CSV e configure a atualização automática a cada 30 minutos.
           </p>
         </div>
         <div className="validation-quick-actions">
@@ -427,8 +427,8 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
           </div>
           <div className="stat-card-copy">
             <span className="stat-label">SYNC AUTOMÁTICO</span>
-            <strong>{isAutoSyncActive ? 'Ativo (1 hora)' : 'Pausado'}</strong>
-            <small>Intervalo: 3.600 segundos (60 min)</small>
+            <strong>{isAutoSyncActive ? 'Ativo (30 min)' : 'Pausado'}</strong>
+            <small>Diariamente, das 7h30 às 18h (horário de Brasília)</small>
           </div>
         </article>
       </section>
@@ -740,12 +740,12 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
           </div>
         </section>
 
-        {/* BLOCO 4: Sincronização Horária e Atualização Automática */}
+        {/* BLOCO 4: Sincronização Automática */}
         <section className="validation-card card-wide">
           <header className="card-header">
             <div>
               <span className="card-step-badge">ETAPA 4</span>
-              <h2>Sincronização Periódica a Cada 1 Hora</h2>
+              <h2>Sincronização Automática</h2>
               <p>
                 Mantém os campos dos chamados ativos atualizados com o CVCRM e importa automaticamente
                 novos atendimentos criados.
@@ -759,11 +759,11 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
               <div className="toggle-explanation">
                 <div className="toggle-heading">
                   <Power size={16} />
-                  <strong>Atualização automática a cada 1 hora (3.600s)</strong>
+                  <strong>Atualização automática a cada 30 minutos</strong>
                 </div>
                 <p>
-                  Quando ativada, o servidor consulta o CVCRM a cada 60 minutos, atualizando o status
-                  e detalhes dos chamados ativos e trazendo novos chamados para o Kanban da ATech.
+                  Quando ativada, o servidor atualiza os chamados silenciosamente a cada 30 minutos,
+                  entre 7h30 e 18h (horário de Brasília). A sincronização fica pausada durante a noite.
                 </p>
                 {(!isValidated || !isBaselineDone) && (
                   <small>
