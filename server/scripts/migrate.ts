@@ -37,6 +37,8 @@ try {
     '030_seed_personal_activity_boards.sql',
     '031_personal_activity_details.sql',
     '032_legal_process_enterprises.sql',
+    '033_legal_process_items.sql',
+    '034_cvcrm_subject_catalog.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')

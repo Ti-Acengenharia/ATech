@@ -30,6 +30,7 @@ interface LegalStatus { id: number; name: string; position: number; color: strin
 interface EnterpriseOption { enterprise_key: string; enterprise_name: string }
 interface Assignee { id: number; display_name?: string; displayName?: string; email?: string }
 interface ChildProcess { id?: number; processNumber: string; description: string; statusId: number; movementDate: string | null; isDone: boolean }
+interface ProcessItem { id?: number; title: string; isDone: boolean }
 interface CsvLegalTask {
   id: string
   name: string
@@ -125,6 +126,7 @@ interface ProcessDetail {
   isDemo: boolean
   assigneeIds: number[]
   children: ChildProcess[]
+  items: ProcessItem[]
   payments: LegalPayment[]
   paidTotal: string
   comments: LegalComment[]
@@ -143,6 +145,7 @@ interface ProcessDraft {
   distributionDate: string
   assigneeIds: number[]
   children: ChildProcess[]
+  items: ProcessItem[]
 }
 
 type FaceField = 'enterprise' | 'claimant' | 'assignees' | 'dates' | 'caseValue' | 'children' | 'paidTotal' | 'distributionDate'
@@ -170,7 +173,7 @@ function showDate(value: string | null | undefined) {
 function blankDraft(statusId: number): ProcessDraft {
   return {
     title: '', statusId, enterpriseKey: '', startDate: '', endDate: '', description: '', caseValue: '',
-    claimant: '', driveUrl: '', notebookUrl: '', distributionDate: '', assigneeIds: [], children: [],
+    claimant: '', driveUrl: '', notebookUrl: '', distributionDate: '', assigneeIds: [], children: [], items: [],
   }
 }
 function toDraft(process: ProcessDetail): ProcessDraft {
@@ -179,7 +182,7 @@ function toDraft(process: ProcessDetail): ProcessDraft {
     endDate: dateInput(process.endDate), description: process.description,
     caseValue: process.caseValue ?? '', claimant: process.claimant, driveUrl: process.driveUrl,
     notebookUrl: process.notebookUrl, distributionDate: dateInput(process.distributionDate),
-    assigneeIds: process.assigneeIds, children: process.children,
+    assigneeIds: process.assigneeIds, children: process.children, items: process.items,
   }
 }
 function fileBase64(file: File) {
@@ -565,6 +568,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
         caseValue: draft.caseValue === '' ? null : Number(draft.caseValue),
         distributionDate: draft.distributionDate || null,
         children: draft.children.filter((child) => child.description.trim()),
+        items: draft.items.filter((item) => item.title.trim()),
       }
       let id: number
       if (newProcess) {
@@ -1003,6 +1007,14 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
                 <textarea value={child.description} onChange={(event) => setDraft({ ...draft, children: draft.children.map((entry, i) => i === index ? { ...entry, description: event.target.value } : entry) })} placeholder="Descrição do processo filho" maxLength={2000} required />
                 <div className="legal-child-meta"><label className="legal-field"><span>Status</span><select value={child.statusId} onChange={(event) => setDraft({ ...draft, children: draft.children.map((entry, i) => i === index ? { ...entry, statusId: Number(event.target.value) } : entry) })}>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label className="legal-field"><span>Data de movimentação</span><input type="date" value={dateInput(child.movementDate)} onChange={(event) => setDraft({ ...draft, children: draft.children.map((entry, i) => i === index ? { ...entry, movementDate: event.target.value || null } : entry) })} /></label></div>
               </div>)}
+            </section>
+            <section className="legal-items-field legal-field-full"><div className="legal-subsection-title"><div><strong>Itens do processo</strong><small>Cadastre tarefas, documentos ou providências e marque quando cada item for concluído.</small></div><button type="button" className="secondary-button" disabled={draft.items.length >= 100} onClick={() => setDraft({ ...draft, items: [...draft.items, { title: '', isDone: false }] })}><Plus size={14} /> Adicionar item</button></div>
+              {draft.items.map((item, index) => <div className="legal-item-row" key={item.id ?? `item-${index}`}>
+                <label><input type="checkbox" checked={item.isDone} onChange={(event) => setDraft({ ...draft, items: draft.items.map((entry, i) => i === index ? { ...entry, isDone: event.target.checked } : entry) })} /><span>Concluído</span></label>
+                <input value={item.title} onChange={(event) => setDraft({ ...draft, items: draft.items.map((entry, i) => i === index ? { ...entry, title: event.target.value } : entry) })} placeholder="Descrição do item" maxLength={500} aria-label={`Descrição do item ${index + 1}`} />
+                <button type="button" className="icon-button" aria-label={`Remover item ${index + 1}`} onClick={() => setDraft({ ...draft, items: draft.items.filter((_, i) => i !== index) })}><Trash2 size={14} /></button>
+              </div>)}
+              {!draft.items.length && <p className="legal-items-empty">Nenhum item cadastrado.</p>}
             </section>
             <div className="legal-form-actions legal-field-full"><button type="button" className="secondary-button" onClick={closeEditor}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Salvando...' : <><Save size={15} /> Salvar processo</>}</button>{selected && <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProcess()}><Trash2 size={14} /> Excluir processo</button>}</div>
           </form>

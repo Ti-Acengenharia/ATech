@@ -55,7 +55,7 @@ interface ValidationResponse {
   validatedAt: string
 }
 
-interface ActiveImportResponse {
+interface FullImportResponse {
   totalRecords: number
   totalPages: number
   receivedCount: number
@@ -124,7 +124,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
   // Sincronização horária
   const [togglingAutoSync, setTogglingAutoSync] = useState(false)
   const [manualSyncing, setManualSyncing] = useState(false)
-  const [importingActive, setImportingActive] = useState(false)
+  const [importingAllTickets, setImportingAllTickets] = useState(false)
 
   // Mensagens e alertas
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
@@ -274,7 +274,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
       setNotice({
         kind: res.baselineCompleted ? 'success' : 'error',
         text: res.baselineCompleted
-          ? `Carga concluída! ${res.importedCount} chamados ativos foram importados com sucesso.`
+          ? `Carga concluída! ${res.importedCount} chamados ativos do CSV foram importados com sucesso.`
           : 'Nenhum chamado ativo do CSV foi importado. Revise os protocolos; a sincronização automática continua bloqueada.',
       })
       loadStatus()
@@ -316,7 +316,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
       const res = await apiRequest<{ importedCount: number }>('/api/tickets/sync', { method: 'POST' })
       setNotice({
         kind: 'success',
-        text: `Sincronização manual concluída! ${res.importedCount} chamados ativos sincronizados.`,
+        text: `Sincronização manual concluída! ${res.importedCount} chamados (ativos e históricos) sincronizados.`,
       })
       loadStatus()
     } catch (err) {
@@ -326,20 +326,20 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
     }
   }
 
-  async function handleImportAllActive() {
-    setImportingActive(true)
+  async function handleImportAllTickets() {
+    setImportingAllTickets(true)
     setNotice(null)
     try {
-      const result = await apiRequest<ActiveImportResponse>('/api/tickets/integration/import-active', { method: 'POST' })
+      const result = await apiRequest<FullImportResponse>('/api/tickets/integration/import-all', { method: 'POST' })
       setNotice({
         kind: 'success',
-        text: `Carga inicial concluída: ${result.importedCount} chamados ativos importados de ${result.receivedCount} registros em ${result.totalPages} páginas. Finalizados e cancelados foram excluídos.`,
+        text: `Carga completa concluída: ${result.importedCount} chamados (ativos, finalizados e cancelados) importados em ${result.totalPages} páginas.`,
       })
       loadStatus()
     } catch (err) {
-      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Falha ao importar chamados ativos do CVCRM.' })
+      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Falha ao importar o histórico completo do CVCRM.' })
     } finally {
-      setImportingActive(false)
+      setImportingAllTickets(false)
     }
   }
 
@@ -820,7 +820,7 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
                 </strong>
               </div>
               <div className="history-row">
-                <span>Chamados ativos sincronizados:</span>
+                <span>Chamados sincronizados:</span>
                 <strong>{status?.state.imported_count ?? 0}</strong>
               </div>
               {status?.state.error_message && (
@@ -834,17 +834,17 @@ export default function ApiValidationPage({ onGoToTickets }: { onGoToTickets?: (
             <footer className="card-footer sync-footer">
               <div className="sync-note">
                 <Clock size={14} />
-                <span>{isBaselineDone ? 'Sincronize a base completa manualmente ou mantenha a atualização automática pausada.' : 'Valide a paginação e carregue a carga inicial de todos os chamados ativos antes de ativar novas sincronizações.'}</span>
+                <span>{isBaselineDone ? 'A sincronização completa atualiza chamados ativos e históricos; você também pode recarregar todo o histórico manualmente.' : 'Valide a paginação e carregue o histórico completo de chamados antes de ativar novas sincronizações.'}</span>
               </div>
-              {!isBaselineDone && <button
+              <button
                 type="button"
                 className="primary-button"
-                onClick={handleImportAllActive}
-                disabled={importingActive || !isConfigured || !isValidated}
+                onClick={handleImportAllTickets}
+                disabled={importingAllTickets || !isConfigured || !isValidated}
               >
                 <Download size={14} />
-                {importingActive ? 'Importando páginas...' : 'Importar todos os chamados ativos'}
-              </button>}
+                {importingAllTickets ? 'Importando páginas...' : 'Importar/atualizar histórico completo'}
+              </button>
               <button
                 type="button"
                 className="secondary-button"

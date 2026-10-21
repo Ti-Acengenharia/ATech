@@ -8,8 +8,9 @@ import { evaluateTicketWarranty } from '../services/warranties.js'
 import {
   fetchAndImportCvcrmTicketByProtocol,
   fetchCvcrmTicketByProtocol,
+  ensureCvcrmSubjectCatalog,
   getCvcrmIntegrationStatus,
-  importAllActiveCvcrmTickets,
+  importAllCvcrmTickets,
   importCvcrmProtocols,
   syncCvcrmTickets,
   toggleCvcrmAutoSync,
@@ -27,6 +28,12 @@ function parseTextFilter(value: unknown, maxLength: number) {
   if (!parsed.success) return null
   return (Array.isArray(parsed.data) ? parsed.data : [parsed.data])
     .map((entry) => entry.toLocaleLowerCase('pt-BR'))
+}
+
+function parseRepeatedTextFilter(url: string, key: string, maxLength: number) {
+  const queryStart = url.indexOf('?')
+  const values = new URLSearchParams(queryStart < 0 ? '' : url.slice(queryStart + 1)).getAll(key)
+  return values.length ? parseTextFilter(values, maxLength) : []
 }
 
 const ticketIdSchema = z.coerce.number().int().positive()
@@ -166,9 +173,9 @@ router.post('/sync', requireAdmin, async (_req, res, next) => {
   }
 })
 
-router.post('/integration/import-active', requireAdmin, async (_req, res, next) => {
+router.post('/integration/import-all', requireAdmin, async (_req, res, next) => {
   try {
-    res.json(await importAllActiveCvcrmTickets())
+    res.json(await importAllCvcrmTickets())
   } catch (error) {
     if (error instanceof Error && /CVCRM não configurado|Valide a paginação|sincronização CVCRM em andamento/.test(error.message)) {
       res.status(409).json({ error: error.message })
@@ -320,14 +327,20 @@ router.get('/:id/cv-conversation', async (req, res, next) => {
 
 router.get('/filter-options', async (_req, res, next) => {
   const includeInactive = z.boolean().catch(false).parse(_req.query.includeInactive === 'true')
-  const selectedEnterprises = parseTextFilter(_req.query.enterprise, 240)
-  const selectedBlocks = parseTextFilter(_req.query.block, 120)
-  if (selectedEnterprises === null || selectedBlocks === null) {
-    res.status(400).json({ error: 'Filtro de empreendimentos ou blocos inválido.' })
+  const dashboardFromYear = _req.query.fromYear === undefined
+    ? null
+    : z.coerce.number().int().min(2000).max(2200).safeParse(_req.query.fromYear)
+  const selectedEnterprises = parseRepeatedTextFilter(_req.originalUrl, 'enterprise', 240)
+  const selectedBlocks = parseRepeatedTextFilter(_req.originalUrl, 'block', 120)
+  if (selectedEnterprises === null || selectedBlocks === null || dashboardFromYear?.success === false) {
+    res.status(400).json({ error: 'Um ou mais filtros de chamados são inválidos.' })
     return
   }
   try {
-    const [enterprises, blocks, units, subjects, subsubjects] = await Promise.all([
+    if (dashboardFromYear?.success) {
+      await ensureCvcrmSubjectCatalog()
+    }
+    const [enterprises, blocks, units, subjects, subsubjects, years, dashboardSubjects] = await Promise.all([
       pool.query<{ value: string }>(
         `SELECT min(btrim(enterprise)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(enterprise) <> ''
@@ -364,6 +377,53 @@ router.get('/filter-options', async (_req, res, next) => {
          GROUP BY lower(btrim(subsubject)) ORDER BY lower(min(btrim(subsubject)))`,
         [includeInactive],
       ),
+      pool.query<{ value: number }>(
+        `SELECT generate_series(
+           GREATEST(
+             2000,
+             LEAST(
+               COALESCE(
+                 (SELECT min(extract(year FROM opened_at)::int) FROM tickets WHERE opened_at <= now()),
+                 extract(year FROM now())::int
+               ),
+               extract(year FROM now())::int
+             )
+           ),
+           extract(year FROM now())::int
+         )::int AS value`,
+      ),
+      dashboardFromYear
+        ? pool.query<{ value: string; label: string }>(
+          `SELECT value, label
+           FROM (
+             SELECT 'id:' || catalog.source_subject_id::text AS value,
+                    catalog.source_subject_id::text || ' - ' || catalog.name AS label
+             FROM cvcrm_subject_catalog catalog
+             WHERE EXISTS (
+               SELECT 1
+               FROM tickets t
+               WHERE t.source_subject_id = catalog.source_subject_id
+                 AND ($1::boolean OR t.source_active = TRUE)
+                 AND t.opened_at >= make_date($2::int, 1, 1)
+             )
+             UNION ALL
+             SELECT 'no-subject', 'Chamado sem assunto'
+             WHERE EXISTS (
+               SELECT 1
+               FROM tickets t
+               WHERE ($1::boolean OR t.source_active = TRUE)
+                 AND t.opened_at >= make_date($2::int, 1, 1)
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM cvcrm_subject_catalog catalog
+                   WHERE catalog.source_subject_id = t.source_subject_id
+                 )
+             )
+           ) available_subjects
+           ORDER BY lower(label), value`,
+          [includeInactive, dashboardFromYear.data],
+        )
+        : Promise.resolve({ rows: [] as { value: string; label: string }[] }),
     ])
     res.json({
       enterprises: enterprises.rows.map((row) => row.value),
@@ -371,7 +431,205 @@ router.get('/filter-options', async (_req, res, next) => {
       units: units.rows.map((row) => row.value),
       subjects: subjects.rows.map((row) => row.value),
       subsubjects: subsubjects.rows.map((row) => row.value),
+      years: years.rows.map((row) => row.value),
+      dashboardSubjects: dashboardSubjects.rows,
     })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/dashboard', async (req, res, next) => {
+  const enterprises = parseRepeatedTextFilter(req.originalUrl, 'enterprise', 240)
+  const blocks = parseRepeatedTextFilter(req.originalUrl, 'block', 120)
+  const units = parseRepeatedTextFilter(req.originalUrl, 'unit', 120)
+  const subjects = parseRepeatedTextFilter(req.originalUrl, 'subject', 240)
+  const subsubjects = parseRepeatedTextFilter(req.originalUrl, 'subsubject', 240)
+  const ticketTypes = parseRepeatedTextFilter(req.originalUrl, 'type', 20)
+  const customer = z.string().trim().max(240).safeParse(req.query.customer ?? '')
+  const fromYear = z.coerce.number().int().min(2000).max(2200).safeParse(req.query.fromYear ?? 2000)
+  if ([enterprises, blocks, units, subjects, subsubjects, ticketTypes].some((filter) => filter === null) ||
+      !customer.success || !fromYear.success ||
+      (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium')) {
+    res.status(400).json({ error: 'Um ou mais filtros do dashboard são inválidos.' })
+    return
+  }
+  const selectedEnterprises = enterprises ?? []
+  const selectedBlocks = blocks ?? []
+  const selectedUnits = units ?? []
+  const selectedSubjects = subjects ?? []
+  const selectedSubsubjects = subsubjects ?? []
+  const selectedTicketTypes = ticketTypes ?? []
+
+  try {
+    const result = await pool.query<{
+      active_total: number
+      created_this_month: number
+      completed_this_month: number
+      canceled_this_month: number
+      balance_this_month: number
+      average_days: number | null
+      last_updated: Date | null
+      active_by_enterprise: Array<{ enterprise: string; clients: number; condominiums: number; total: number }>
+      status_summary: Array<{ enterprise: string; status: string; count: number }>
+      months: Array<{ month: string; year: number; created: number; completed: number; canceled: number; balance: number }>
+    }>(
+      `WITH filtered AS (
+         SELECT t.source_id, t.source_active, t.source_status_name, t.source_modified_at, t.opened_at,
+                t.enterprise, t.block, t.unit, t.source_creator_name,
+                CASE
+                  WHEN btrim(t.block) <> '' AND btrim(t.unit) <> '' THEN 'client'
+                  WHEN btrim(t.block) = '' AND btrim(t.unit) = '' AND btrim(t.enterprise) <> ''
+                    AND strpos(lower(t.source_creator_name), lower(btrim(t.enterprise))) > 0 THEN 'condominium'
+                  ELSE NULL
+                END AS ticket_type
+         FROM tickets t
+         WHERE t.opened_at >= make_date($8::int, 1, 1)
+           AND (cardinality($1::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($1::text[]))
+           AND (cardinality($2::text[]) = 0 OR lower(btrim(t.block)) = ANY($2::text[]))
+           AND (cardinality($3::text[]) = 0 OR lower(btrim(t.unit)) = ANY($3::text[]))
+           AND ($4 = '' OR lower(t.customer_name) LIKE '%' || lower($4) || '%')
+           AND (cardinality($5::text[]) = 0 OR
+             (EXISTS (
+               SELECT 1
+               FROM cvcrm_subject_catalog catalog
+               WHERE catalog.source_subject_id = t.source_subject_id
+                 AND ('id:' || catalog.source_subject_id::text) = ANY($5::text[])
+             )) OR
+             ('no-subject' = ANY($5::text[]) AND NOT EXISTS (
+               SELECT 1
+               FROM cvcrm_subject_catalog catalog
+               WHERE catalog.source_subject_id = t.source_subject_id
+             )))
+           AND (cardinality($6::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($6::text[]))
+       ),
+       selected_tickets AS (
+         SELECT * FROM filtered
+         WHERE ticket_type IS NOT NULL
+           AND (cardinality($7::text[]) = 0 OR ticket_type = ANY($7::text[]))
+       ),
+       status_events AS (
+         SELECT h.ticket_id,
+                h.created_at AT TIME ZONE 'America/Sao_Paulo' AS event_at,
+                lower(COALESCE(h.details->>'from', '')) ~ '(finalizad[oa]|cancelad[oa])' AS was_terminal,
+                lower(COALESCE(h.details->>'to', '')) ~ '(finalizad[oa]|cancelad[oa])' AS is_terminal,
+                lower(COALESCE(h.details->>'to', '')) ~ 'finalizad[oa]'
+                  AND lower(COALESCE(h.details->>'to', '')) !~ 'cancelad[oa]' AS is_completed,
+                lower(COALESCE(h.details->>'to', '')) ~ 'cancelad[oa]' AS is_canceled
+         FROM ticket_activity_history h
+         JOIN selected_tickets t ON t.source_id = h.ticket_id
+         WHERE h.event_type = 'stage_changed'
+           AND h.created_at >= make_date($8::int, 1, 1)
+       ),
+       snapshot_closures AS (
+         SELECT t.source_id AS ticket_id,
+                t.source_modified_at AS event_at,
+                FALSE AS was_terminal,
+                TRUE AS is_terminal,
+                lower(t.source_status_name) ~ 'finalizad[oa]'
+                  AND lower(t.source_status_name) !~ 'cancelad[oa]' AS is_completed,
+                lower(t.source_status_name) ~ 'cancelad[oa]' AS is_canceled
+         FROM selected_tickets t
+         WHERE NOT t.source_active
+           AND t.source_modified_at IS NOT NULL
+           AND lower(t.source_status_name) ~ '(finalizad[oa]|cancelad[oa])'
+           AND NOT EXISTS (
+             SELECT 1 FROM status_events e
+             WHERE e.ticket_id = t.source_id AND e.is_terminal AND NOT e.was_terminal
+           )
+       ),
+       closures AS (
+         SELECT * FROM status_events WHERE is_terminal AND NOT was_terminal
+         UNION ALL
+         SELECT * FROM snapshot_closures
+       ),
+       active_enterprises AS (
+         SELECT COALESCE(NULLIF(btrim(enterprise), ''), 'Sem empreendimento') AS enterprise,
+                count(*) FILTER (WHERE ticket_type = 'client')::int AS clients,
+                count(*) FILTER (WHERE ticket_type = 'condominium')::int AS condominiums,
+                count(*)::int AS total
+         FROM selected_tickets
+         WHERE source_active
+         GROUP BY COALESCE(NULLIF(btrim(enterprise), ''), 'Sem empreendimento')
+       ),
+       status_counts AS (
+         SELECT COALESCE(NULLIF(btrim(t.enterprise), ''), 'Sem empreendimento') AS enterprise,
+                t.source_status_name AS status,
+                count(*)::int AS count
+         FROM selected_tickets t
+         WHERE t.source_active
+         GROUP BY COALESCE(NULLIF(btrim(t.enterprise), ''), 'Sem empreendimento'), t.source_status_name
+       ),
+       year_months AS (
+         SELECT month_start::date
+         FROM generate_series(
+           make_date($8::int, 1, 1)::timestamp,
+           date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo'),
+           interval '1 month'
+         ) AS months(month_start)
+       ),
+       monthly_flow AS (
+         SELECT date_trunc('month', opened_at)::date AS month_start,
+                count(*)::int AS created,
+                0::int AS completed,
+                0::int AS canceled
+         FROM selected_tickets
+         GROUP BY date_trunc('month', opened_at)::date
+         UNION ALL
+         SELECT date_trunc('month', event_at)::date,
+                0, count(*) FILTER (WHERE is_completed)::int, count(*) FILTER (WHERE is_canceled)::int
+         FROM closures
+         GROUP BY date_trunc('month', event_at)::date
+       ),
+       monthly_totals AS (
+         SELECT month_start, sum(created)::int AS created,
+                sum(completed)::int AS completed, sum(canceled)::int AS canceled
+         FROM monthly_flow GROUP BY month_start
+       ),
+       monthly_rows AS (
+         SELECT m.month_start,
+                COALESCE(f.created, 0)::int AS created,
+                COALESCE(f.completed, 0)::int AS completed,
+                COALESCE(f.canceled, 0)::int AS canceled,
+                (COALESCE(f.created, 0) - COALESCE(f.completed, 0) - COALESCE(f.canceled, 0))::int AS balance
+         FROM year_months m
+         LEFT JOIN monthly_totals f USING (month_start)
+       ),
+       current_month AS (
+         SELECT date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') AS month_start
+       )
+       SELECT
+         (SELECT count(*)::int FROM selected_tickets WHERE source_active) AS active_total,
+         (SELECT count(*)::int FROM selected_tickets
+          WHERE opened_at >= c.month_start AND opened_at < c.month_start + interval '1 month') AS created_this_month,
+         (SELECT count(*)::int FROM closures
+          WHERE is_completed AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') AS completed_this_month,
+         (SELECT count(*)::int FROM closures
+          WHERE is_canceled AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') AS canceled_this_month,
+         ((SELECT count(*) FROM selected_tickets
+           WHERE opened_at >= c.month_start AND opened_at < c.month_start + interval '1 month') -
+          (SELECT count(*) FROM closures
+           WHERE is_completed AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') -
+          (SELECT count(*) FROM closures
+           WHERE is_canceled AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month'))::int AS balance_this_month,
+         (SELECT avg(extract(epoch FROM (event_at - t.opened_at)) / 86400)::float
+          FROM closures e JOIN selected_tickets t ON t.source_id = e.ticket_id
+          WHERE e.is_completed AND t.opened_at IS NOT NULL AND e.event_at >= t.opened_at) AS average_days,
+         (SELECT last_finished_at FROM ticket_sync_state WHERE id = 1) AS last_updated,
+         COALESCE((SELECT json_agg(row_to_json(a) ORDER BY a.enterprise) FROM active_enterprises a), '[]'::json) AS active_by_enterprise,
+         COALESCE((SELECT json_agg(row_to_json(s) ORDER BY s.enterprise, s.status) FROM status_counts s), '[]'::json) AS status_summary,
+         COALESCE((SELECT json_agg(json_build_object(
+             'month', to_char(month_start, 'YYYY-MM-DD'),
+             'year', extract(year FROM month_start)::int,
+             'created', created, 'completed', completed, 'canceled', canceled, 'balance', balance
+           ) ORDER BY month_start) FROM monthly_rows), '[]'::json) AS months
+       FROM current_month c`,
+      [
+        selectedEnterprises, selectedBlocks, selectedUnits, customer.data, selectedSubjects, selectedSubsubjects,
+        selectedTicketTypes, fromYear.data,
+      ],
+    )
+    res.json({ dashboard: result.rows[0] })
   } catch (error) {
     next(error)
   }

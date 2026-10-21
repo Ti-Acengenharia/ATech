@@ -18,6 +18,11 @@ interface CvcrmSubsubject {
   nome: unknown
 }
 
+interface CvcrmSubject {
+  idassunto: unknown
+  nome: unknown
+}
+
 interface CvcrmPage {
   dados?: Record<string, unknown>[]
   total?: number
@@ -379,54 +384,111 @@ async function persistWorkflowStages(stages: CvcrmStage[]) {
   }
 }
 
-async function persistActiveTickets(
+async function fetchAndPersistCvcrmSubjects() {
+  const response = await getCvcrm<unknown>('/v1/cvbot/assuntos')
+  if (!Array.isArray(response)) {
+    throw new Error('O CVCRM retornou um formato inválido para o catálogo de assuntos.')
+  }
+
+  const subjects = new Map<number, string>()
+  for (const entry of response) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('O CVCRM retornou um item inválido no catálogo de assuntos.')
+    }
+    const item = entry as CvcrmSubject
+    const id = toNumber(item.idassunto)
+    const name = toText(item.nome)
+    if (id === null || id < 1 || !name) {
+      throw new Error('O CVCRM retornou um ID ou nome inválido no catálogo de assuntos.')
+    }
+    const existingName = subjects.get(id)
+    if (existingName && existingName !== name) {
+      throw new Error(`O CVCRM retornou nomes diferentes para o mesmo ID de assunto (${id}); o catálogo salvo foi preservado.`)
+    }
+    subjects.set(id, name)
+  }
+  if (!subjects.size) {
+    throw new Error('O catálogo de assuntos do CVCRM veio vazio; o catálogo salvo foi preservado.')
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('DELETE FROM cvcrm_subject_catalog')
+    for (const [id, name] of subjects) {
+      await client.query(
+        `INSERT INTO cvcrm_subject_catalog (source_subject_id, name, synced_at)
+         VALUES ($1, $2, now())`,
+        [id, name],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+
+  return [...subjects.entries()].map(([id, name]) => ({ id, name }))
+}
+
+export async function ensureCvcrmSubjectCatalog() {
+  const result = await pool.query<{ populated: boolean }>(
+    'SELECT EXISTS (SELECT 1 FROM cvcrm_subject_catalog) AS populated',
+  )
+  if (!result.rows[0]?.populated) {
+    await fetchAndPersistCvcrmSubjects()
+  }
+}
+
+async function persistCvcrmTickets(
   rows: Record<string, unknown>[],
   replaceActiveSnapshot = true,
 ) {
-  const activeTickets = rows.filter(isTicketActive)
-  const activeProtocols = new Map<string, number>()
-  const activeReferences = new Map<string, number>()
-  for (const ticket of activeTickets) {
+  const protocols = new Map<string, number>()
+  const references = new Map<string, number>()
+  for (const ticket of rows) {
     const sourceId = toNumber(ticket.idatendimento)
     const protocol = normalizeProtocol(ticket.protocolo) || normalizeProtocol(ticket.referencia)
     if (sourceId === null || !protocol) continue
-    const existingId = activeProtocols.get(protocol)
+    const existingId = protocols.get(protocol)
     if (existingId !== undefined && existingId !== sourceId) {
       throw new Error(`O CVCRM retornou o protocolo ${toText(ticket.protocolo) || protocol} em mais de um chamado (${existingId} e ${sourceId}); sincronização interrompida para evitar duplicidade.`)
     }
-    activeProtocols.set(protocol, sourceId)
+    protocols.set(protocol, sourceId)
     const reference = toText(ticket.referencia) || String(sourceId)
-    const previousReferenceId = activeReferences.get(reference)
+    const previousReferenceId = references.get(reference)
     if (previousReferenceId !== undefined && previousReferenceId !== sourceId) {
       throw new Error(`O CVCRM retornou a referência ${reference} em mais de um chamado; sincronização interrompida para evitar duplicidade.`)
     }
-    activeReferences.set(reference, sourceId)
+    references.set(reference, sourceId)
   }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    if (activeProtocols.size) {
+    if (protocols.size) {
       const existingProtocols = await client.query<{ protocol_key: string; source_id: string }>(
         `SELECT upper(regexp_replace(btrim(protocol), '[[:space:]]+', '', 'g')) AS protocol_key, source_id
          FROM tickets
          WHERE upper(regexp_replace(btrim(protocol), '[[:space:]]+', '', 'g')) = ANY($1::text[])
          FOR UPDATE`,
-        [[...activeProtocols.keys()]],
+        [[...protocols.keys()]],
       )
       for (const existing of existingProtocols.rows) {
-        const incomingId = activeProtocols.get(existing.protocol_key)
+        const incomingId = protocols.get(existing.protocol_key)
         if (incomingId !== undefined && String(incomingId) !== existing.source_id) {
           throw new Error(`O protocolo ${existing.protocol_key} já pertence ao chamado ${existing.source_id}; o registro ${incomingId} não foi importado para evitar duplicidade.`)
         }
       }
     }
-    if (activeReferences.size) {
+    if (references.size) {
       const existingReferences = await client.query<{ reference: string; source_id: string }>(
         'SELECT reference, source_id FROM tickets WHERE reference = ANY($1::varchar[]) FOR UPDATE',
-        [[...activeReferences.keys()]],
+        [[...references.keys()]],
       )
       for (const existing of existingReferences.rows) {
-        const incomingId = activeReferences.get(existing.reference)
+        const incomingId = references.get(existing.reference)
         if (incomingId !== undefined && String(incomingId) !== existing.source_id) {
           throw new Error(`A referência ${existing.reference} já pertence ao chamado ${existing.source_id}; o registro ${incomingId} não foi importado para evitar duplicidade.`)
         }
@@ -463,27 +525,12 @@ async function persistActiveTickets(
           { from: previous.source_status_name, to: statusName, source: 'cvcrm' },
         )
       }
-      if (replaceActiveSnapshot && !isTicketActive(ticket)) {
-        await client.query(
-          `UPDATE tickets SET source_status_id = $1, source_status_name = $2,
-             source_modified_at = $3, source_active = FALSE, updated_at = now()
-           WHERE source_id = $4`,
-          [
-            statusId,
-            statusName,
-            toTimestamp(ticket.data_modificacao) ??
-              toTimestamp(ticket.dataModificacao) ??
-              toTimestamp(ticket.dataUltimaModificacaoSituacao),
-            sourceId,
-          ],
-        )
-      }
     }
     if (replaceActiveSnapshot) {
       await client.query('UPDATE tickets SET source_active = FALSE, updated_at = now() WHERE source_active = TRUE')
     }
 
-    for (const ticket of activeTickets) {
+    for (const ticket of rows) {
       const sourceId = toNumber(ticket.idatendimento)
       if (sourceId === null) continue
 
@@ -491,12 +538,15 @@ async function persistActiveTickets(
       const enterprise = extractEnterprise(ticket)
       const phone = toText(ticket.telefone_atendimento) || toText(ticket.telefone_cliente) || toText(ticket.telefone)
       const statusId = toNumber(ticket.idsituacao)
+      const active = isTicketActive(ticket)
       const opening = toTimestamp(ticket.data_cad) ?? toTimestamp(ticket.dataCad)
-      const modified = toTimestamp(ticket.data_modificacao) ??
+      const modified = toTimestamp(ticket.dataUltimaModificacaoSituacao) ??
+        toTimestamp(ticket.data_ultima_modificacao_situacao) ??
+        toTimestamp(ticket.data_modificacao) ??
         toTimestamp(ticket.dataModificacao) ??
-        toTimestamp(ticket.dataUltimaModificacaoSituacao)
+        toTimestamp(ticket.dataUltimaModificacao)
       const unit = toText(ticket.unidade) || toText(ticket.unidades)
-      const subject = toText(ticket.titulo) || toText(ticket.assunto)
+      const subject = toText(ticket.assunto) || toText(ticket.titulo)
       const subsubject = toText(ticket.subassunto) || toText(ticket.subAssunto)
       const sourceSubjectId = toNumber(ticket.idassunto) ?? toNumber(ticket.idAssunto)
       const sourceSubsubjectId = toNumber(ticket.idsubassunto) ?? toNumber(ticket.idSubassunto)
@@ -511,15 +561,15 @@ async function persistActiveTickets(
           subject, source_subject_id, subsubject, source_subsubject_id, description, source_creator_name,
           cv_responses, cv_attachments, enterprise, block, unit, priority, imported_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18, $19, $20, $21, now(), now()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19, $20, $21, $22, now(), now()
         )
         ON CONFLICT (source_id) DO UPDATE SET
           reference = EXCLUDED.reference,
           protocol = EXCLUDED.protocol,
           source_status_id = EXCLUDED.source_status_id,
           source_status_name = EXCLUDED.source_status_name,
-          source_active = TRUE,
+          source_active = EXCLUDED.source_active,
           source_modified_at = EXCLUDED.source_modified_at,
           opened_at = EXCLUDED.opened_at,
           customer_name = EXCLUDED.customer_name,
@@ -544,6 +594,7 @@ async function persistActiveTickets(
           toText(ticket.protocolo) || reference,
           statusId,
           toText(ticket.situacao) || 'Sem situação',
+          active,
           modified,
           opening,
           toText(ticket.nome_cliente) || toText(ticket.nome) || toText(ticket.cliente),
@@ -572,7 +623,7 @@ async function persistActiveTickets(
     client.release()
   }
 
-  return activeTickets.length
+  return rows.length
 }
 
 function normalizeProtocol(value: unknown) {
@@ -599,8 +650,9 @@ export async function validateCvcrmConnection() {
   }
 
   try {
-    const [stages, firstPage] = await Promise.all([
+    const [stages, , firstPage] = await Promise.all([
       getCvcrm<CvcrmStage[]>('/v1/configuracoes/workflows/atendimentos'),
+      fetchAndPersistCvcrmSubjects(),
       fetchCvcrmTicketPage(1),
     ])
     const firstIds = firstPage.page.dados!.map((ticket) => toNumber(ticket.idatendimento)).filter((id): id is number => id !== null)
@@ -765,7 +817,7 @@ export async function fetchAndImportCvcrmTicketByProtocol(protocol: string) {
   if (!isTicketActive(remoteTicket)) {
     throw new Error(`O chamado com protocolo "${protocol}" está encerrado no CVCRM e não foi importado como ativo.`)
   }
-  await persistActiveTickets([remoteTicket], false)
+  await persistCvcrmTickets([remoteTicket], false)
 
   const sourceId = toNumber(remoteTicket.idatendimento)
   const result = await pool.query<{
@@ -815,7 +867,7 @@ export async function fetchAndImportCvcrmTicketByProtocol(protocol: string) {
       situacao: remoteTicket.situacao,
       cliente: remoteTicket.nome_cliente || remoteTicket.nome || remoteTicket.cliente,
       empreendimento: extractEnterprise(remoteTicket),
-      assunto: remoteTicket.titulo || remoteTicket.assunto,
+      assunto: remoteTicket.assunto || remoteTicket.titulo,
       ativo: remoteTicket.ativo,
     },
   }
@@ -849,7 +901,7 @@ export async function importCvcrmProtocols(protocols: string[]) {
   )
 
   const active = found.filter(isTicketActive)
-  const importedCount = await persistActiveTickets(active, false)
+  const importedCount = await persistCvcrmTickets(active, false)
 
   const foundProtocols = new Set(found.map((ticket) => normalizeProtocol(ticket.protocolo)))
   const importedProtocols = new Set(active.map((ticket) => normalizeProtocol(ticket.protocolo)))
@@ -886,7 +938,7 @@ export async function importCvcrmProtocols(protocols: string[]) {
   }
 }
 
-export async function importAllActiveCvcrmTickets() {
+export async function importAllCvcrmTickets() {
   if (!integrationConfigured()) {
     throw new Error('CVCRM não configurado. Defina subdomínio, e-mail e token no .env.')
   }
@@ -894,7 +946,7 @@ export async function importAllActiveCvcrmTickets() {
     'SELECT api_validated_at FROM ticket_sync_state WHERE id = 1',
   )
   if (!state.rows[0]?.api_validated_at) {
-    throw new Error('Valide a paginação da API CVCRM antes de importar todos os chamados ativos.')
+    throw new Error('Valide a paginação da API CVCRM antes de importar todos os chamados.')
   }
 
   const client = await pool.connect()
@@ -914,13 +966,14 @@ export async function importAllActiveCvcrmTickets() {
        ON CONFLICT (id) DO UPDATE SET last_started_at = now(), last_success = NULL, error_message = NULL, updated_at = now()`,
     )
     started = true
-    const [stages, snapshot] = await Promise.all([
+    const [stages, subjects, snapshot] = await Promise.all([
       getCvcrm<CvcrmStage[]>('/v1/configuracoes/workflows/atendimentos'),
+      fetchAndPersistCvcrmSubjects(),
       fetchAllTickets(),
     ])
     const validStages = Array.isArray(stages) ? stages : []
     await persistWorkflowStages(validStages)
-    const importedCount = await persistActiveTickets(snapshot.tickets, true)
+    const importedCount = await persistCvcrmTickets(snapshot.tickets, true)
     await pool.query(
       `INSERT INTO ticket_sync_state
          (id, baseline_completed, last_started_at, last_finished_at, last_success, imported_count, error_message, updated_at)
@@ -936,6 +989,7 @@ export async function importAllActiveCvcrmTickets() {
       receivedCount: snapshot.tickets.length,
       importedCount,
       stageCount: validStages.filter((stage) => toText(stage.nome)).length,
+      subjectCount: subjects.length,
       baselineCompleted: true,
     }
   } catch (error) {
@@ -984,11 +1038,14 @@ export async function syncCvcrmTickets() {
        ON CONFLICT (id) DO UPDATE SET last_started_at = now(), error_message = NULL, updated_at = now()`,
     )
 
-    const stages = await getCvcrm<CvcrmStage[]>('/v1/configuracoes/workflows/atendimentos')
-    const { tickets } = await fetchAllTickets()
+    const [stages, , { tickets }] = await Promise.all([
+      getCvcrm<CvcrmStage[]>('/v1/configuracoes/workflows/atendimentos'),
+      fetchAndPersistCvcrmSubjects(),
+      fetchAllTickets(),
+    ])
     const validStages = Array.isArray(stages) ? stages : []
     await persistWorkflowStages(validStages)
-    const importedCount = await persistActiveTickets(tickets, true)
+    const importedCount = await persistCvcrmTickets(tickets, true)
 
     await pool.query(
       `INSERT INTO ticket_sync_state (id, last_started_at, last_finished_at, last_success, imported_count, error_message, updated_at)
@@ -1101,4 +1158,4 @@ export async function getCvcrmIntegrationStatus() {
       stagesCount: Number(stagesResult.rows[0]?.count ?? 0),
     },
   }
-}
+}

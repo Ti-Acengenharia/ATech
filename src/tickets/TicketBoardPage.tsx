@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   AtSign,
+  BarChart3,
   CalendarClock,
   Check,
   ChevronDown,
@@ -33,6 +34,7 @@ import {
 import { apiRequest } from '../api/client'
 import CompletionTermModal from './CompletionTermModal'
 import TicketProgrammingForm from './TicketProgrammingForm'
+import TicketDashboardPage from './TicketDashboardPage'
 import SearchableMultiSelect from '../SearchableMultiSelect'
 import type { CvTicketAttachment, CvTicketMessage, TeamMentionTarget, TicketProgramming, TicketSummary, TicketTag, TicketWorkflowStage } from './types'
 
@@ -301,6 +303,7 @@ export default function TicketBoardPage({
   const [newTagName, setNewTagName] = useState('')
   const [newTagColor, setNewTagColor] = useState('#3478a8')
   const [selected, setSelected] = useState<TicketSummary | null>(null)
+  const [dashboardOpen, setDashboardOpen] = useState(false)
   const [termTicket, setTermTicket] = useState<TicketSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -645,6 +648,10 @@ export default function TicketBoardPage({
     event.currentTarget.classList.remove('is-dragging')
   }
 
+  if (dashboardOpen) {
+    return <TicketDashboardPage onBack={() => setDashboardOpen(false)} />
+  }
+
   if (selected) {
     return <>
       <TicketDetailPage
@@ -675,6 +682,7 @@ export default function TicketBoardPage({
           >
             <Plus size={15} /> Novo chamado por protocolo
           </button>
+          <button type="button" className="secondary-button" onClick={() => setDashboardOpen(true)}><BarChart3 size={15} /> Dashboard</button>
           {onOpenValidation && (
             <button
               type="button"

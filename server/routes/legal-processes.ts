@@ -36,6 +36,11 @@ const processSchema = z.object({
     movementDate: dateSchema,
     isDone: z.boolean(),
   })).max(100),
+  items: z.array(z.object({
+    id: z.number().int().positive().optional(),
+    title: z.string().trim().min(1).max(500),
+    isDone: z.boolean(),
+  })).max(100),
 }).refine((value) => !value.startDate || !value.endDate || value.startDate <= value.endDate, {
   message: 'A data de início deve ser anterior ou igual à data de finalização.',
   path: ['endDate'],
@@ -519,6 +524,12 @@ router.get('/:id', async (req, res, next) => {
                                         ORDER BY c.position, c.id)
                         FROM legal_process_children c WHERE c.process_id = p.id), '[]'::json) AS children,
               COALESCE((SELECT json_agg(json_build_object(
+                                        'id', i.id::int,
+                                        'title', i.title,
+                                        'isDone', i.is_done)
+                                        ORDER BY i.position, i.id)
+                        FROM legal_process_items i WHERE i.process_id = p.id), '[]'::json) AS items,
+              COALESCE((SELECT json_agg(json_build_object(
                 'id', c.id::int, 'body', c.body, 'parentCommentId', c.parent_comment_id::int,
                 'authorId', c.author_id::int, 'authorName', u.display_name,
                 'createdAt', c.created_at, 'updatedAt', c.updated_at,
@@ -627,6 +638,13 @@ router.post('/', async (req, res, next) => {
         [processId, child.processNumber, child.description, child.statusId, child.movementDate, child.isDone, position],
       )
     }
+    for (const [position, item] of values.items.entries()) {
+      await client.query(
+        `INSERT INTO legal_process_items (process_id, title, is_done, position)
+         VALUES ($1, $2, $3, $4)`,
+        [processId, item.title, item.isDone, position],
+      )
+    }
     await client.query('COMMIT')
     res.status(201).json({ id: processId })
   } catch (error) {
@@ -697,6 +715,14 @@ router.put('/:id', async (req, res, next) => {
           (process_id, process_number, description, status_id, movement_date, is_done, position)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [processId.data, child.processNumber, child.description, child.statusId, child.movementDate, child.isDone, position],
+      )
+    }
+    await client.query('DELETE FROM legal_process_items WHERE process_id = $1', [processId.data])
+    for (const [position, item] of values.items.entries()) {
+      await client.query(
+        `INSERT INTO legal_process_items (process_id, title, is_done, position)
+         VALUES ($1, $2, $3, $4)`,
+        [processId.data, item.title, item.isDone, position],
       )
     }
     await client.query('COMMIT')
