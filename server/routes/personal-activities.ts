@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express'
+import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
@@ -17,6 +18,7 @@ const activitySchema = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
 })
 const activityUpdateSchema = activitySchema.partial().refine((value) => Object.keys(value).length > 0)
+const tagSchema = z.object({ name: z.string().trim().min(1).max(40) })
 const commentSchema = z.object({ body: z.string().trim().min(1).max(6000) })
 const uploadSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -102,6 +104,33 @@ async function getActivityAccess(req: Request, res: Response, activityId: number
   return ownerId
 }
 
+async function persistTagNames(client: PoolClient, userId: number, tags: string[]) {
+  if (!tags.length) return
+  await client.query(
+    `INSERT INTO personal_activity_tags (user_id, name)
+     SELECT $1, tag.name
+     FROM unnest($2::text[]) AS tag(name)
+     ON CONFLICT DO NOTHING`,
+    [userId, tags],
+  )
+}
+
+async function canonicalizeTagNames(client: PoolClient, userId: number, tags: string[]) {
+  const catalog = await client.query<{ name: string }>(
+    'SELECT name FROM personal_activity_tags WHERE user_id = $1',
+    [userId],
+  )
+  const savedNames = new Map(catalog.rows.map(({ name }) => [name.trim().toLocaleLowerCase('pt-BR'), name]))
+  const seen = new Set<string>()
+  return tags.flatMap((tag) => {
+    const name = tag.trim()
+    const key = name.toLocaleLowerCase('pt-BR')
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [savedNames.get(key) ?? name]
+  })
+}
+
 router.get('/', async (req, res, next) => {
   const client = await pool.connect()
   try {
@@ -131,7 +160,7 @@ router.get('/', async (req, res, next) => {
        )`,
       [userId],
     )
-    const [columns, activities] = await Promise.all([
+    const [columns, activities, tags] = await Promise.all([
       client.query<{ id: string; name: string; position: number }>(
         `SELECT id, name, position FROM personal_activity_columns
          WHERE user_id = $1 ORDER BY position, id`,
@@ -146,12 +175,18 @@ router.get('/', async (req, res, next) => {
          FROM personal_activities a WHERE a.user_id = $1 ORDER BY a.created_at, a.id`,
         [userId],
       ),
+      client.query<{ id: string; name: string }>(
+        `SELECT id, name FROM personal_activity_tags
+         WHERE user_id = $1 ORDER BY lower(name), id`,
+        [userId],
+      ),
     ])
     await client.query('COMMIT')
     res.json({
       userId,
       userName: owner.rows[0].display_name,
       columns: columns.rows.map((column) => ({ id: Number(column.id), name: column.name, position: column.position })),
+      tags: tags.rows.map((tag) => ({ id: Number(tag.id), name: tag.name })),
       activities: activities.rows.map((activity) => ({
         id: Number(activity.id),
         columnId: Number(activity.column_id),
@@ -193,6 +228,146 @@ router.get('/users', async (req, res, next) => {
     res.json({ users: result.rows.map((user) => ({ id: user.id, displayName: user.display_name })) })
   } catch (error) {
     next(error)
+  }
+})
+
+router.post('/tags', async (req, res, next) => {
+  const parsed = tagSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Informe um nome de tag com até 40 caracteres.' })
+    return
+  }
+  try {
+    const result = await pool.query<{ id: string; name: string }>(
+      `INSERT INTO personal_activity_tags (user_id, name)
+       VALUES ($1, $2)
+       ON CONFLICT DO NOTHING
+       RETURNING id, name`,
+      [req.session.user!.id, parsed.data.name],
+    )
+    if (!result.rowCount) {
+      res.status(409).json({ error: 'Você já tem uma tag com esse nome neste quadro.' })
+      return
+    }
+    res.status(201).json({ tag: { id: Number(result.rows[0].id), name: result.rows[0].name } })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.patch('/tags/:id', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = tagSchema.safeParse(req.body)
+  if (!id.success || !parsed.success) {
+    res.status(400).json({ error: 'Tag ou nome inválido.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const current = await client.query<{ id: string; name: string }>(
+      `SELECT id, name FROM personal_activity_tags
+       WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+      [id.data, req.session.user!.id],
+    )
+    if (!current.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Tag não encontrada neste quadro.' })
+      return
+    }
+    const duplicate = await client.query(
+      `SELECT 1 FROM personal_activity_tags
+       WHERE user_id = $1 AND id <> $2 AND lower(btrim(name)) = lower(btrim($3))`,
+      [req.session.user!.id, id.data, parsed.data.name],
+    )
+    if (duplicate.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Já existe outra tag com esse nome neste quadro.' })
+      return
+    }
+    const oldName = current.rows[0].name
+    const newName = parsed.data.name
+    await client.query(
+      `UPDATE personal_activities activity
+       SET tags = COALESCE((
+         SELECT array_agg(tag.tag ORDER BY tag.first_position)
+         FROM (
+           SELECT min(mapped.tag) AS tag, min(mapped.position) AS first_position
+           FROM (
+             SELECT CASE WHEN lower(btrim(item.tag)) = lower(btrim($2)) THEN $3 ELSE item.tag END AS tag,
+                    item.position
+             FROM unnest(activity.tags) WITH ORDINALITY AS item(tag, position)
+           ) mapped
+           GROUP BY lower(btrim(mapped.tag))
+         ) tag
+       ), '{}'::text[]),
+       updated_at = now()
+       WHERE activity.user_id = $1 AND EXISTS (
+         SELECT 1 FROM unnest(activity.tags) item(tag)
+         WHERE lower(btrim(item.tag)) = lower(btrim($2))
+       )`,
+      [req.session.user!.id, oldName, newName],
+    )
+    const updated = await client.query<{ id: string; name: string }>(
+      `UPDATE personal_activity_tags SET name = $1, updated_at = now()
+       WHERE id = $2 AND user_id = $3
+       RETURNING id, name`,
+      [newName, id.data, req.session.user!.id],
+    )
+    await client.query('COMMIT')
+    res.json({ tag: { id: Number(updated.rows[0].id), name: updated.rows[0].name } })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.delete('/tags/:id', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!id.success) {
+    res.status(400).json({ error: 'Identificador de tag inválido.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const current = await client.query<{ name: string }>(
+      `SELECT name FROM personal_activity_tags
+       WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+      [id.data, req.session.user!.id],
+    )
+    if (!current.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Tag não encontrada neste quadro.' })
+      return
+    }
+    await client.query(
+      `UPDATE personal_activities activity
+       SET tags = COALESCE((
+         SELECT array_agg(item.tag ORDER BY item.position)
+         FROM unnest(activity.tags) WITH ORDINALITY AS item(tag, position)
+         WHERE lower(btrim(item.tag)) <> lower(btrim($2))
+       ), '{}'::text[]),
+       updated_at = now()
+       WHERE activity.user_id = $1 AND EXISTS (
+         SELECT 1 FROM unnest(activity.tags) item(tag)
+         WHERE lower(btrim(item.tag)) = lower(btrim($2))
+       )`,
+      [req.session.user!.id, current.rows[0].name],
+    )
+    await client.query(
+      'DELETE FROM personal_activity_tags WHERE id = $1 AND user_id = $2',
+      [id.data, req.session.user!.id],
+    )
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
   }
 })
 
@@ -310,26 +485,35 @@ router.post('/items', async (req, res, next) => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Atividade inválida.' })
     return
   }
+  const client = await pool.connect()
   try {
-    const result = await pool.query<{
+    await client.query('BEGIN')
+    const tags = await canonicalizeTagNames(client, Number(req.session.user!.id), parsed.data.tags)
+    const result = await client.query<{
       id: string; column_id: string; title: string; description: string; start_date: string | null; due_date: string | null; tags: string[]
     }>(
       `INSERT INTO personal_activities (user_id, column_id, title, description, start_date, due_date, tags)
        SELECT $1, c.id, $3, $4, $5, $6, $7
        FROM personal_activity_columns c WHERE c.id = $2 AND c.user_id = $1
        RETURNING id, column_id, title, description, start_date::text, due_date::text, tags`,
-      [req.session.user!.id, parsed.data.columnId, parsed.data.title, parsed.data.description, parsed.data.startDate ?? null, parsed.data.dueDate ?? null, parsed.data.tags],
+      [req.session.user!.id, parsed.data.columnId, parsed.data.title, parsed.data.description, parsed.data.startDate ?? null, parsed.data.dueDate ?? null, tags],
     )
     if (!result.rowCount) {
+      await client.query('ROLLBACK')
       res.status(400).json({ error: 'A coluna selecionada não existe neste quadro.' })
       return
     }
     const activity = result.rows[0]
+    await persistTagNames(client, Number(req.session.user!.id), activity.tags)
+    await client.query('COMMIT')
     res.status(201).json({
       activity: { id: Number(activity.id), columnId: Number(activity.column_id), title: activity.title, description: activity.description, startDate: activity.start_date, dueDate: activity.due_date, tags: activity.tags },
     })
   } catch (error) {
+    await client.query('ROLLBACK')
     next(error)
+  } finally {
+    client.release()
   }
 })
 
@@ -341,8 +525,13 @@ router.patch('/items/:id', async (req, res, next) => {
     return
   }
   const { columnId, title, description, startDate, dueDate, tags } = parsed.data
+  const client = await pool.connect()
   try {
-    const result = await pool.query(
+    await client.query('BEGIN')
+    const canonicalTags = tags === undefined
+      ? undefined
+      : await canonicalizeTagNames(client, Number(req.session.user!.id), tags)
+    const result = await client.query(
       `UPDATE personal_activities a
        SET column_id = COALESCE($1, a.column_id),
            title = COALESCE($2, a.title),
@@ -357,15 +546,21 @@ router.patch('/items/:id', async (req, res, next) => {
          ))
        RETURNING a.id`,
       [columnId ?? null, title ?? null, description ?? null, dueDate !== undefined, dueDate ?? null,
-        startDate !== undefined, startDate ?? null, tags !== undefined, tags ?? null, id.data, req.session.user!.id],
+        startDate !== undefined, startDate ?? null, tags !== undefined, canonicalTags ?? null, id.data, req.session.user!.id],
     )
     if (!result.rowCount) {
+      await client.query('ROLLBACK')
       res.status(404).json({ error: 'Atividade ou coluna não encontrada.' })
       return
     }
+    if (canonicalTags !== undefined) await persistTagNames(client, Number(req.session.user!.id), canonicalTags)
+    await client.query('COMMIT')
     res.status(204).end()
   } catch (error) {
+    await client.query('ROLLBACK')
     next(error)
+  } finally {
+    client.release()
   }
 })
 

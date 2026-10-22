@@ -777,7 +777,7 @@ export default function TicketBoardPage({
           {!filtersExpanded && <span>{[search, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
         </button>
         {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
-        <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Protocolo, assunto ou empreendimento" aria-label="Pesquisar chamados" /></label>
+        <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por protocolo, assunto, empreendimento ou telefone" /></label>
         <SearchableMultiSelect label="Empreendimentos" options={enterpriseOptions} value={enterpriseFilters} onChange={(value) => {
           setEnterpriseFilters(value)
           setBlockFilter([])
@@ -807,8 +807,11 @@ export default function TicketBoardPage({
         <div className="ticket-board-toolbar ticket-board-options">
         {currentUser.role === 'admin' && <details className="ticket-tag-manager">
           <summary><Tag size={14} /> Gerenciar tags</summary>
-          <form onSubmit={(event) => void createTag(event)}><input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} maxLength={60} placeholder="Nome da tag" required /><input aria-label="Cor da tag" type="color" value={newTagColor} onChange={(event) => setNewTagColor(event.target.value)} /><button className="primary-button" type="submit">Criar</button></form>
-          <div>{tagOptions.map((tag) => <span className="ticket-tag-manager-item" key={tag.id}><i style={{ backgroundColor: tag.color }} />{tag.name}<button type="button" onClick={() => void deleteTag(tag)} aria-label={`Excluir tag ${tag.name}`}>×</button></span>)}</div>
+          <div className="ticket-tag-manager-panel">
+            <header><strong>Gerenciar tags dos chamados</strong><button type="button" onClick={(event) => { const details = event.currentTarget.closest('details'); if (details) details.open = false }} aria-label="Fechar gerenciador de tags"><X size={16} /></button></header>
+            <form onSubmit={(event) => void createTag(event)}><input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} maxLength={60} placeholder="Nome da tag" required /><input aria-label="Cor da tag" type="color" value={newTagColor} onChange={(event) => setNewTagColor(event.target.value)} /><button className="primary-button" type="submit">Criar</button></form>
+            <div className="ticket-tag-manager-list">{tagOptions.map((tag) => <span className="ticket-tag-manager-item" key={tag.id}><i style={{ backgroundColor: tag.color }} />{tag.name}<button type="button" onClick={() => void deleteTag(tag)} aria-label={`Excluir tag ${tag.name}`}>×</button></span>)}</div>
+          </div>
         </details>}
         <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
           <button type="button" className={viewMode === 'kanban' ? 'is-active' : ''} onClick={() => setViewMode('kanban')}><LayoutGrid size={14} /> Quadro</button>
@@ -816,7 +819,7 @@ export default function TicketBoardPage({
         </div>
         {viewMode === 'kanban' && <details className="ticket-card-fields">
           <summary>Campos do cartão</summary>
-          <div>{([
+          <div className="ticket-card-fields-panel"><header><strong>Campos exibidos no cartão</strong><button type="button" onClick={(event) => { const details = event.currentTarget.closest('details'); if (details) details.open = false }} aria-label="Fechar campos do cartão"><X size={16} /></button></header>{([
             ['customer', 'Cliente'], ['description', 'Descrição'], ['warranty', 'Garantia'],
             ['age', 'Tempo aberto'], ['counts', 'Comentários / subtarefas / programações'], ['tags', 'Tags'],
           ] as [TicketCardField, string][]).map(([field, label]) => (

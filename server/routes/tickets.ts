@@ -637,6 +637,12 @@ router.get('/dashboard', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   const search = z.string().trim().max(100).catch('').parse(req.query.search)
+  const phoneDigits = search.replace(/\D/g, '')
+  const phoneLookup = phoneDigits.length >= 3 && /^[\d\s()+.-]+$/.test(search)
+  if (phoneLookup && !isPersonalDataEncryptionConfigured()) {
+    res.status(503).json({ error: 'A busca por telefone exige a chave de criptografia de dados pessoais no servidor.' })
+    return
+  }
   const includeInactive = z.boolean().catch(false).parse(req.query.includeInactive === 'true')
   const selectedEnterprises = parseTextFilter(req.query.enterprise, 240)
   const selectedBlocks = parseTextFilter(req.query.block, 120)
@@ -733,7 +739,8 @@ router.get('/', async (req, res, next) => {
        ) warranty ON TRUE
        WHERE ($9::boolean OR t.source_active = TRUE)
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
-           OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1)
+           OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1
+           OR $10::boolean)
          AND (cardinality($2::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($2::text[]))
          AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
          AND (cardinality($4::text[]) = 0 OR lower(btrim(t.unit)) = ANY($4::text[]))
@@ -743,16 +750,28 @@ router.get('/', async (req, res, next) => {
          AND (cardinality($7::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($7::text[]))
          AND ($8::bigint IS NULL OR t.source_id = $8)
        ORDER BY t.opened_at ASC NULLS LAST, t.protocol
-       LIMIT 1000`,
+       LIMIT CASE WHEN $10::boolean THEN 2147483647 ELSE 1000 END`,
       [
         term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
         includeInactive,
+        phoneLookup,
       ],
     )
 
+    const matchedTickets = phoneLookup
+      ? result.rows.filter((ticket) => {
+        const matchesText = [ticket.protocol, ticket.customer_name, ticket.enterprise, ticket.subject, ticket.subsubject]
+          .some((value) => value.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')))
+        const matchesPhone = ticket.customer_phone_ciphertext
+          ? decryptPersonalData(ticket.customer_phone_ciphertext, 'ticket-phone').replace(/\D/g, '').includes(phoneDigits)
+          : false
+        return matchesText || matchesPhone
+        })
+      : result.rows
+
     res.json({
-      tickets: result.rows.map((ticket) => ({
+      tickets: matchedTickets.map((ticket) => ({
         id: ticket.source_id,
         protocol: ticket.protocol,
         statusId: ticket.source_status_id,

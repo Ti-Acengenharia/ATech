@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, CalendarDays, CircleAlert, ChevronLeft, ChevronRight, Download, FileText, ListTodo, MessageCircle, Paperclip, Pencil, Plus, Search, Tag, Trash2, X } from 'lucide-react'
 import { apiRequest } from './api/client'
 import SearchableMultiSelect from './SearchableMultiSelect'
@@ -8,6 +8,11 @@ interface ActivityColumn {
   id: number
   name: string
   position: number
+}
+
+interface ActivityTag {
+  id: number
+  name: string
 }
 
 interface PersonalActivity {
@@ -56,8 +61,27 @@ interface ActivityDraft {
   tags: string[]
 }
 
+function getActivityPayload(draft: ActivityDraft) {
+  return {
+    columnId: draft.columnId,
+    title: draft.title.trim(),
+    description: draft.description,
+    startDate: draft.startDate || null,
+    dueDate: draft.dueDate || null,
+    tags: [...new Set(draft.tags.map((tag) => tag.trim()).filter(Boolean))].slice(0, 20),
+  }
+}
+
+function getDraftSnapshot(draft: ActivityDraft) {
+  return JSON.stringify(getActivityPayload(draft))
+}
+
 function emptyDraft(columnId: number): ActivityDraft {
   return { id: null, columnId, title: '', description: '', startDate: '', dueDate: '', tags: [] }
+}
+
+function normalizeTagName(name: string) {
+  return name.trim().toLocaleLowerCase('pt-BR')
 }
 
 export default function PersonalActivitiesPage({
@@ -73,7 +97,14 @@ export default function PersonalActivitiesPage({
   const [ownerName, setOwnerName] = useState(currentUser.displayName)
   const [users, setUsers] = useState<BoardUser[]>([])
   const [columns, setColumns] = useState<ActivityColumn[]>([])
+  const [tags, setTags] = useState<ActivityTag[]>([])
   const [activities, setActivities] = useState<PersonalActivity[]>([])
+  const [managingTags, setManagingTags] = useState(false)
+  const [newTagName, setNewTagName] = useState('')
+  const [activityTagName, setActivityTagName] = useState('')
+  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  const [editingTagId, setEditingTagId] = useState<number | null>(null)
+  const [editingTagName, setEditingTagName] = useState('')
   const [draft, setDraft] = useState<ActivityDraft | null>(null)
   const [comments, setComments] = useState<ActivityComment[]>([])
   const [attachments, setAttachments] = useState<ActivityAttachment[]>([])
@@ -87,7 +118,14 @@ export default function PersonalActivitiesPage({
   const [tagFilter, setTagFilter] = useState<string[]>([])
   const [dueFilter, setDueFilter] = useState<'all' | 'overdue' | 'today' | 'next7' | 'no-date'>('all')
   const [saving, setSaving] = useState(false)
+  const [draftDirty, setDraftDirty] = useState(false)
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const draftSessionRef = useRef(0)
+  const draftRef = useRef<ActivityDraft | null>(null)
+  const savedDraftSnapshotRef = useRef<string | null>(null)
+  const failedDraftSnapshotRef = useRef<string | null>(null)
+  const closeRequestedSessionRef = useRef<number | null>(null)
   const [dateFilterBounds] = useState(() => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -99,7 +137,16 @@ export default function PersonalActivitiesPage({
   })
 
   async function openActivity(activity: PersonalActivity) {
-    setDraft({ ...activity, startDate: activity.startDate ?? '', dueDate: activity.dueDate ?? '', tags: activity.tags ?? [] })
+    const nextDraft = { ...activity, startDate: activity.startDate ?? '', dueDate: activity.dueDate ?? '', tags: activity.tags ?? [] }
+    draftSessionRef.current += 1
+    closeRequestedSessionRef.current = null
+    savedDraftSnapshotRef.current = getDraftSnapshot(nextDraft)
+    failedDraftSnapshotRef.current = null
+    setDraftDirty(false)
+    setDraftSaveFailed(false)
+    setDraft(nextDraft)
+    setTagPickerOpen(false)
+    setActivityTagName('')
     setComments([])
     setAttachments([])
     setCommentBody('')
@@ -125,10 +172,12 @@ export default function PersonalActivitiesPage({
           userId: number
           userName?: string
           columns: ActivityColumn[]
+          tags: ActivityTag[]
           activities: PersonalActivity[]
         }>(`/api/personal-activities?userId=${ownerId}`)
         if (!cancelled) {
           setColumns(result.columns)
+          setTags(result.tags)
           setActivities(result.activities)
           setOwnerName(result.userName ?? currentUser.displayName)
         }
@@ -154,8 +203,7 @@ export default function PersonalActivitiesPage({
   }, [canViewOtherActivities])
 
   const isOwnBoard = ownerId === currentUserId
-  const availableTags = [...new Set(activities.flatMap((activity) => activity.tags ?? []))]
-    .sort((left, right) => left.localeCompare(right, 'pt-BR'))
+  const availableTags = tags.map((tag) => tag.name)
   const activeFilterCount = Number(Boolean(activitySearch.trim())) + columnFilter.length + tagFilter.length + Number(dueFilter !== 'all')
 
   function matchesActivityFilters(activity: PersonalActivity) {
@@ -163,7 +211,8 @@ export default function PersonalActivitiesPage({
     const matchesSearch = !search || [activity.title, activity.description, ...(activity.tags ?? [])]
       .some((value) => value.toLocaleLowerCase('pt-BR').includes(search))
     const matchesColumn = !columnFilter.length || columnFilter.includes(String(activity.columnId))
-    const matchesTags = !tagFilter.length || tagFilter.some((tag) => activity.tags?.includes(tag))
+    const matchesTags = !tagFilter.length || tagFilter.some((tag) =>
+      activity.tags?.some((activityTag) => normalizeTagName(activityTag) === normalizeTagName(tag)))
     const dueDate = activity.dueDate
     const matchesDue = dueFilter === 'all' ||
       (dueFilter === 'no-date' && !dueDate) ||
@@ -178,6 +227,216 @@ export default function PersonalActivitiesPage({
     setColumnFilter([])
     setTagFilter([])
     setDueFilter('all')
+  }
+
+  function startNewActivity(columnId: number) {
+    draftSessionRef.current += 1
+    closeRequestedSessionRef.current = null
+    savedDraftSnapshotRef.current = null
+    failedDraftSnapshotRef.current = null
+    setDraftDirty(false)
+    setDraftSaveFailed(false)
+    setDraft(emptyDraft(columnId))
+  }
+
+  const closeActivityEditor = useCallback(() => {
+    const currentDraft = draftRef.current
+    if (currentDraft && isOwnBoard) {
+      const snapshot = getDraftSnapshot(currentDraft)
+      if (snapshot !== savedDraftSnapshotRef.current && (currentDraft.id !== null || currentDraft.title.trim())) {
+        if (snapshot === failedDraftSnapshotRef.current) {
+          if (!window.confirm('As alterações ainda não foram salvas. Fechar e descartá-las?')) return
+        } else {
+          closeRequestedSessionRef.current = draftSessionRef.current
+          return
+        }
+      } else if (currentDraft.id === null &&
+        (currentDraft.title.trim() || currentDraft.description || currentDraft.startDate || currentDraft.dueDate || currentDraft.tags.length)) {
+        if (!window.confirm('Este cartão ainda não tem título e não pode ser salvo. Fechar e descartar as alterações?')) return
+      }
+    }
+    draftSessionRef.current += 1
+    closeRequestedSessionRef.current = null
+    savedDraftSnapshotRef.current = null
+    failedDraftSnapshotRef.current = null
+    setDraftDirty(false)
+    setDraftSaveFailed(false)
+    setDraft(null)
+    setTagPickerOpen(false)
+  }, [isOwnBoard])
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  useEffect(() => {
+    if (!draft || !isOwnBoard || saving) return
+    const session = draftSessionRef.current
+    const snapshot = getDraftSnapshot(draft)
+    if (snapshot === savedDraftSnapshotRef.current) {
+      setDraftDirty(false)
+      setDraftSaveFailed(false)
+      return
+    }
+    setDraftDirty(true)
+    if (snapshot === failedDraftSnapshotRef.current) {
+      setDraftSaveFailed(true)
+      return
+    }
+    setDraftSaveFailed(false)
+    if (draft.id === null && !draft.title.trim()) return
+
+    const timer = window.setTimeout(() => {
+      const currentDraft = draftRef.current
+      if (!currentDraft || session !== draftSessionRef.current) return
+      const payload = getActivityPayload(currentDraft)
+      const currentSnapshot = JSON.stringify(payload)
+      if (currentSnapshot === savedDraftSnapshotRef.current || currentSnapshot === failedDraftSnapshotRef.current) return
+
+      setSaving(true)
+      void (async () => {
+        try {
+          if (currentDraft.id === null) {
+            const result = await apiRequest<{ activity: PersonalActivity }>('/api/personal-activities/items', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            })
+            if (session !== draftSessionRef.current) return
+            savedDraftSnapshotRef.current = currentSnapshot
+            failedDraftSnapshotRef.current = null
+            setDraftSaveFailed(false)
+            setActivities((current) => current.some((activity) => activity.id === result.activity.id)
+              ? current
+              : [...current, result.activity])
+            setDraft((current) => current?.id === null ? { ...current, id: result.activity.id } : current)
+          } else {
+            await apiRequest(`/api/personal-activities/items/${currentDraft.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify(payload),
+            })
+            if (session !== draftSessionRef.current) return
+            savedDraftSnapshotRef.current = currentSnapshot
+            failedDraftSnapshotRef.current = null
+            setDraftSaveFailed(false)
+            setActivities((current) => current.map((activity) =>
+              activity.id === currentDraft.id ? { ...activity, ...payload } : activity))
+          }
+          setNotice(null)
+          const latestDraft = draftRef.current
+          if (closeRequestedSessionRef.current === session && latestDraft &&
+            getDraftSnapshot(latestDraft) === savedDraftSnapshotRef.current) {
+            closeActivityEditor()
+          }
+        } catch (error) {
+          if (session === draftSessionRef.current) {
+            failedDraftSnapshotRef.current = currentSnapshot
+            setDraftSaveFailed(true)
+            setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível salvar as alterações do cartão.' })
+          }
+        } finally {
+          setSaving(false)
+        }
+      })()
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [draft, isOwnBoard, saving, closeActivityEditor])
+
+  async function createTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = newTagName.trim()
+    if (!isOwnBoard || !name) return
+    try {
+      const result = await apiRequest<{ tag: ActivityTag }>('/api/personal-activities/tags', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      })
+      setTags((current) => [...current, result.tag].sort((left, right) => left.name.localeCompare(right.name, 'pt-BR')))
+      setNewTagName('')
+      setNotice(null)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível criar a tag.' })
+    }
+  }
+
+  async function saveDraftTags(nextTags: string[]) {
+    if (!draft || !isOwnBoard) return
+    setDraft({ ...draft, tags: nextTags })
+    setActivities((current) => current.map((activity) =>
+      activity.id === draft.id ? { ...activity, tags: nextTags } : activity))
+  }
+
+  async function createActivityTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = activityTagName.trim()
+    if (!isOwnBoard || !draft || !name) return
+    const existingTag = tags.find((tag) => normalizeTagName(tag.name) === normalizeTagName(name))
+    try {
+      let tag: ActivityTag
+      if (existingTag) {
+        tag = existingTag
+      } else {
+        const result = await apiRequest<{ tag: ActivityTag }>('/api/personal-activities/tags', {
+          method: 'POST',
+          body: JSON.stringify({ name }),
+        })
+        tag = result.tag
+        setTags((current) => [...current, tag].sort((left, right) => left.name.localeCompare(right.name, 'pt-BR')))
+      }
+      setActivityTagName('')
+      setTagPickerOpen(true)
+      if (!draft.tags.some((value) => normalizeTagName(value) === normalizeTagName(tag.name))) {
+        await saveDraftTags([...draft.tags, tag.name].slice(0, 20))
+      }
+      setNotice(null)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível criar ou adicionar a tag.' })
+    }
+  }
+
+  async function renameTag(tag: ActivityTag) {
+    const name = editingTagName.trim()
+    if (!isOwnBoard || !name || name === tag.name) {
+      setEditingTagId(null)
+      return
+    }
+    try {
+      const result = await apiRequest<{ tag: ActivityTag }>(`/api/personal-activities/tags/${tag.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      })
+      setTags((current) => current.map((item) => item.id === tag.id ? result.tag : item)
+        .sort((left, right) => left.name.localeCompare(right.name, 'pt-BR')))
+      setActivities((current) => current.map((activity) => ({
+        ...activity,
+        tags: activity.tags.map((activityTag) =>
+          normalizeTagName(activityTag) === normalizeTagName(tag.name) ? result.tag.name : activityTag),
+      })))
+      setTagFilter((current) => current.map((value) =>
+        normalizeTagName(value) === normalizeTagName(tag.name) ? result.tag.name : value))
+      setEditingTagId(null)
+      setNotice(null)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível renomear a tag.' })
+    }
+  }
+
+  async function deleteTag(tag: ActivityTag) {
+    if (!isOwnBoard || !window.confirm(`Excluir a tag "${tag.name}"? Ela também será removida das atividades que a utilizam.`)) return
+    try {
+      await apiRequest(`/api/personal-activities/tags/${tag.id}`, { method: 'DELETE' })
+      setTags((current) => current.filter((item) => item.id !== tag.id))
+      setActivities((current) => current.map((activity) => ({
+        ...activity,
+        tags: activity.tags.filter((activityTag) =>
+          normalizeTagName(activityTag) !== normalizeTagName(tag.name)),
+      })))
+      setTagFilter((current) => current.filter((value) =>
+        normalizeTagName(value) !== normalizeTagName(tag.name)))
+      setEditingTagId(null)
+      setNotice(null)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível excluir a tag.' })
+    }
   }
 
   async function createColumn(event: FormEvent<HTMLFormElement>) {
@@ -235,43 +494,6 @@ export default function PersonalActivitiesPage({
       setColumns(reordered.map((item, position) => ({ ...item, position })))
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível reordenar as colunas.' })
-    }
-  }
-
-  async function saveActivity(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!draft || ownerId !== currentUserId) return
-    setSaving(true)
-    try {
-      const payload = {
-        columnId: draft.columnId,
-        title: draft.title.trim(),
-        description: draft.description,
-        startDate: draft.startDate || null,
-        dueDate: draft.dueDate || null,
-        tags: [...new Set(draft.tags.map((tag) => tag.trim()).filter(Boolean))].slice(0, 20),
-      }
-      if (draft.id === null) {
-        const result = await apiRequest<{ activity: PersonalActivity }>('/api/personal-activities/items', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        })
-        setActivities((current) => [...current, result.activity])
-      } else {
-        await apiRequest(`/api/personal-activities/items/${draft.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        })
-        setActivities((current) => current.map((item) => item.id === draft.id
-          ? { ...item, ...payload }
-          : item))
-      }
-      setDraft(null)
-      setNotice(null)
-    } catch (error) {
-      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível salvar a atividade.' })
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -409,6 +631,7 @@ export default function PersonalActivitiesPage({
           <label className="personal-activity-search"><span>Pesquisar atividades</span><div><Search size={15} /><input type="search" value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} placeholder="Título, descrição ou tag" /></div></label>
           <SearchableMultiSelect label="Colunas" options={columns.map((column) => ({ value: String(column.id), label: column.name }))} value={columnFilter} onChange={setColumnFilter} />
           <SearchableMultiSelect label="Tags" options={availableTags} value={tagFilter} onChange={setTagFilter} emptyLabel="Nenhuma tag cadastrada." />
+          {isOwnBoard && <button className="personal-filter-clear personal-tags-manage-button" type="button" onClick={() => setManagingTags(true)}><Tag size={13} /> Gerenciar tags</button>}
           <label className="personal-activity-due-filter"><span>Prazo</span><select value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)}>
             <option value="all">Todos os prazos</option>
             <option value="overdue">Atrasadas</option>
@@ -449,7 +672,7 @@ export default function PersonalActivitiesPage({
                   </footer>}
                 </article>)}
                 {!columnActivities.length && <div className="personal-column-empty">{activeFilterCount ? 'Nenhuma atividade corresponde aos filtros.' : isOwnBoard ? 'Nenhuma atividade nesta coluna.' : 'Sem atividades.'}</div>}
-                {isOwnBoard && <button className="personal-add-activity" type="button" onClick={() => setDraft(emptyDraft(column.id))}><Plus size={15} /> Adicionar atividade</button>}
+                {isOwnBoard && <button className="personal-add-activity" type="button" onClick={() => { setTagPickerOpen(false); startNewActivity(column.id) }}><Plus size={15} /> Adicionar atividade</button>}
               </div>
             </section>
           })}
@@ -463,10 +686,10 @@ export default function PersonalActivitiesPage({
         </>
       )}
 
-      {draft && <div className="personal-activity-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDraft(null) }}>
+      {draft && <div className="personal-activity-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeActivityEditor() }}>
         <section className="personal-activity-modal">
-          <header><div><span className="eyebrow">QUADRO PESSOAL</span><h2>{draft.id === null ? 'Nova atividade' : isOwnBoard ? 'Editar atividade' : 'Detalhes da atividade'}</h2></div><button type="button" onClick={() => setDraft(null)} aria-label="Fechar"><X size={18} /></button></header>
-          <form className="personal-activity-editor" onSubmit={(event) => void saveActivity(event)}>
+          <header><div><span className="eyebrow">QUADRO PESSOAL</span><h2>{draft.id === null ? 'Nova atividade' : isOwnBoard ? 'Editar atividade' : 'Detalhes da atividade'}</h2>{isOwnBoard && <span className="personal-autosave-status">{saving ? 'Salvando alterações...' : draft.id === null && !draft.title.trim() ? 'Preencha o título para iniciar o salvamento automático.' : draftSaveFailed ? 'Não foi possível salvar. Altere um campo para tentar novamente.' : draftDirty ? 'Salvando automaticamente...' : 'Alterações salvas automaticamente.'}</span>}</div><button type="button" onClick={closeActivityEditor} aria-label="Fechar"><X size={18} /></button></header>
+          <div className="personal-activity-editor">
             <label><span>Atividade</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={240} required autoFocus disabled={!isOwnBoard} /></label>
             <label><span>Descrição</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={4} maxLength={6000} disabled={!isOwnBoard} /></label>
             <div className="personal-activity-meta">
@@ -474,10 +697,38 @@ export default function PersonalActivitiesPage({
               <label><span>Prazo</span><input type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} disabled={!isOwnBoard} /></label>
             </div>
             <label><span>Coluna</span><select value={draft.columnId} onChange={(event) => setDraft({ ...draft, columnId: Number(event.target.value) })} disabled={!isOwnBoard}>{columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label>
-            <label><span>Tags (separe por vírgulas)</span><input value={draft.tags.join(', ')} onChange={(event) => setDraft({ ...draft, tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 20) })} maxLength={800} placeholder="Ex.: urgente, cliente, orçamento" disabled={!isOwnBoard} /></label>
-            {draft.id === null ? <footer><button type="button" className="personal-secondary" onClick={() => setDraft(null)}>Cancelar</button><button type="submit" className="personal-primary" disabled={saving}>{saving ? 'Salvando...' : 'Criar atividade'}</button></footer>
-              : isOwnBoard && <footer><button type="button" className="personal-secondary" onClick={() => setDraft(null)}>Fechar</button><button type="submit" className="personal-primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button></footer>}
-          </form>
+            <div className="personal-activity-tag-picker">
+              <span>Tags {saving && <small>Salvando...</small>}</span>
+              <button type="button" className="personal-tag-picker-trigger" onClick={() => setTagPickerOpen((open) => !open)} disabled={!isOwnBoard}>
+                <Tag size={14} />
+                {draft.tags.length ? `${draft.tags.length} selecionada(s)` : 'Selecionar tags'}
+                <ChevronRight size={14} className={tagPickerOpen ? 'is-open' : ''} />
+              </button>
+              {draft.tags.length > 0 && <div className="personal-tag-suggestions" aria-label="Tags selecionadas">{draft.tags.map((tag) => <span key={tag}><Tag size={11} />{tag}</span>)}</div>}
+              {tagPickerOpen && isOwnBoard && <div className="personal-tag-picker-menu">
+                <div className="personal-tag-picker-heading"><strong>Tags do quadro</strong><button type="button" onClick={() => setTagPickerOpen(false)} aria-label="Fechar lista de tags"><X size={15} /></button></div>
+                <div className="personal-tag-picker-options">
+                  {!tags.length && <p className="personal-detail-empty">Nenhuma tag cadastrada. Crie uma abaixo.</p>}
+                  {tags.map((tag) => {
+                    const selected = draft.tags.some((value) => normalizeTagName(value) === normalizeTagName(tag.name))
+                    return <label key={tag.id}>
+                      <input type="checkbox" checked={selected} disabled={saving || draft.tags.length >= 20 && !selected} onChange={() => {
+                        const nextTags = selected
+                          ? draft.tags.filter((value) => normalizeTagName(value) !== normalizeTagName(tag.name))
+                          : [...draft.tags, tag.name].slice(0, 20)
+                        void saveDraftTags(nextTags)
+                      }} />
+                      <span>{tag.name}</span>
+                    </label>
+                  })}
+                </div>
+                <form className="personal-tag-create" onSubmit={(event) => void createActivityTag(event)}>
+                  <input value={activityTagName} onChange={(event) => setActivityTagName(event.target.value)} maxLength={40} placeholder="Criar nova tag" aria-label="Criar nova tag" />
+                  <button type="submit" className="personal-primary" disabled={!activityTagName.trim() || saving}><Plus size={15} /> Criar</button>
+                </form>
+              </div>}
+            </div>
+          </div>
           {draft.id !== null && <div className="personal-activity-details">
             <section className="personal-activity-comments">
               <header><div><h3>Comentários</h3><p>{comments.length} comentário(s)</p></div><MessageCircle size={17} /></header>
@@ -490,6 +741,32 @@ export default function PersonalActivitiesPage({
               {isOwnBoard && <label className={`personal-attachment-upload ${uploading ? 'is-disabled' : ''}`}><Paperclip size={14} />{uploading ? 'Enviando...' : 'Adicionar anexo'}<input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv" disabled={uploading} onChange={(event) => void uploadAttachment(event)} /></label>}
             </section>
           </div>}
+        </section>
+      </div>}
+      {managingTags && isOwnBoard && <div className="personal-activity-backdrop personal-tag-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setManagingTags(false) }}>
+        <section className="personal-activity-modal personal-tag-modal" aria-labelledby="personal-tag-modal-title">
+          <header><div><span className="eyebrow">QUADRO PESSOAL</span><h2 id="personal-tag-modal-title">Gerenciar tags</h2></div><button type="button" onClick={() => setManagingTags(false)} aria-label="Fechar"><X size={18} /></button></header>
+          <p className="personal-tag-help">As tags ficam salvas no seu quadro e podem ser reutilizadas em qualquer atividade.</p>
+          <form className="personal-tag-create" onSubmit={(event) => void createTag(event)}>
+            <input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} maxLength={40} placeholder="Nome da nova tag" aria-label="Nome da nova tag" />
+            <button type="submit" className="personal-primary" disabled={!newTagName.trim()}><Plus size={15} /> Criar</button>
+          </form>
+          <div className="personal-tag-list">
+            {!tags.length && <p className="personal-detail-empty">Nenhuma tag cadastrada neste quadro.</p>}
+            {tags.map((tag) => <div className="personal-tag-row" key={tag.id}>
+              {editingTagId === tag.id
+                ? <form onSubmit={(event) => { event.preventDefault(); void renameTag(tag) }}>
+                    <input autoFocus value={editingTagName} onChange={(event) => setEditingTagName(event.target.value)} maxLength={40} aria-label={`Novo nome para ${tag.name}`} />
+                    <button type="submit" aria-label="Salvar nome da tag" disabled={!editingTagName.trim()}><Plus size={15} /></button>
+                    <button type="button" onClick={() => setEditingTagId(null)} aria-label="Cancelar edição"><X size={15} /></button>
+                  </form>
+                : <><span><Tag size={13} />{tag.name}</span><div>
+                    <button type="button" onClick={() => { setEditingTagId(tag.id); setEditingTagName(tag.name) }} aria-label={`Renomear ${tag.name}`} title="Renomear"><Pencil size={14} /></button>
+                    <button type="button" onClick={() => void deleteTag(tag)} aria-label={`Excluir ${tag.name}`} title="Excluir"><Trash2 size={14} /></button>
+                  </div></>}
+            </div>)}
+          </div>
+          <footer><button type="button" className="personal-secondary" onClick={() => setManagingTags(false)}>Concluir</button></footer>
         </section>
       </div>}
     </main>

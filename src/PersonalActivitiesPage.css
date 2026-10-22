@@ -50,6 +50,7 @@
 .personal-activity-modal header, .personal-activity-modal footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .personal-activity-modal h2 { margin: 4px 0 0; color: var(--ink); font-size: 20px; }
 .personal-activity-modal header > button { display: grid; width: 34px; height: 34px; place-items: center; color: #687d90; background: #f1f5f8; border: 0; border-radius: 8px; }
+.personal-autosave-status { display: block; margin-top: 4px; color: #71879a; font-size: 10px; }
 .personal-activity-modal > label { display: grid; gap: 6px; color: #53697a; font-size: 12px; }
 .personal-activity-modal textarea { resize: vertical; }
 .personal-activity-modal footer { justify-content: flex-end; margin-top: 4px; }
@@ -92,6 +93,40 @@
 .personal-attachment-upload { position: relative; display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 10px; color: #176ca6; background: #f4f9fc; border: 1px dashed #b8d0e2; border-radius: 7px; font-size: 11px; cursor: pointer; }
 .personal-attachment-upload input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 .personal-attachment-upload.is-disabled { opacity: .6; cursor: wait; }
+.personal-tags-manage-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.personal-tag-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.personal-tag-suggestions button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; color: #4c6c86; background: #f4f8fb; border: 1px solid #dce8f0; border-radius: 14px; font: inherit; font-size: 10px; cursor: pointer; }
+.personal-tag-suggestions button.is-selected { color: #155d90; background: #e7f3fb; border-color: #a9cce3; }
+.personal-tag-modal { width: min(460px, calc(100vw - 24px)); max-height: min(620px, calc(100dvh - 24px)); padding: 16px; border: 1px solid #d8e3ed; border-radius: 12px; box-shadow: 0 20px 60px #12233442; }
+.personal-tag-modal h2 { font-size: 18px; }
+.personal-tag-help { margin: -4px 0 0; color: #687d90; font-size: 12px; line-height: 1.5; }
+.personal-tag-create { display: flex; align-items: center; gap: 8px; }
+.personal-tag-create .personal-primary { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.personal-tag-list { display: grid; gap: 7px; max-height: min(42vh, 360px); overflow-y: auto; }
+.personal-tag-row { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 7px 5px 10px; background: #f7f9fb; border: 1px solid #e8eef3; border-radius: 8px; }
+.personal-tag-row > span { display: inline-flex; min-width: 0; align-items: center; gap: 7px; color: #405f77; font-size: 12px; overflow-wrap: anywhere; }
+.personal-tag-row > div { display: flex; flex: 0 0 auto; gap: 3px; }
+.personal-tag-row button { display: grid; width: 30px; height: 30px; place-items: center; color: #617b90; background: transparent; border: 0; border-radius: 6px; }
+.personal-tag-row button:hover { color: #176ca6; background: #e7f1f8; }
+.personal-tag-row button:last-child { color: #a74d47; }
+.personal-tag-row form { display: flex; width: 100%; align-items: center; gap: 5px; }
+.personal-tag-row form input { flex: 1; }
+.personal-tag-modal > footer { justify-content: flex-end; }
+.personal-activity-tag-picker { position: relative; display: grid; gap: 6px; color: #53697a; font-size: 12px; }
+.personal-activity-tag-picker > span small { margin-left: 6px; color: #176ca6; }
+.personal-tag-picker-trigger { display: flex; min-height: 40px; align-items: center; gap: 8px; padding: 8px 11px; color: #405f77; background: #fff; border: 1px solid var(--line); border-radius: 8px; font: inherit; text-align: left; cursor: pointer; }
+.personal-tag-picker-trigger:disabled { background: #f5f7f9; cursor: default; }
+.personal-tag-picker-trigger > svg:last-child { margin-left: auto; transition: transform .15s ease; }
+.personal-tag-picker-trigger > svg:last-child.is-open { transform: rotate(90deg); }
+.personal-tag-picker-menu { position: relative; z-index: 2; display: grid; gap: 9px; padding: 10px; background: #fff; border: 1px solid #dce5ec; border-radius: 9px; box-shadow: 0 8px 24px #19375218; }
+.personal-tag-picker-heading { display: flex; align-items: center; justify-content: space-between; color: #405f77; font-size: 11px; }
+.personal-tag-picker-heading button { display: grid; width: 27px; height: 27px; place-items: center; color: #687d90; background: #f1f5f8; border: 0; border-radius: 6px; }
+.personal-tag-picker-options { display: grid; max-height: 170px; gap: 2px; overflow-y: auto; }
+.personal-tag-picker-options label { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 4px 6px; color: #405f77; border-radius: 6px; cursor: pointer; }
+.personal-tag-picker-options label:hover { background: #f4f8fb; }
+.personal-tag-picker-options input[type="checkbox"] { width: 16px; min-height: 16px; flex: 0 0 auto; margin: 0; padding: 0; accent-color: #176ca6; }
+.personal-tag-picker-menu .personal-tag-create input { flex: 1; }
+.personal-tag-backdrop { z-index: 110; }
 @media (max-width: 760px) {
   .personal-activities-heading { align-items: stretch; flex-direction: column; gap: 14px; }
   .personal-board-selector { width: 100%; }

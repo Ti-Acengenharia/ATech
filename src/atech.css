@@ -2487,16 +2487,21 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .ticket-tag-manager > summary, .ticket-card-fields > summary { min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; color: #46647e; background: #fff; border: 1px solid #d5e1ec; border-radius: 7px; font-size: 10px; font-weight: 700; list-style: none; cursor: pointer; white-space: nowrap; }
 .ticket-tag-manager > summary::-webkit-details-marker, .ticket-card-fields > summary::-webkit-details-marker { display: none; }
 .ticket-tag-manager[open] > summary, .ticket-card-fields[open] > summary { border-color: #78a9d0; }
-.ticket-tag-manager > form, .ticket-tag-manager > div, .ticket-card-fields > div { position: absolute; z-index: 45; right: 0; min-width: 240px; padding: 8px; background: #fff; border: 1px solid #d8e3ed; box-shadow: 0 14px 34px rgba(28, 59, 86, .18); }
-.ticket-tag-manager > form { top: calc(100% + 5px); display: flex; gap: 6px; border-radius: 7px 7px 0 0; }
-.ticket-tag-manager > form input:first-child { min-width: 0; flex: 1; padding: 6px; border: 1px solid #d5e1ec; border-radius: 4px; font-size: 10px; }
-.ticket-tag-manager > form input[type="color"] { width: 30px; height: 30px; padding: 2px; border: 1px solid #d5e1ec; border-radius: 4px; }
-.ticket-tag-manager > form .primary-button { min-height: 30px; padding: 0 9px; font-size: 9px; }
-.ticket-tag-manager > div { top: calc(100% + 42px); display: flex; flex-wrap: wrap; gap: 5px; max-height: 180px; overflow-y: auto; border-radius: 0 0 7px 7px; }
+.ticket-tag-manager[open]::before, .ticket-card-fields[open]::before { position: fixed; z-index: 900; inset: 0; content: ''; background: rgba(18, 35, 52, .42); }
+.ticket-tag-manager-panel, .ticket-card-fields-panel { position: fixed; z-index: 901; top: 50%; left: 50%; width: min(460px, calc(100vw - 24px)); max-height: min(620px, calc(100dvh - 24px)); min-width: 0; overflow: auto; padding: 16px; background: #fff; border: 1px solid #d8e3ed; border-radius: 12px; box-shadow: 0 20px 60px rgba(18, 35, 52, .26); transform: translate(-50%, -50%); }
+.ticket-tag-manager-panel { display: grid; gap: 12px; }
+.ticket-tag-manager-panel > header, .ticket-card-fields-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #304d65; font-size: 14px; }
+.ticket-tag-manager-panel > header button, .ticket-card-fields-panel > header button { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: #687d90; background: #f1f5f8; border: 0; border-radius: 7px; cursor: pointer; }
+.ticket-tag-manager-panel > form { display: flex; gap: 8px; }
+.ticket-tag-manager-panel > form input:first-child { min-width: 0; min-height: 40px; flex: 1; padding: 8px 10px; border: 1px solid #d5e1ec; border-radius: 7px; font: inherit; font-size: 12px; }
+.ticket-tag-manager-panel > form input[type="color"] { width: 42px; height: 40px; padding: 3px; border: 1px solid #d5e1ec; border-radius: 7px; }
+.ticket-tag-manager-panel > form .primary-button { min-height: 40px; padding: 0 14px; font-size: 11px; }
+.ticket-tag-manager-list { display: flex; flex-wrap: wrap; gap: 7px; max-height: min(42vh, 360px); overflow-y: auto; padding: 2px; }
 .ticket-tag-manager-item { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; color: #49647c; background: #f5f8fb; border-radius: 4px; font-size: 9px; }
 .ticket-tag-manager-item i { width: 7px; height: 7px; border-radius: 50%; }
 .ticket-tag-manager-item button { padding: 0; color: #a44343; background: transparent; border: 0; font-size: 15px; cursor: pointer; }
-.ticket-card-fields > div { top: calc(100% + 5px); display: grid; gap: 8px; border-radius: 7px; }
+.ticket-card-fields-panel { display: grid; gap: 12px; width: min(340px, calc(100vw - 24px)); }
+.ticket-card-fields-panel > div { display: grid; gap: 12px; }
 .ticket-card-fields label, .ticket-tag-assignment label { display: flex; align-items: center; gap: 7px; color: #526a7f; font-size: 10px; cursor: pointer; }
 .ticket-card-fields input, .ticket-tag-assignment input { accent-color: #2e78b1; }
 .ticket-view-toggle { display: flex; align-items: center; padding: 3px; background: #edf3f8; border: 1px solid #d8e4ee; border-radius: 7px; }
@@ -2554,7 +2559,6 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   .filter-search-actions .search-box { flex: 1 1 200px; }
   .filter-search-actions .filter-clear-button { flex: 0 0 auto; }
   .ticket-list { min-width: 850px; }
-  .ticket-tag-manager > form, .ticket-tag-manager > div, .ticket-card-fields > div { left: 0; right: auto; }
   .kanban-board-controls > span { font-size: 9px; }
   .kanban-board { grid-auto-columns: minmax(260px, 84vw); }
 }
