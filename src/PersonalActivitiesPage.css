@@ -28,7 +28,9 @@
 .personal-column-actions button, .personal-activity-title-row button { display: grid; width: 29px; height: 29px; place-items: center; color: #71849a; background: transparent; border: 0; border-radius: 6px; }
 .personal-column-actions button:hover, .personal-activity-title-row button:hover { color: #185c91; background: #e4eff7; }
 .personal-column-body { display: flex; flex: 1; flex-direction: column; align-items: stretch; gap: 9px; padding: 10px; }
-.personal-activity-card { padding: 12px; background: white; border: 1px solid #e2eaf1; border-radius: 9px; box-shadow: 0 3px 8px #19375208; }
+.personal-activity-card { padding: 12px; background: white; border: 1px solid #e2eaf1; border-radius: 9px; box-shadow: 0 3px 8px #19375208; cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.personal-activity-card:hover, .personal-activity-card:focus-visible { border-color: #a9c7dd; box-shadow: 0 6px 16px #19375212; }
+.personal-activity-card:focus-visible { outline: 3px solid #70a9d6; outline-offset: 2px; }
 .personal-activity-title-row { display: flex; align-items: flex-start; gap: 6px; }
 .personal-activity-title-row h3 { flex: 1; margin: 0; color: var(--ink); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .personal-activity-card p { margin: 8px 0; color: #687d90; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

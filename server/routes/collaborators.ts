@@ -1,6 +1,7 @@
 import { Router } from 'express'
+import bcrypt from 'bcryptjs'
 import { z } from 'zod'
-import { requireAuth, requirePageAccess } from '../auth.js'
+import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
 import {
   decryptPersonalData,
@@ -68,6 +69,53 @@ const roleSchema = z.object({
   label: z.string().trim().min(2).max(80),
 })
 
+const shirtSizeSchema = z.object({ name: z.string().trim().min(1).max(24) })
+const uniformSchema = z.object({
+  shirtSizeId: z.coerce.number().int().positive().nullable(),
+  shirtShortSleeveQty: z.number().int().min(0).max(3),
+  shirtLongSleeveQty: z.number().int().min(0).max(3),
+  pantsSize: z.number().int().min(32).max(58).nullable(),
+  bootSize: z.number().int().min(34).max(48).nullable(),
+}).superRefine((value, context) => {
+  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty > 3) {
+    context.addIssue({ code: 'custom', path: ['shirtLongSleeveQty'], message: 'A quantidade total de camisas não pode ultrapassar 3.' })
+  }
+  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty > 0 && !value.shirtSizeId) {
+    context.addIssue({ code: 'custom', path: ['shirtSizeId'], message: 'Selecione o tamanho da camisa.' })
+  }
+  if (value.pantsSize !== null && (value.pantsSize % 2 !== 0 || value.pantsSize > 58)) {
+    context.addIssue({ code: 'custom', path: ['pantsSize'], message: 'O tamanho da calça deve ser par, entre 32 e 58.' })
+  }
+  if (value.bootSize !== null && value.bootSize > 48) {
+    context.addIssue({ code: 'custom', path: ['bootSize'], message: 'O tamanho da bota deve estar entre 34 e 48.' })
+  }
+})
+const uniformDeliverySchema = z.object({
+  deliveryDate: dateSchema,
+  shirtSizeId: z.coerce.number().int().positive().nullable(),
+  shirtShortSleeveQty: z.number().int().min(0).max(99),
+  shirtLongSleeveQty: z.number().int().min(0).max(99),
+  pantsSize: z.number().int().min(32).max(58).nullable(),
+  pantsQty: z.number().int().min(0).max(99),
+  bootSize: z.number().int().min(34).max(48).nullable(),
+  bootQty: z.number().int().min(0).max(99),
+  delivererPin: z.string().regex(/^\d{6,12}$/),
+  recipientSignatureBase64: z.string().min(4).max(140_000),
+}).superRefine((value, context) => {
+  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty > 0 && !value.shirtSizeId) {
+    context.addIssue({ code: 'custom', path: ['shirtSizeId'], message: 'Selecione o tamanho da camisa entregue.' })
+  }
+  if (value.pantsQty > 0 && value.pantsSize === null) {
+    context.addIssue({ code: 'custom', path: ['pantsSize'], message: 'Selecione o tamanho da calça entregue.' })
+  }
+  if (value.bootQty > 0 && value.bootSize === null) {
+    context.addIssue({ code: 'custom', path: ['bootSize'], message: 'Selecione o tamanho da bota entregue.' })
+  }
+  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty + value.pantsQty + value.bootQty === 0) {
+    context.addIssue({ code: 'custom', path: ['shirtShortSleeveQty'], message: 'Informe ao menos um item entregue.' })
+  }
+})
+
 const collaboratorSchema = z.object({
   name: z.string().trim().min(2).max(160),
   nickname: z.string().trim().max(80).default(''),
@@ -125,6 +173,7 @@ const filtersSchema = z.object({
   search: z.string().trim().max(100).default(''),
   role: z.string().trim().max(80).default('all'),
   status: z.enum(['all', 'active', 'terminated']).default('all'),
+  limit: z.coerce.number().int().min(1).max(5000).default(250),
 })
 
 function encryptionSetupRequired(res: import('express').Response) {
@@ -141,6 +190,15 @@ function isDuplicateCpf(error: unknown) {
 function isDuplicateRegistrationNumber(error: unknown) {
   return typeof error === 'object' && error !== null && 'code' in error && 'constraint' in error
     && error.code === '23505' && error.constraint === 'collaborators_registration_number_unique'
+}
+
+function decodeSignature(value: string) {
+  const bytes = Buffer.from(value, 'base64')
+  if (!bytes.length || bytes.length > 100 * 1024 || bytes.toString('base64') !== value ||
+      !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return null
+  }
+  return bytes
 }
 
 router.use(requireAuth, requirePageAccess('collaborators'))
@@ -185,6 +243,45 @@ router.post('/roles', async (req, res, next) => {
       return
     }
     res.status(201).json({ role: { value: result.rows[0].role_key, label: result.rows[0].label } })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/uniform-options', async (_req, res, next) => {
+  try {
+    const result = await pool.query<{ id: string; name: string }>(
+      'SELECT id, name FROM collaborator_shirt_sizes ORDER BY lower(name), id',
+    )
+    res.json({
+      shirtSizes: result.rows.map((size) => ({ id: Number(size.id), name: size.name })),
+      pantsSizes: Array.from({ length: 14 }, (_, index) => 32 + index * 2),
+      bootSizes: Array.from({ length: 15 }, (_, index) => 34 + index),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/shirt-sizes', requireAdmin, async (req, res, next) => {
+  const parsed = shirtSizeSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Informe um tamanho de camisa válido, com até 24 caracteres.' })
+    return
+  }
+  try {
+    const result = await pool.query<{ id: string; name: string }>(
+      `INSERT INTO collaborator_shirt_sizes (name)
+       VALUES ($1)
+       ON CONFLICT DO NOTHING
+       RETURNING id, name`,
+      [parsed.data.name],
+    )
+    if (!result.rowCount) {
+      res.status(409).json({ error: 'Esse tamanho de camisa já está cadastrado.' })
+      return
+    }
+    res.status(201).json({ shirtSize: { id: Number(result.rows[0].id), name: result.rows[0].name } })
   } catch (error) {
     next(error)
   }
@@ -333,6 +430,149 @@ router.get('/:id/photo', async (req, res, next) => {
   }
 })
 
+router.put('/:id/uniform', async (req, res, next) => {
+  const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = uniformSchema.safeParse(req.body)
+  if (!collaboratorId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador inválido.' : parsed.error.issues[0]?.message ?? 'Dados de fardamento inválidos.' })
+    return
+  }
+  try {
+    if (parsed.data.shirtSizeId) {
+      const size = await pool.query('SELECT 1 FROM collaborator_shirt_sizes WHERE id = $1', [parsed.data.shirtSizeId])
+      if (!size.rowCount) {
+        res.status(400).json({ error: 'O tamanho de camisa selecionado não existe.' })
+        return
+      }
+    }
+    const result = await pool.query(
+      `UPDATE collaborators SET shirt_size_id = $1, shirt_short_sleeve_qty = $2,
+         shirt_long_sleeve_qty = $3, pants_size = $4, boot_size = $5, updated_at = now()
+       WHERE id = $6 RETURNING id`,
+      [parsed.data.shirtSizeId, parsed.data.shirtShortSleeveQty, parsed.data.shirtLongSleeveQty,
+        parsed.data.pantsSize, parsed.data.bootSize, collaboratorId.data],
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Colaborador não encontrado.' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/:id/uniform-deliveries', async (req, res, next) => {
+  const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = uniformDeliverySchema.safeParse(req.body)
+  if (!collaboratorId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador inválido.' : parsed.error.issues[0]?.message ?? 'Dados de entrega inválidos.' })
+    return
+  }
+  if (!isPersonalDataEncryptionConfigured()) {
+    res.status(503).json({ error: 'Configure PII_ENCRYPTION_KEY para registrar a entrega e suas assinaturas.' })
+    return
+  }
+  const recipientSignature = decodeSignature(parsed.data.recipientSignatureBase64)
+  if (!recipientSignature) {
+    res.status(400).json({ error: 'A assinatura de quem recebe deve ser uma imagem PNG válida de até 100 KiB.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const collaborator = await client.query('SELECT 1 FROM collaborators WHERE id = $1 FOR UPDATE', [collaboratorId.data])
+    if (!collaborator.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Colaborador não encontrado.' })
+      return
+    }
+    const deliverer = await client.query<{
+      signature_data_ciphertext: string | null
+      signature_pin_hash: string | null
+      signature_pin_failed_attempts: number
+      signature_pin_locked_until: Date | null
+    }>(
+      `SELECT signature_data_ciphertext, signature_pin_hash,
+              signature_pin_failed_attempts, signature_pin_locked_until
+       FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+      [req.session.user!.id],
+    )
+    const profile = deliverer.rows[0]
+    if (!profile?.signature_pin_hash || !profile.signature_data_ciphertext) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Cadastre uma assinatura e um PIN no perfil antes de registrar entregas.' })
+      return
+    }
+    if (profile.signature_pin_locked_until && profile.signature_pin_locked_until > new Date()) {
+      await client.query('ROLLBACK')
+      res.status(429).json({ error: 'PIN temporariamente bloqueado após várias tentativas. Aguarde 15 minutos.' })
+      return
+    }
+    if (!await bcrypt.compare(parsed.data.delivererPin, profile.signature_pin_hash)) {
+      const attempts = profile.signature_pin_locked_until && profile.signature_pin_locked_until <= new Date()
+        ? 1
+        : profile.signature_pin_failed_attempts + 1
+      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
+      await client.query(
+        `UPDATE users SET signature_pin_failed_attempts = $1, signature_pin_locked_until = $2
+         WHERE id = $3`,
+        [attempts, lockedUntil, req.session.user!.id],
+      )
+      await client.query('COMMIT')
+      res.status(401).json({
+        error: lockedUntil
+          ? 'PIN incorreto. O acesso à assinatura foi bloqueado por 15 minutos.'
+          : `PIN incorreto. Restam ${5 - attempts} tentativa(s).`,
+      })
+      return
+    }
+    const delivererSignatureBase64 = decryptPersonalData(profile.signature_data_ciphertext, 'user-signature')
+    const delivererSignature = decodeSignature(delivererSignatureBase64)
+    if (!delivererSignature) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'A assinatura do perfil está inválida. Atualize-a antes de registrar a entrega.' })
+      return
+    }
+    await client.query(
+      `UPDATE users SET signature_pin_failed_attempts = 0, signature_pin_locked_until = NULL
+       WHERE id = $1`,
+      [req.session.user!.id],
+    )
+    if (parsed.data.shirtSizeId) {
+      const size = await client.query('SELECT 1 FROM collaborator_shirt_sizes WHERE id = $1', [parsed.data.shirtSizeId])
+      if (!size.rowCount) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'O tamanho de camisa selecionado não existe.' })
+        return
+      }
+    }
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO collaborator_uniform_deliveries (
+         collaborator_id, delivery_date, shirt_size_id, shirt_short_sleeve_qty, shirt_long_sleeve_qty,
+         pants_size, pants_qty, boot_size, boot_qty, deliverer_user_id,
+         deliverer_signature_ciphertext, recipient_signature_ciphertext
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        collaboratorId.data, parsed.data.deliveryDate, parsed.data.shirtSizeId,
+        parsed.data.shirtShortSleeveQty, parsed.data.shirtLongSleeveQty,
+        parsed.data.pantsSize, parsed.data.pantsQty, parsed.data.bootSize, parsed.data.bootQty,
+        req.session.user!.id,
+        encryptPersonalData(delivererSignatureBase64, 'uniform-delivery-signature'),
+        encryptPersonalData(parsed.data.recipientSignatureBase64, 'uniform-delivery-signature'),
+      ],
+    )
+    await client.query('COMMIT')
+    res.status(201).json({ id: Number(inserted.rows[0].id) })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
 router.put('/:id/photo', async (req, res, next) => {
   const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
   const parsed = z.object({
@@ -378,7 +618,7 @@ router.get('/', async (req, res, next) => {
     return
   }
 
-  const { search, role, status } = parsed.data
+  const { search, role, status, limit } = parsed.data
   const prefix = search ? `${search.toLowerCase()}%` : ''
 
   try {
@@ -401,12 +641,19 @@ router.get('/', async (req, res, next) => {
       is_active: boolean
       is_on_leave: boolean
       programming_count: number
+      shirt_size: string | null
+      shirt_short_sleeve_qty: number
+      shirt_long_sleeve_qty: number
+      pants_size: number | null
+      boot_size: number | null
       elapsed_years: number
       elapsed_months: number
       elapsed_days: number
     }>(
       `SELECT c.id, c.name, c.nickname, c.registration_number, c.role, r.label AS role_label,
               (c.photo_content IS NOT NULL) AS has_photo, c.birth_date_ciphertext,
+              shirt_size.name AS shirt_size, c.shirt_short_sleeve_qty, c.shirt_long_sleeve_qty,
+              c.pants_size, c.boot_size,
               (c.termination_date IS NULL OR c.termination_date > CURRENT_DATE) AS is_active,
               c.is_on_leave,
               (SELECT count(*)::int FROM ticket_programming p WHERE p.collaborator_id = c.id) AS programming_count,
@@ -421,14 +668,15 @@ router.get('/', async (req, res, next) => {
                      THEN c.admission_date ELSE c.termination_date END))::int AS elapsed_days
        FROM collaborators c
        JOIN collaborator_roles r ON r.role_key = c.role
+       LEFT JOIN collaborator_shirt_sizes shirt_size ON shirt_size.id = c.shirt_size_id
        WHERE ($1 = '' OR lower(c.name) LIKE $1 OR lower(c.nickname) LIKE $1)
          AND ($2 = 'all' OR c.role = $2)
          AND ($3 = 'all'
            OR ($3 = 'active' AND (c.termination_date IS NULL OR c.termination_date > CURRENT_DATE))
            OR ($3 = 'terminated' AND c.termination_date <= CURRENT_DATE))
        ORDER BY lower(c.name), c.id
-       LIMIT 250`,
-      [prefix, role, status],
+       LIMIT $4`,
+      [prefix, role, status, limit],
     )
 
     res.json({
@@ -447,6 +695,11 @@ router.get('/', async (req, res, next) => {
           age_days: age.days,
           is_active: collaborator.is_active,
           is_on_leave: collaborator.is_on_leave,
+          shirt_size: collaborator.shirt_size,
+          shirt_short_sleeve_qty: collaborator.shirt_short_sleeve_qty,
+          shirt_long_sleeve_qty: collaborator.shirt_long_sleeve_qty,
+          pants_size: collaborator.pants_size,
+          boot_size: collaborator.boot_size,
           programming_count: collaborator.programming_count,
           elapsed_years: collaborator.elapsed_years,
           elapsed_months: collaborator.elapsed_months,
@@ -507,6 +760,22 @@ router.post('/', async (req, res, next) => {
     )
     const collaboratorId = inserted.rows[0].id
 
+    if (data.isOnLeave && data.leaveStartDate && data.expectedReturnDate && data.leaveReason) {
+      await client.query(
+        `INSERT INTO collaborator_leave_history (
+           collaborator_id, start_date_ciphertext, expected_return_date_ciphertext,
+           reason_ciphertext, created_by
+         ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          collaboratorId,
+          encryptPersonalData(data.leaveStartDate, 'leave-start-date'),
+          encryptPersonalData(data.expectedReturnDate, 'expected-return-date'),
+          encryptPersonalData(data.leaveReason, 'leave-reason'),
+          req.session.user!.id,
+        ],
+      )
+    }
+
     for (const child of data.children) {
       await client.query(
         `INSERT INTO collaborator_children (collaborator_id, name_ciphertext, birth_date_ciphertext, gender_ciphertext)
@@ -551,6 +820,21 @@ router.put('/:id', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    const previousLeave = await client.query<{
+      is_on_leave: boolean
+      leave_start_date_ciphertext: string | null
+      expected_return_date_ciphertext: string | null
+      leave_reason_ciphertext: string | null
+    }>(
+      `SELECT is_on_leave, leave_start_date_ciphertext, expected_return_date_ciphertext, leave_reason_ciphertext
+       FROM collaborators WHERE id = $1 FOR UPDATE`,
+      [collaboratorId.data],
+    )
+    if (!previousLeave.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Colaborador não encontrado.' })
+      return
+    }
     const knownRole = await client.query('SELECT 1 FROM collaborator_roles WHERE role_key = $1', [data.role])
     if (!knownRole.rowCount) {
       await client.query('ROLLBACK')
@@ -592,6 +876,38 @@ router.put('/:id', async (req, res, next) => {
       await client.query('ROLLBACK')
       res.status(404).json({ error: 'Colaborador não encontrado.' })
       return
+    }
+
+    const previous = previousLeave.rows[0]
+    const leaveChanged = previous.is_on_leave !== data.isOnLeave ||
+      (data.isOnLeave && (
+        !previous.leave_start_date_ciphertext || !previous.expected_return_date_ciphertext || !previous.leave_reason_ciphertext ||
+        decryptPersonalData(previous.leave_start_date_ciphertext, 'leave-start-date') !== data.leaveStartDate ||
+        decryptPersonalData(previous.expected_return_date_ciphertext, 'expected-return-date') !== data.expectedReturnDate ||
+        decryptPersonalData(previous.leave_reason_ciphertext, 'leave-reason') !== data.leaveReason
+      ))
+    if (leaveChanged) {
+      await client.query(
+        `UPDATE collaborator_leave_history
+         SET is_current = FALSE, ended_at = CURRENT_DATE
+         WHERE collaborator_id = $1 AND is_current`,
+        [collaboratorId.data],
+      )
+      if (data.isOnLeave && data.leaveStartDate && data.expectedReturnDate && data.leaveReason) {
+        await client.query(
+          `INSERT INTO collaborator_leave_history (
+             collaborator_id, start_date_ciphertext, expected_return_date_ciphertext,
+             reason_ciphertext, created_by
+           ) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            collaboratorId.data,
+            encryptPersonalData(data.leaveStartDate, 'leave-start-date'),
+            encryptPersonalData(data.expectedReturnDate, 'expected-return-date'),
+            encryptPersonalData(data.leaveReason, 'leave-reason'),
+            req.session.user!.id,
+          ],
+        )
+      }
     }
 
     await client.query('DELETE FROM collaborator_children WHERE collaborator_id = $1', [collaboratorId.data])
@@ -734,12 +1050,26 @@ router.get('/:id/report', async (req, res, next) => {
       leave_start_date_ciphertext: string | null
       expected_return_date_ciphertext: string | null
       leave_reason_ciphertext: string | null
+      has_photo: boolean
+      shirt_size_id: string | null
+      shirt_size: string | null
+      shirt_short_sleeve_qty: number
+      shirt_long_sleeve_qty: number
+      pants_size: number | null
+      boot_size: number | null
     }>(
-      `SELECT id, name, nickname, role, registration_number, cpf_ciphertext, phone_ciphertext,
-              gender, birth_date_ciphertext, admission_date, termination_date, has_children,
-              is_on_leave, leave_start_date_ciphertext, expected_return_date_ciphertext,
-              leave_reason_ciphertext
-       FROM collaborators WHERE id = $1`,
+      `SELECT collaborator.id, collaborator.name, collaborator.nickname, collaborator.role,
+              collaborator.registration_number, collaborator.cpf_ciphertext, collaborator.phone_ciphertext,
+              collaborator.gender, collaborator.birth_date_ciphertext, collaborator.admission_date,
+              collaborator.termination_date, collaborator.has_children, collaborator.is_on_leave,
+              collaborator.leave_start_date_ciphertext, collaborator.expected_return_date_ciphertext,
+              collaborator.leave_reason_ciphertext, (collaborator.photo_content IS NOT NULL) AS has_photo,
+              collaborator.shirt_size_id, shirt_size.name AS shirt_size,
+              collaborator.shirt_short_sleeve_qty, collaborator.shirt_long_sleeve_qty,
+              collaborator.pants_size, collaborator.boot_size
+       FROM collaborators collaborator
+       LEFT JOIN collaborator_shirt_sizes shirt_size ON shirt_size.id = collaborator.shirt_size_id
+       WHERE collaborator.id = $1`,
       [collaboratorId.data],
     )
     const collaborator = result.rows[0]
@@ -757,6 +1087,46 @@ router.get('/:id/report', async (req, res, next) => {
     }>(
       `SELECT name_ciphertext, birth_date_ciphertext, gender_ciphertext
        FROM collaborator_children WHERE collaborator_id = $1 ORDER BY id`,
+      [collaboratorId.data],
+    )
+    const leaves = await client.query<{
+      id: string
+      start_date_ciphertext: string
+      expected_return_date_ciphertext: string
+      reason_ciphertext: string
+      is_current: boolean
+      ended_at: string | null
+    }>(
+      `SELECT id, start_date_ciphertext, expected_return_date_ciphertext, reason_ciphertext,
+              is_current, ended_at::text
+       FROM collaborator_leave_history WHERE collaborator_id = $1
+       ORDER BY is_current DESC, created_at DESC, id DESC`,
+      [collaboratorId.data],
+    )
+    const deliveries = await client.query<{
+      id: string
+      delivery_date: string
+      shirt_size: string | null
+      shirt_short_sleeve_qty: number
+      shirt_long_sleeve_qty: number
+      pants_size: number | null
+      pants_qty: number
+      boot_size: number | null
+      boot_qty: number
+      deliverer_name: string
+      deliverer_signature_ciphertext: string
+      recipient_signature_ciphertext: string
+    }>(
+      `SELECT delivery.id, delivery.delivery_date::text, shirt.name AS shirt_size,
+              delivery.shirt_short_sleeve_qty, delivery.shirt_long_sleeve_qty,
+              delivery.pants_size, delivery.pants_qty, delivery.boot_size, delivery.boot_qty,
+              user_account.display_name AS deliverer_name,
+              delivery.deliverer_signature_ciphertext, delivery.recipient_signature_ciphertext
+       FROM collaborator_uniform_deliveries delivery
+       LEFT JOIN collaborator_shirt_sizes shirt ON shirt.id = delivery.shirt_size_id
+       JOIN users user_account ON user_account.id = delivery.deliverer_user_id
+       WHERE delivery.collaborator_id = $1
+       ORDER BY delivery.delivery_date DESC, delivery.id DESC`,
       [collaboratorId.data],
     )
     await client.query(
@@ -795,6 +1165,37 @@ router.get('/:id/report', async (req, res, next) => {
         leaveReason: collaborator.leave_reason_ciphertext
           ? decryptPersonalData(collaborator.leave_reason_ciphertext, 'leave-reason')
           : null,
+        photoUrl: collaborator.has_photo ? `/api/collaborators/${collaborator.id}/photo` : null,
+        uniform: {
+          shirtSizeId: collaborator.shirt_size_id ? Number(collaborator.shirt_size_id) : null,
+          shirtSize: collaborator.shirt_size,
+          shirtShortSleeveQty: collaborator.shirt_short_sleeve_qty,
+          shirtLongSleeveQty: collaborator.shirt_long_sleeve_qty,
+          pantsSize: collaborator.pants_size,
+          bootSize: collaborator.boot_size,
+        },
+        leaveHistory: leaves.rows.map((leave) => ({
+          id: Number(leave.id),
+          startDate: decryptPersonalData(leave.start_date_ciphertext, 'leave-start-date'),
+          expectedReturnDate: decryptPersonalData(leave.expected_return_date_ciphertext, 'expected-return-date'),
+          reason: decryptPersonalData(leave.reason_ciphertext, 'leave-reason'),
+          current: leave.is_current,
+          endedAt: leave.ended_at,
+        })),
+        uniformDeliveries: deliveries.rows.map((delivery) => ({
+          id: Number(delivery.id),
+          deliveryDate: delivery.delivery_date,
+          shirtSize: delivery.shirt_size,
+          shirtShortSleeveQty: delivery.shirt_short_sleeve_qty,
+          shirtLongSleeveQty: delivery.shirt_long_sleeve_qty,
+          pantsSize: delivery.pants_size,
+          pantsQty: delivery.pants_qty,
+          bootSize: delivery.boot_size,
+          bootQty: delivery.boot_qty,
+          delivererName: delivery.deliverer_name,
+          delivererSignatureBase64: decryptPersonalData(delivery.deliverer_signature_ciphertext, 'uniform-delivery-signature'),
+          recipientSignatureBase64: decryptPersonalData(delivery.recipient_signature_ciphertext, 'uniform-delivery-signature'),
+        })),
       },
     })
   } catch (error) {

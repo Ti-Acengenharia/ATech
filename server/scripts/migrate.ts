@@ -40,6 +40,7 @@ try {
     '033_legal_process_items.sql',
     '034_cvcrm_subject_catalog.sql',
     '035_personal_activity_tags.sql',
+    '036_collaborator_uniforms_and_leave_history.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')

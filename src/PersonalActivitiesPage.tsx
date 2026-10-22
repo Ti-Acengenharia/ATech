@@ -659,7 +659,22 @@ export default function PersonalActivitiesPage({
                 </div>}
               </header>
               <div className="personal-column-body">
-                {columnActivities.map((activity) => <article className="personal-activity-card" key={activity.id}>
+                {columnActivities.map((activity) => <article
+                  className="personal-activity-card"
+                  key={activity.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Abrir atividade ${activity.title}`}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest('button, a, input, select, textarea')) return
+                    void openActivity(activity)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+                    event.preventDefault()
+                    void openActivity(activity)
+                  }}
+                >
                   <div className="personal-activity-title-row"><h3><button type="button" className="personal-activity-open" onClick={() => void openActivity(activity)}>{activity.title}</button></h3>{isOwnBoard && <button type="button" onClick={() => void openActivity(activity)} aria-label={`Editar ${activity.title}`}><Pencil size={14} /></button>}</div>
                   {activity.description && <p>{activity.description}</p>}
                   {(activity.startDate || activity.dueDate) && <small className="personal-activity-date"><CalendarDays size={13} />{activity.startDate ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(`${activity.startDate}T00:00:00Z`)) : 'Sem início'}{activity.dueDate ? ` – ${new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(`${activity.dueDate}T00:00:00Z`))}` : ''}</small>}

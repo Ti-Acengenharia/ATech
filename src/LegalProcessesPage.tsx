@@ -147,6 +147,10 @@ interface ProcessDraft {
   children: ChildProcess[]
   items: ProcessItem[]
 }
+interface PendingProcessSave {
+  draft: ProcessDraft
+  token: number
+}
 
 type FaceField = 'enterprise' | 'claimant' | 'assignees' | 'dates' | 'caseValue' | 'children' | 'paidTotal' | 'distributionDate'
 const faceFields: { id: FaceField; label: string }[] = [
@@ -236,7 +240,10 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [editingStatusName, setEditingStatusName] = useState('')
   const [newProcess, setNewProcess] = useState(false)
   const [selected, setSelected] = useState<ProcessDetail | null>(null)
+  const processModalOpen = newProcess || Boolean(selected)
   const [draft, setDraft] = useState<ProcessDraft | null>(null)
+  const [autoSaveState, setAutoSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
+  const [autoSaveError, setAutoSaveError] = useState('')
   const [paymentDraft, setPaymentDraft] = useState({ description: '', amount: '', dueDate: '', isPaid: false })
   const [paymentFile, setPaymentFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
@@ -260,6 +267,15 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [csvPage, setCsvPage] = useState(1)
   const [importingCsv, setImportingCsv] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
+  const processModalRef = useRef<HTMLElement>(null)
+  const draftRef = useRef<ProcessDraft | null>(draft)
+  const processIdRef = useRef<number | null>(selected?.id ?? null)
+  const savedDraftRef = useRef('')
+  const editTokenRef = useRef(0)
+  const autoSaveTimerRef = useRef<number | null>(null)
+  const pendingProcessSaveRef = useRef<PendingProcessSave | null>(null)
+  const autoSavePromiseRef = useRef<Promise<boolean> | null>(null)
+  const queueProcessSaveRef = useRef<(snapshot: ProcessDraft) => Promise<boolean>>(() => Promise.resolve(false))
   const boardDragRef = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
   const suppressBoardClickRef = useRef(false)
   const [peopleLoaded, setPeopleLoaded] = useState(false)
@@ -270,6 +286,43 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       return saved && saved.every((item) => faceFields.some((field) => field.id === item)) ? saved : defaultFaceFields
     } catch { return defaultFaceFields }
   })
+
+  const selectedProcessId = selected?.id ?? null
+
+  useEffect(() => {
+    draftRef.current = draft
+    if (selectedProcessId !== null) processIdRef.current = selectedProcessId
+  }, [draft, selectedProcessId])
+
+  useEffect(() => {
+    if (!draft || (!newProcess && selectedProcessId === null)) return
+    const serialized = JSON.stringify(draft)
+    if (serialized === savedDraftRef.current) return
+    if (!draft.title.trim()) {
+      return
+    }
+    const statusTimer = window.setTimeout(() => {
+      setAutoSaveState('pending')
+      setAutoSaveError('')
+    }, 0)
+    const timer = window.setTimeout(() => {
+      void queueProcessSaveRef.current(draft)
+    }, 650)
+    autoSaveTimerRef.current = timer
+    return () => {
+      window.clearTimeout(statusTimer)
+      window.clearTimeout(timer)
+      if (autoSaveTimerRef.current === timer) autoSaveTimerRef.current = null
+    }
+  }, [draft, newProcess, selectedProcessId])
+
+  useEffect(() => {
+    if (!processModalOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      processModalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [processModalOpen])
 
   async function handleLegalCsvSelected(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget
@@ -527,10 +580,17 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
 
   async function openDetail(item: LegalProcess) {
     setNotice(null)
+    const token = ++editTokenRef.current
     try {
       const result = await apiRequest<{ process: ProcessDetail }>(`/api/legal-processes/${item.id}`)
+      if (token !== editTokenRef.current) return
+      processIdRef.current = result.process.id
       setSelected(result.process)
-      setDraft(toDraft(result.process))
+      const initialDraft = toDraft(result.process)
+      savedDraftRef.current = JSON.stringify(initialDraft)
+      setDraft(initialDraft)
+      setAutoSaveState('saved')
+      setAutoSaveError('')
       setPaymentDraft({ description: '', amount: '', dueDate: '', isPaid: false })
       setPaymentFile(null)
     } catch (error) {
@@ -539,55 +599,126 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   }
 
   function startCreate(statusId = statuses[0]?.id ?? 0) {
+    editTokenRef.current += 1
+    processIdRef.current = null
     setSelected(null)
-    setDraft(blankDraft(statusId))
+    const initialDraft = blankDraft(statusId)
+    savedDraftRef.current = JSON.stringify(initialDraft)
+    setDraft(initialDraft)
     setNewProcess(true)
+    setAutoSaveState('idle')
+    setAutoSaveError('')
     setNotice(null)
   }
 
-  function closeEditor() {
+  async function closeEditor() {
+    if (draft && JSON.stringify(draft) !== savedDraftRef.current) {
+      if (autoSaveTimerRef.current !== null) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      const saved = await queueProcessSave(draft)
+      if (!saved) return
+    }
+    editTokenRef.current += 1
     setNewProcess(false)
     setSelected(null)
+    processIdRef.current = null
     setDraft(null)
     setEditingLink(null)
     setReplyingTo(null)
     setEditingComment(null)
+    setAutoSaveState('idle')
+    setAutoSaveError('')
   }
 
-  async function saveProcess(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!draft) return
-    setSaving(true)
-    setNotice(null)
-    try {
-      const body = {
-        ...draft,
-        enterpriseKey: draft.enterpriseKey || null,
-        startDate: draft.startDate || null,
-        endDate: draft.endDate || null,
-        caseValue: draft.caseValue === '' ? null : Number(draft.caseValue),
-        distributionDate: draft.distributionDate || null,
-        children: draft.children.filter((child) => child.description.trim()),
-        items: draft.items.filter((item) => item.title.trim()),
+  const queueProcessSave = useCallback((snapshot: ProcessDraft): Promise<boolean> => {
+    pendingProcessSaveRef.current = { draft: snapshot, token: editTokenRef.current }
+    if (autoSavePromiseRef.current) return autoSavePromiseRef.current
+
+    const saveTask = (async () => {
+      while (pendingProcessSaveRef.current) {
+        const job = pendingProcessSaveRef.current
+        pendingProcessSaveRef.current = null
+        if (job.token !== editTokenRef.current) continue
+
+        if (job.draft.children.some((child) =>
+          (child.id !== undefined || child.processNumber.trim() || child.description.trim()) &&
+          (!child.processNumber.trim() || !child.description.trim()))) {
+          setAutoSaveState('error')
+          setAutoSaveError('Preencha o número e a descrição de cada processo filho para salvar.')
+          return false
+        }
+        if (job.draft.items.some((item) => item.id !== undefined && !item.title.trim())) {
+          setAutoSaveState('error')
+          setAutoSaveError('Preencha a descrição dos itens existentes antes de salvar.')
+          return false
+        }
+        const caseValue = job.draft.caseValue.trim() ? Number(job.draft.caseValue) : null
+        if (caseValue !== null && !Number.isFinite(caseValue)) {
+          setAutoSaveState('error')
+          setAutoSaveError('Informe um valor válido para a causa.')
+          return false
+        }
+        if (job.draft.startDate && job.draft.endDate && job.draft.endDate < job.draft.startDate) {
+          setAutoSaveState('error')
+          setAutoSaveError('A data de finalização deve ser igual ou posterior à data de início.')
+          return false
+        }
+
+        const body = {
+          ...job.draft,
+          title: job.draft.title.trim(),
+          enterpriseKey: job.draft.enterpriseKey || null,
+          startDate: job.draft.startDate || null,
+          endDate: job.draft.endDate || null,
+          caseValue,
+          distributionDate: job.draft.distributionDate || null,
+          children: job.draft.children.filter((child) => child.processNumber.trim() && child.description.trim()),
+          items: job.draft.items.filter((item) => item.title.trim()),
+        }
+        setAutoSaveState('saving')
+        setAutoSaveError('')
+        try {
+          let processId = processIdRef.current
+          if (processId === null) {
+            const created = await apiRequest<{ id: number }>('/api/legal-processes', { method: 'POST', body: JSON.stringify(body) })
+            processId = created.id
+            processIdRef.current = processId
+            if (job.token === editTokenRef.current) setNewProcess(false)
+          } else {
+            await apiRequest(`/api/legal-processes/${processId}`, { method: 'PUT', body: JSON.stringify(body) })
+          }
+          await load()
+          const detail = await apiRequest<{ process: ProcessDetail }>(`/api/legal-processes/${processId}`)
+          savedDraftRef.current = JSON.stringify(job.draft)
+          if (job.token === editTokenRef.current) {
+            setSelected(detail.process)
+            setAutoSaveState('saved')
+          }
+        } catch (error) {
+          if (job.token === editTokenRef.current) {
+            setAutoSaveState('error')
+            setAutoSaveError(error instanceof Error ? error.message : 'Não foi possível salvar as alterações do processo.')
+          }
+          return false
+        }
       }
-      let id: number
-      if (newProcess) {
-        const result = await apiRequest<{ id: number }>('/api/legal-processes', { method: 'POST', body: JSON.stringify(body) })
-        id = result.id
-      } else {
-        id = selected!.id
-        await apiRequest(`/api/legal-processes/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+      return true
+    })()
+    autoSavePromiseRef.current = saveTask
+    void saveTask.finally(() => {
+      if (autoSavePromiseRef.current === saveTask) autoSavePromiseRef.current = null
+      if (pendingProcessSaveRef.current && pendingProcessSaveRef.current.token === editTokenRef.current) {
+        void queueProcessSaveRef.current(pendingProcessSaveRef.current.draft)
       }
-      setNewProcess(false)
-      await load()
-      const detail = await apiRequest<{ process: ProcessDetail }>(`/api/legal-processes/${id}`)
-      setSelected(detail.process)
-      setDraft(toDraft(detail.process))
-      setNotice({ kind: 'success', text: 'Processo salvo.' })
-    } catch (error) {
-      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível salvar o processo.' })
-    } finally { setSaving(false) }
-  }
+    })
+    return saveTask
+  }, [load])
+
+  useEffect(() => {
+    queueProcessSaveRef.current = queueProcessSave
+  }, [queueProcessSave])
 
   async function saveLink(field: 'driveUrl' | 'notebookUrl') {
     if (!selected) return
@@ -662,7 +793,12 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   async function refreshSelected(id: number) {
     const result = await apiRequest<{ process: ProcessDetail }>(`/api/legal-processes/${id}`)
     setSelected(result.process)
-    setDraft(toDraft(result.process))
+    const currentDraft = draftRef.current
+    if (currentDraft && JSON.stringify(currentDraft) === savedDraftRef.current) {
+      const refreshedDraft = toDraft(result.process)
+      savedDraftRef.current = JSON.stringify(refreshedDraft)
+      setDraft(refreshedDraft)
+    }
   }
 
   async function saveComment(commentId: number, body: string) {
@@ -868,10 +1004,18 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       <article
         className={`legal-process-card ${process.is_demo ? 'legal-demo-card' : ''}`}
         key={process.id}
+        role="button"
+        tabIndex={0}
+        aria-label={`Abrir processo jurídico ${process.title}`}
         draggable={!compact}
         onDragStart={() => setDragged(process.id)}
         onDragEnd={() => setDragged(null)}
         onClick={() => void openDetail(process)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+          event.preventDefault()
+          void openDetail(process)
+        }}
       >
         <div className="legal-process-card-top"><span>{process.is_demo ? 'EXEMPLO' : `#${process.id}`}</span><GripVertical size={14} /></div>
         <strong className="legal-process-card-title">{process.title}</strong>
@@ -974,11 +1118,18 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
             : <><div className="legal-list-wrap"><table className="legal-list"><thead><tr><th>PROCESSO</th><th>EMPREENDIMENTO</th><th>SITUAÇÃO / FASE</th><th>REQUERENTE</th><th>RESPONSÁVEIS</th><th>PERÍODO</th><th>VALOR</th><th>PAGO</th></tr></thead><tbody>{pagedProcesses.map((process) => <tr key={process.id} onClick={() => void openDetail(process)}><td><strong>{process.title}</strong>{process.is_demo && <small>Exemplo fictício</small>}</td><td>{process.enterprise_name || '—'}</td><td><span className="legal-status-label"><i style={{ background: process.status_color }} />{process.status_name}<select aria-label={`Mover ${process.title} para outro status`} value={process.status_id} onClick={(event) => event.stopPropagation()} onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></span></td><td>{process.claimant || '—'}</td><td>{process.assignees.map(assigneeName).join(', ') || '—'}</td><td>{showDate(process.start_date)} – {showDate(process.end_date)}</td><td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td><td>{currency.format(Number(process.paid_total))}</td></tr>)}</tbody></table></div><LegalListPagination total={filtered.length} page={legalListPage} pageCount={legalListPageCount} pageSize={listPageSize} onPageChange={(page) => setLegalListPageState({ key: legalListKey, page })} /></>}
       {processes.length > 0 && !filtered.length && <div className="legal-empty-inline">Nenhum processo encontrado com os filtros aplicados.</div>}
 
-      {(newProcess || selected) && draft && <div className="legal-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor() }}>
-        <section className="legal-modal" role="dialog" aria-modal="true" aria-labelledby="legal-editor-title">
-          <header className="legal-modal-heading"><div><span className="eyebrow">PROCESSO JURÍDICO{selected?.isDemo ? ' · EXEMPLO' : ''}</span><h2 id="legal-editor-title">{newProcess ? 'Novo processo' : selected?.title}</h2></div><button type="button" className="close-modal-btn" onClick={closeEditor} aria-label="Fechar"><X size={18} /></button></header>
-          <form className="legal-process-form" onSubmit={(event) => void saveProcess(event)}>
-            <label className="legal-field legal-field-full"><span>Nome do processo</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={240} required autoFocus /></label>
+      {(newProcess || selected) && draft && <div className="legal-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) void closeEditor() }}>
+        <section ref={processModalRef} className="legal-modal" role="dialog" aria-modal="true" aria-labelledby="legal-editor-title">
+          <header className="legal-modal-heading"><div><span className="eyebrow">PROCESSO JURÍDICO{selected?.isDemo ? ' · EXEMPLO' : ''}</span><h2 id="legal-editor-title">{newProcess ? 'Novo processo' : selected?.title}</h2></div><button type="button" className="close-modal-btn" onClick={() => void closeEditor()} aria-label="Fechar"><X size={18} /></button></header>
+          <form className="legal-process-form" onSubmit={(event) => event.preventDefault()}>
+            <div className={`legal-autosave-status is-${autoSaveState}`} role={autoSaveState === 'error' ? 'alert' : 'status'} aria-live="polite">
+              {autoSaveState === 'saving' ? 'Salvando alterações automaticamente...' :
+                autoSaveState === 'pending' ? 'Alterações pendentes; salvamento automático em instantes...' :
+                  autoSaveState === 'error' ? autoSaveError :
+                    autoSaveState === 'saved' ? 'Alterações salvas automaticamente.' :
+                      newProcess ? 'O processo será criado automaticamente após preencher o nome.' : 'As alterações são salvas automaticamente.'}
+            </div>
+            <label className="legal-field legal-field-full"><span>Nome do processo</span><input value={draft.title} onChange={(event) => { setDraft({ ...draft, title: event.target.value }); if (!event.target.value.trim()) { setAutoSaveState('idle'); setAutoSaveError('') } }} maxLength={240} required autoFocus /></label>
             <label className="legal-field"><span>Situação / Fase</span><select value={draft.statusId} onChange={(event) => setDraft({ ...draft, statusId: Number(event.target.value) })} required>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
             <label className="legal-field"><span>Empreendimento</span><select value={draft.enterpriseKey} onChange={(event) => setDraft({ ...draft, enterpriseKey: event.target.value })}><option value="">Sem empreendimento associado</option>{enterprises.map((enterprise) => <option key={enterprise.enterprise_key} value={enterprise.enterprise_key}>{enterprise.enterprise_name}</option>)}</select></label>
             <div className="legal-field legal-assignee-field"><span>Responsáveis</span><SearchableMultiSelect label="Selecionar responsáveis" options={assigneeOptions} value={draft.assigneeIds.map(String)} onChange={(values) => setDraft({ ...draft, assigneeIds: values.map(Number) })} emptyLabel="Nenhum responsável cadastrado." />
@@ -1016,7 +1167,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
               </div>)}
               {!draft.items.length && <p className="legal-items-empty">Nenhum item cadastrado.</p>}
             </section>
-            <div className="legal-form-actions legal-field-full"><button type="button" className="secondary-button" onClick={closeEditor}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Salvando...' : <><Save size={15} /> Salvar processo</>}</button>{selected && <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProcess()}><Trash2 size={14} /> Excluir processo</button>}</div>
+            <div className="legal-form-actions legal-field-full"><button type="button" className="secondary-button" onClick={() => void closeEditor()}>{autoSaveState === 'saving' || autoSaveState === 'pending' ? 'Salvar e fechar' : 'Fechar'}</button>{selected && <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProcess()}><Trash2 size={14} /> Excluir processo</button>}</div>
           </form>
 
           {selected && <section className="legal-comments">

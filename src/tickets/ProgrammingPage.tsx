@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, CalendarDays, CircleAlert, Pencil, Plus, Printer, RefreshCw, Trash2, UsersRound } from 'lucide-react'
 import { Clock3 } from 'lucide-react'
 import { apiRequest } from '../api/client'
@@ -84,6 +84,35 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
   const bottom = pageHeight - 17
   const dateLabel = displayDate(date)
   let y = 0
+  const photos = new Map<string, { dataUrl: string; format: 'PNG' | 'JPEG' }>()
+  for (const person of groups.flatMap((group) => group.people)) {
+    if (!person.photo_url || photos.has(person.photo_url)) continue
+    const response = await fetch(person.photo_url, { credentials: 'same-origin' })
+    if (!response.ok) throw new Error(`Não foi possível carregar a foto de ${person.name} para o relatório.`)
+    const blob = await response.blob()
+    if (blob.type === 'image/png' || blob.type === 'image/jpeg') {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
+        reader.onerror = () => reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
+        reader.readAsDataURL(blob)
+      })
+      photos.set(person.photo_url, { dataUrl, format: blob.type === 'image/png' ? 'PNG' : 'JPEG' })
+    } else {
+      const bitmap = await createImageBitmap(blob)
+      const canvas = window.document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const context = canvas.getContext('2d')
+      if (!context) {
+        bitmap.close()
+        throw new Error(`Não foi possível converter a foto de ${person.name} para o relatório.`)
+      }
+      context.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      photos.set(person.photo_url, { dataUrl: canvas.toDataURL('image/png'), format: 'PNG' })
+    }
+  }
 
   function drawPageHeader(firstPage: boolean) {
     if (firstPage) {
@@ -132,10 +161,12 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
     document.roundedRect(margin, y, contentWidth, 11, 2, 2, 'FD')
     document.setFillColor(49, 127, 181)
     document.roundedRect(margin, y, 2, 11, 1, 1, 'F')
+    const photo = person.photo_url ? photos.get(person.photo_url) : null
+    if (photo) document.addImage(photo.dataUrl, photo.format, margin + 4, y + 1.5, 8, 8)
     document.setFont('helvetica', 'bold')
     document.setFontSize(9.5)
     document.setTextColor(38, 69, 96)
-    document.text(person.name, margin + 5, y + 7)
+    document.text(person.name, margin + (photo ? 14 : 5), y + 7)
     document.setFont('helvetica', 'normal')
     document.setFontSize(8)
     document.setTextColor(74, 111, 143)
@@ -239,6 +270,7 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
 }
 
 export default function ProgrammingPage() {
+  const programmingFormRef = useRef<HTMLElement>(null)
   const [date, setDate] = useState(() => localDateString(new Date()))
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
@@ -256,6 +288,12 @@ export default function ProgrammingPage() {
   const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(false)
   const [savingRoleVisibility, setSavingRoleVisibility] = useState(false)
   const [updatingAppointments, setUpdatingAppointments] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    if (showForm || editingAppointment) {
+      programmingFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [showForm, editingAppointment])
 
   useEffect(() => {
     let cancelled = false
@@ -409,7 +447,7 @@ export default function ProgrammingPage() {
       </nav>
 
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={() => setError('')} aria-label="Fechar aviso">×</button></div>}
-      {(showForm || editingAppointment) && <section className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} />}</section>}
+      {(showForm || editingAppointment) && <section ref={programmingFormRef} className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
         <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(localDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>

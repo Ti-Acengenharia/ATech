@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   CalendarDays,
@@ -62,6 +62,11 @@ interface Collaborator {
   is_active: boolean
   is_on_leave: boolean
   programming_count: number
+  shirt_size: string | null
+  shirt_short_sleeve_qty: number
+  shirt_long_sleeve_qty: number
+  pants_size: number | null
+  boot_size: number | null
 }
 
 interface ChildRecord {
@@ -88,6 +93,47 @@ interface CollaboratorReport {
   leaveReason: string | null
   hasChildren: boolean
   children: ChildRecord[]
+  photoUrl: string | null
+  uniform: {
+    shirtSizeId: number | null
+    shirtSize: string | null
+    shirtShortSleeveQty: number
+    shirtLongSleeveQty: number
+    pantsSize: number | null
+    bootSize: number | null
+  }
+  leaveHistory: { id: number; startDate: string; expectedReturnDate: string; reason: string; current: boolean; endedAt: string | null }[]
+  uniformDeliveries: {
+    id: number
+    deliveryDate: string
+    shirtSize: string | null
+    shirtShortSleeveQty: number
+    shirtLongSleeveQty: number
+    pantsSize: number | null
+    pantsQty: number
+    bootSize: number | null
+    bootQty: number
+    delivererName: string
+    delivererSignatureBase64: string
+    recipientSignatureBase64: string
+  }[]
+}
+
+interface UniformOptions {
+  shirtSizes: { id: number; name: string }[]
+  pantsSizes: number[]
+  bootSizes: number[]
+}
+
+interface UniformDeliveryForm {
+  deliveryDate: string
+  shirtSizeId: number | null
+  shirtShortSleeveQty: number
+  shirtLongSleeveQty: number
+  pantsSize: number | null
+  pantsQty: number
+  bootSize: number | null
+  bootQty: number
 }
 
 interface CollaboratorForm {
@@ -164,7 +210,44 @@ function dateForInput(value: string) {
   return value.slice(0, 10)
 }
 
+async function imageDataUrl(url: string) {
+  const response = await fetch(url, { credentials: 'same-origin' })
+  if (!response.ok) throw new Error('Não foi possível carregar uma foto para o relatório.')
+  const blob = await response.blob()
+  if (blob.type !== 'image/png' && blob.type !== 'image/jpeg') {
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) {
+      bitmap.close()
+      throw new Error('Não foi possível converter a foto para o PDF.')
+    }
+    context.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    return { dataUrl: canvas.toDataURL('image/png'), format: 'PNG' as const }
+  }
+  return await new Promise<{ dataUrl: string; format: 'PNG' | 'JPEG' }>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Não foi possível preparar a foto para o relatório.'))
+        return
+      }
+      resolve({ dataUrl: reader.result, format: blob.type === 'image/png' ? 'PNG' : 'JPEG' })
+    }
+    reader.onerror = () => reject(new Error('Não foi possível preparar a foto para o relatório.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
 export default function CollaboratorsPage() {
+  const reportPickerRef = useRef<HTMLElement>(null)
+  const deliveryPanelRef = useRef<HTMLElement>(null)
+  const recipientCanvasRef = useRef<HTMLCanvasElement>(null)
+  const recipientDrawing = useRef(false)
+  const recipientInk = useRef(false)
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>(defaultRoleOptions)
   const [newRoleLabel, setNewRoleLabel] = useState('')
   const [savingRole, setSavingRole] = useState(false)
@@ -183,9 +266,29 @@ export default function CollaboratorsPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
+  const [reportPickerOpen, setReportPickerOpen] = useState(false)
+  const [selectedReportType, setSelectedReportType] = useState<'list' | 'uniforms' | 'report' | null>(null)
+  const [selectedReportCollaborator, setSelectedReportCollaborator] = useState('')
+  const [reportCollaborators, setReportCollaborators] = useState<Collaborator[]>([])
   const [report, setReport] = useState<CollaboratorReport | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [uniformOptions, setUniformOptions] = useState<UniformOptions>({ shirtSizes: [], pantsSizes: [], bootSizes: [] })
+  const [newShirtSize, setNewShirtSize] = useState('')
+  const [uniformForm, setUniformForm] = useState<UniformDeliveryForm>(() => ({
+    ...emptyDeliveryForm(),
+    shirtShortSleeveQty: 0,
+    shirtLongSleeveQty: 0,
+    pantsQty: 0,
+    bootQty: 0,
+  }))
+  const [deliveryCollaborator, setDeliveryCollaborator] = useState<Collaborator | null>(null)
+  const [deliveryForm, setDeliveryForm] = useState<UniformDeliveryForm>(() => emptyDeliveryForm())
+  const [deliveryPin, setDeliveryPin] = useState('')
+  const [delivererSignatureUnlocked, setDelivererSignatureUnlocked] = useState(false)
+  const [recipientSignature, setRecipientSignature] = useState<string | null>(null)
+  const [deliverySubmitting, setDeliverySubmitting] = useState(false)
+  const [deliveryError, setDeliveryError] = useState('')
 
   const collaboratorGroups = Array.from(
     collaborators.reduce((groups, person) => {
@@ -222,7 +325,7 @@ export default function CollaboratorsPage() {
         <td><span className="collaborator-role">{roleLabel(person.role, roleOptions, person.role_label)}</span></td>
         <td><span className="collaborator-age">{formatAge(person)}</span></td>
         <td><div className="collaborator-status-stack"><span className={`collaborator-status ${person.is_active ? 'is-active' : 'is-terminated'}`}><i />{person.is_active ? 'Ativo' : 'Desligado'} · {formatElapsed(person)}</span>{person.is_on_leave && <span className="collaborator-leave-status">Afastado</span>}</div></td>
-        <td className="collaborator-actions"><button className="icon-button" type="button" title="Relatório com dados pessoais" aria-label={`Abrir relatório de ${person.name}`} onClick={() => void openReport(person.id)}><FileText size={16} /></button><button className="icon-button" type="button" title="Editar cadastro" aria-label={`Editar ${person.name}`} onClick={() => void openReport(person.id)}><Pencil size={16} /></button><button className="icon-button collaborator-delete-button" type="button" title="Excluir cadastro" aria-label={`Excluir ${person.name}`} disabled={deletingId === person.id} onClick={() => void deleteCollaborator(person.id, person.name)}><Trash2 size={16} /></button></td>
+        <td className="collaborator-actions"><button className="icon-button" type="button" title="Registrar entrega de fardamento" aria-label={`Registrar entrega para ${person.name}`} onClick={() => startDelivery(person)}><Plus size={16} /></button><button className="icon-button" type="button" title="Relatório com dados pessoais" aria-label={`Abrir relatório de ${person.name}`} onClick={() => void openReport(person.id)}><FileText size={16} /></button><button className="icon-button" type="button" title="Editar cadastro" aria-label={`Editar ${person.name}`} onClick={() => void openReport(person.id)}><Pencil size={16} /></button><button className="icon-button collaborator-delete-button" type="button" title="Excluir cadastro" aria-label={`Excluir ${person.name}`} disabled={deletingId === person.id} onClick={() => void deleteCollaborator(person.id, person.name)}><Trash2 size={16} /></button></td>
       </tr>
     )) : []),
   ])
@@ -259,11 +362,26 @@ export default function CollaboratorsPage() {
     }
   }, [search, roleFilter, statusFilter, refreshKey])
 
+  useEffect(() => {
+    apiRequest<UniformOptions>('/api/collaborators/uniform-options')
+      .then(setUniformOptions)
+      .catch((error: unknown) => setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os tamanhos de fardamento.' }))
+  }, [])
+
+  useEffect(() => {
+    if (reportPickerOpen) reportPickerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [reportPickerOpen])
+
+  useEffect(() => {
+    if (deliveryCollaborator) deliveryPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [deliveryCollaborator])
+
   function startCreate() {
     setEditingId(null)
     setForm(emptyForm())
     setPhotoFile(null)
     setPhotoPreview(null)
+    setUniformForm({ ...emptyDeliveryForm(), shirtShortSleeveQty: 0, shirtLongSleeveQty: 0, pantsQty: 0, bootQty: 0 })
     setNotice(null)
     setFormOpen(true)
   }
@@ -312,6 +430,14 @@ export default function CollaboratorsPage() {
     })
     setPhotoFile(null)
     setPhotoPreview(collaborators.find((person) => person.id === report.id)?.photo_url ?? null)
+    setUniformForm({
+      ...emptyDeliveryForm(),
+      shirtSizeId: report.uniform.shirtSizeId,
+      shirtShortSleeveQty: report.uniform.shirtShortSleeveQty,
+      shirtLongSleeveQty: report.uniform.shirtLongSleeveQty,
+      pantsSize: report.uniform.pantsSize,
+      bootSize: report.uniform.bootSize,
+    })
     setReportOpen(false)
     setReport(null)
     setFormOpen(true)
@@ -321,6 +447,371 @@ export default function CollaboratorsPage() {
     setReportOpen(false)
     setReport(null)
     setEditingId(null)
+  }
+
+  async function beginReportSelection() {
+    setSelectedReportType(null)
+    setSelectedReportCollaborator('')
+    try {
+      const result = await apiRequest<{ collaborators: Collaborator[] }>('/api/collaborators?search=&role=all&status=all&limit=5000')
+      setReportCollaborators(result.collaborators)
+      setReportPickerOpen(true)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar a lista de colaboradores.' })
+    }
+  }
+
+  function confirmReportSelection() {
+    if (!selectedReportType) return
+    setReportPickerOpen(false)
+    if (selectedReportType === 'report') {
+      if (!selectedReportCollaborator) {
+        setReportPickerOpen(true)
+        setNotice({ kind: 'error', text: 'Selecione o colaborador para emitir a ficha individual.' })
+        return
+      }
+      void openReport(selectedReportCollaborator)
+      return
+    }
+    void downloadPdf(selectedReportType)
+  }
+
+  function startDelivery(person: Collaborator) {
+    setDeliveryCollaborator(person)
+    setDeliveryForm(emptyDeliveryForm())
+    setDeliveryPin('')
+    setDelivererSignatureUnlocked(false)
+    setRecipientSignature(null)
+    setDeliveryError('')
+  }
+
+  function confirmDelivererPin() {
+    setDeliveryError('')
+    if (!/^\d{6,12}$/.test(deliveryPin)) {
+      setDeliveryError('Informe o PIN numérico de 6 a 12 dígitos cadastrado no seu perfil.')
+      return
+    }
+    setDelivererSignatureUnlocked(true)
+  }
+
+  function recipientCanvasPoint(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = recipientCanvasRef.current
+    if (!canvas) return null
+    const bounds = canvas.getBoundingClientRect()
+    return { x: (event.clientX - bounds.left) * (canvas.width / bounds.width), y: (event.clientY - bounds.top) * (canvas.height / bounds.height) }
+  }
+
+  function startRecipientSignature(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = recipientCanvasRef.current
+    const context = canvas?.getContext('2d')
+    const position = recipientCanvasPoint(event)
+    if (!canvas || !context || !position) return
+    canvas.setPointerCapture(event.pointerId)
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.beginPath()
+    context.moveTo(position.x, position.y)
+    recipientDrawing.current = true
+    recipientInk.current = false
+    setRecipientSignature(null)
+  }
+
+  function drawRecipientSignature(event: PointerEvent<HTMLCanvasElement>) {
+    if (!recipientDrawing.current) return
+    const context = recipientCanvasRef.current?.getContext('2d')
+    const position = recipientCanvasPoint(event)
+    if (!context || !position) return
+    context.lineWidth = 3
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.strokeStyle = '#183f70'
+    context.lineTo(position.x, position.y)
+    context.stroke()
+    recipientInk.current = true
+  }
+
+  function finishRecipientSignature() {
+    if (!recipientDrawing.current) return
+    recipientDrawing.current = false
+    if (!recipientInk.current) return
+    setRecipientSignature(recipientCanvasRef.current?.toDataURL('image/png').split(',')[1] ?? null)
+    recipientInk.current = false
+  }
+
+  async function saveUniformDelivery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!deliveryCollaborator || !delivererSignatureUnlocked || !recipientSignature) {
+      setDeliveryError('Desbloqueie a assinatura de quem entrega e colete a assinatura de quem recebe.')
+      return
+    }
+    setDeliverySubmitting(true)
+    setDeliveryError('')
+    try {
+      await apiRequest(`/api/collaborators/${deliveryCollaborator.id}/uniform-deliveries`, {
+        method: 'POST',
+        body: JSON.stringify({ ...deliveryForm, delivererPin: deliveryPin, recipientSignatureBase64: recipientSignature }),
+      })
+      setDeliveryCollaborator(null)
+      setNotice({ kind: 'success', text: `Entrega de fardamento registrada para ${deliveryCollaborator.name}.` })
+      if (report?.id === deliveryCollaborator.id) {
+        setReport(null)
+        setReportOpen(false)
+      }
+    } catch (error) {
+      setDeliveryError(error instanceof Error ? error.message : 'Não foi possível registrar a entrega.')
+    } finally {
+      setDeliverySubmitting(false)
+    }
+  }
+
+  async function addShirtSize() {
+    const name = newShirtSize.trim()
+    if (!name) return
+    setDeliveryError('')
+    try {
+      const result = await apiRequest<{ shirtSize: { id: number; name: string } }>('/api/collaborators/shirt-sizes', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      })
+      setUniformOptions((current) => ({ ...current, shirtSizes: [...current.shirtSizes, result.shirtSize].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) }))
+      setNewShirtSize('')
+      setNotice({ kind: 'success', text: `Tamanho de camisa "${result.shirtSize.name}" adicionado ao catálogo.` })
+    } catch (error) {
+      setDeliveryError(error instanceof Error ? error.message : 'Não foi possível adicionar o tamanho.')
+    }
+  }
+
+  async function downloadPdf(kind: 'list' | 'uniforms' | 'report') {
+    try {
+      const { jsPDF } = await import('jspdf')
+      const document = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      if (kind === 'report' && !report) throw new Error('Abra a ficha do colaborador antes de gerar o PDF.')
+      const people = kind === 'report' ? [] : (await apiRequest<{ collaborators: Collaborator[] }>('/api/collaborators?search=&role=all&status=all&limit=5000')).collaborators
+      if (kind !== 'report' && !people.length) {
+        setNotice({ kind: 'error', text: 'Não há colaboradores para incluir neste relatório.' })
+        return
+      }
+
+      const pageWidth = document.internal.pageSize.getWidth()
+      const pageHeight = document.internal.pageSize.getHeight()
+      const margin = 14
+      const contentWidth = pageWidth - margin * 2
+      const titles = {
+        list: 'COLABORADORES E FUNÇÕES',
+        uniforms: 'FARDAMENTOS E TAMANHOS',
+        report: 'FICHA INDIVIDUAL DO COLABORADOR',
+      }
+      let y = 0
+      const drawHeader = () => {
+        document.setFillColor(22, 62, 96)
+        document.rect(0, 0, pageWidth, 27, 'F')
+        document.setFillColor(79, 158, 211)
+        document.rect(0, 27, pageWidth, 1.4, 'F')
+        document.setTextColor(255, 255, 255)
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(13)
+        document.text('ATECH  /  RELATÓRIOS DA EQUIPE', margin, 11)
+        document.setFontSize(10)
+        document.text(titles[kind], margin, 20)
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(8)
+        document.setTextColor(218, 232, 244)
+        document.text(`Emitido em ${formatDate(localDateString(new Date()))}`, pageWidth - margin, 19, { align: 'right' })
+        document.setTextColor(42, 61, 78)
+        y = 36
+      }
+      const addPage = () => {
+        document.addPage()
+        drawHeader()
+      }
+      const ensureSpace = (height = 10) => {
+        if (y + height > pageHeight - 17) addPage()
+      }
+      const drawSection = (label: string) => {
+        ensureSpace(12)
+        document.setFillColor(232, 241, 249)
+        document.roundedRect(margin, y, contentWidth, 8, 1.5, 1.5, 'F')
+        document.setTextColor(38, 89, 129)
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(8)
+        document.text(label.toLocaleUpperCase('pt-BR'), margin + 3, y + 5.4)
+        document.setTextColor(42, 61, 78)
+        y += 12
+      }
+      const addPhoto = async (url: string | null, x: number, top: number, size = 12) => {
+        if (!url) return
+        const image = await imageDataUrl(url)
+        document.addImage(image.dataUrl, image.format, x, top, size, size)
+      }
+
+      drawHeader()
+      if (kind === 'report' && report) {
+        document.setFillColor(247, 250, 253)
+        document.setDrawColor(220, 230, 239)
+        document.roundedRect(margin, y, contentWidth, 31, 3, 3, 'FD')
+        await addPhoto(report.photoUrl, margin + 4, y + 4, 23)
+        document.setTextColor(35, 65, 91)
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(15)
+        document.text(report.name, margin + 33, y + 11)
+        document.setTextColor(71, 111, 145)
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(9)
+        document.text(roleLabel(report.role, roleOptions), margin + 33, y + 18)
+        document.setFontSize(8)
+        document.text(`Matrícula: ${report.registrationNumber || 'Não informada'}`, margin + 33, y + 24)
+        y += 37
+
+        drawSection('Dados pessoais e profissionais')
+        const facts = [
+          ['CPF', formatCpf(report.cpf) || 'Não informado'],
+          ['Telefone', report.phone || 'Não informado'],
+          ['Gênero', genderOptions.find((gender) => gender.value === report.gender)?.label ?? report.gender],
+          ['Nascimento', formatDate(report.birthDate)],
+          ['Admissão', formatDate(report.admissionDate)],
+          ['Desligamento', formatDate(report.terminationDate)],
+          ['Situação', report.terminationDate ? 'Desligado' : report.isOnLeave ? 'Afastado' : 'Ativo'],
+          ['Filhos', report.hasChildren ? report.children.map((child) => child.name).join(', ') : 'Não'],
+        ]
+        const cardGap = 4
+        const cardWidth = (contentWidth - cardGap * 2) / 3
+        for (let index = 0; index < facts.length; index += 3) {
+          ensureSpace(17)
+          facts.slice(index, index + 3).forEach(([label, value], column) => {
+            const x = margin + column * (cardWidth + cardGap)
+            document.setFillColor(250, 252, 254)
+            document.setDrawColor(229, 236, 243)
+            document.roundedRect(x, y, cardWidth, 14, 1.5, 1.5, 'FD')
+            document.setFont('helvetica', 'normal')
+            document.setFontSize(7)
+            document.setTextColor(112, 132, 151)
+            document.text(label.toUpperCase(), x + 3, y + 5)
+            document.setFont('helvetica', 'bold')
+            document.setFontSize(8)
+            document.setTextColor(47, 69, 89)
+            document.text(document.splitTextToSize(value, cardWidth - 6).slice(0, 1), x + 3, y + 10)
+          })
+          y += 17
+        }
+        drawSection('Fardamento atual')
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(9)
+        document.text(`Camisa ${report.uniform.shirtSize ?? '—'}  ·  Manga curta: ${report.uniform.shirtShortSleeveQty}  ·  Manga longa: ${report.uniform.shirtLongSleeveQty}  ·  Calça: ${report.uniform.pantsSize ?? '—'}  ·  Bota: ${report.uniform.bootSize ?? '—'}`, margin + 2, y)
+        y += 7
+
+        drawSection('Histórico de afastamentos')
+        if (!report.leaveHistory.length) {
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(8)
+          document.setTextColor(112, 132, 151)
+          document.text('Nenhum afastamento registrado.', margin + 2, y)
+          y += 7
+        }
+        for (const leave of report.leaveHistory) {
+          const text = `${formatDate(leave.startDate)} a ${formatDate(leave.expectedReturnDate)} · ${leave.current ? 'Afastamento atual' : `Encerrado em ${formatDate(leave.endedAt)}`} · ${leave.reason}`
+          const wrapped = document.splitTextToSize(text, contentWidth - 12) as string[]
+          ensureSpace(wrapped.length * 4 + 8)
+          document.setFillColor(250, 252, 254)
+          document.roundedRect(margin, y - 3, contentWidth, wrapped.length * 4 + 6, 1.5, 1.5, 'F')
+          document.setFillColor(68, 135, 183)
+          document.rect(margin, y - 3, 1.4, wrapped.length * 4 + 6, 'F')
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(8)
+          document.setTextColor(54, 73, 91)
+          wrapped.forEach((line, index) => document.text(line, margin + 4, y + index * 4))
+          y += wrapped.length * 4 + 7
+        }
+        drawSection('Histórico de entregas de fardamento')
+        if (!report.uniformDeliveries.length) {
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(8)
+          document.setTextColor(112, 132, 151)
+          document.text('Nenhuma entrega registrada.', margin + 2, y)
+          y += 7
+        }
+        for (const delivery of report.uniformDeliveries) {
+          const details = document.splitTextToSize(
+            `${formatDate(delivery.deliveryDate)} · Camisa ${delivery.shirtSize ?? '—'} (curta ${delivery.shirtShortSleeveQty}, longa ${delivery.shirtLongSleeveQty}) · Calça ${delivery.pantsSize ?? '—'} (${delivery.pantsQty}) · Bota ${delivery.bootSize ?? '—'} (${delivery.bootQty}) · Entregue por ${delivery.delivererName}`,
+            contentWidth - 8,
+          ) as string[]
+          ensureSpace(details.length * 4 + 30)
+          document.setFillColor(250, 252, 254)
+          document.setDrawColor(229, 236, 243)
+          document.roundedRect(margin, y - 3, contentWidth, details.length * 4 + 29, 2, 2, 'FD')
+          for (const line of details) { document.setFont('helvetica', 'normal'); document.setFontSize(8); document.text(line, margin + 4, y); y += 4 }
+          document.setFontSize(7)
+          document.setTextColor(102, 122, 140)
+          document.text('RESPONSÁVEL PELA ENTREGA', margin + 4, y + 3)
+          document.text('RECEBIDO POR', margin + 91, y + 3)
+          document.addImage(`data:image/png;base64,${delivery.delivererSignatureBase64}`, 'PNG', margin + 4, y + 4, 72, 18)
+          document.addImage(`data:image/png;base64,${delivery.recipientSignatureBase64}`, 'PNG', margin + 91, y + 4, 72, 18)
+          y += 27
+        }
+      } else {
+        const photoCache = new Map<string, { dataUrl: string; format: 'PNG' | 'JPEG' }>()
+        const photo = async (url: string | null, x: number, top: number) => {
+          if (!url) return
+          let image = photoCache.get(url)
+          if (!image) {
+            image = await imageDataUrl(url)
+            photoCache.set(url, image)
+          }
+          document.addImage(image.dataUrl, image.format, x, top, 13, 13)
+        }
+        const headers: [string, number][] = kind === 'list'
+          ? [['COLABORADOR', 33], ['FUNÇÃO', 145], ['MATRÍCULA', 208], ['SITUAÇÃO', 253]]
+          : [['COLABORADOR', 33], ['CAMISAS', 143], ['CALÇA', 215], ['BOTA', 250]]
+        document.setFillColor(238, 243, 248)
+        document.roundedRect(margin, y, contentWidth, 8, 1.5, 1.5, 'F')
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(7)
+        document.setTextColor(82, 103, 122)
+        for (const [label, x] of headers) document.text(label, x, y + 5.3)
+        y += 11
+        for (const person of people) {
+          ensureSpace(19)
+          if (Math.floor(y) % 2 === 0) {
+            document.setFillColor(250, 252, 254)
+            document.roundedRect(margin, y - 4, contentWidth, 17, 1.5, 1.5, 'F')
+          }
+          await photo(person.photo_url, margin + 2, y - 2)
+          const nameX = person.photo_url ? margin + 20 : margin + 3
+          document.setFont('helvetica', 'bold')
+          document.setFontSize(8)
+          document.setTextColor(40, 63, 84)
+          document.text(document.splitTextToSize(person.name, 76).slice(0, 1), nameX, y + 3)
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(7)
+          document.setTextColor(105, 125, 143)
+          document.text(person.nickname ? `“${person.nickname}”` : '—', nameX, y + 8)
+          if (kind === 'list') {
+            document.setTextColor(55, 79, 101)
+            document.text(document.splitTextToSize(roleLabel(person.role, roleOptions, person.role_label), 46).slice(0, 1), 145, y + 4)
+            document.text(person.registration_number || '—', 208, y + 4)
+            document.setTextColor(person.is_active ? 52 : 156, person.is_active ? 113 : 91, person.is_active ? 81 : 82)
+            document.text(person.is_active ? 'ATIVO' : 'DESLIGADO', 253, y + 4)
+          } else {
+            document.setTextColor(55, 79, 101)
+            document.text(`${person.shirt_size ?? '—'} · curta ${person.shirt_short_sleeve_qty} · longa ${person.shirt_long_sleeve_qty}`, 143, y + 4)
+            document.text(person.pants_size === null ? '—' : String(person.pants_size), 215, y + 4)
+            document.text(person.boot_size === null ? '—' : String(person.boot_size), 250, y + 4)
+          }
+          y += 18
+        }
+      }
+      for (let page = 1; page <= document.getNumberOfPages(); page += 1) {
+        document.setPage(page)
+        document.setDrawColor(222, 231, 238)
+        document.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12)
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(7)
+        document.setTextColor(120, 136, 150)
+        document.text('Documento interno · ATech', margin, pageHeight - 7)
+        document.text(`Página ${page} de ${document.getNumberOfPages()}`, pageWidth - margin, pageHeight - 7, { align: 'right' })
+      }
+      document.save(kind === 'list' ? 'colaboradores-funcoes.pdf' : kind === 'uniforms' ? 'fardamentos-colaboradores.pdf' : `ficha-${report?.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível gerar o PDF.' })
+    }
   }
 
   async function deleteCollaborator(id: string, name: string) {
@@ -417,6 +908,18 @@ export default function CollaboratorsPage() {
           body: JSON.stringify({ contentType: photoFile.type, contentBase64: dataUrl.split(',')[1] }),
         })
       }
+      if (collaboratorId) {
+        await apiRequest(`/api/collaborators/${collaboratorId}/uniform`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            shirtSizeId: uniformForm.shirtSizeId,
+            shirtShortSleeveQty: uniformForm.shirtShortSleeveQty,
+            shirtLongSleeveQty: uniformForm.shirtLongSleeveQty,
+            pantsSize: uniformForm.pantsSize,
+            bootSize: uniformForm.bootSize,
+          }),
+        })
+      }
       setFormOpen(false)
       setReportOpen(false)
       setReport(null)
@@ -441,7 +944,10 @@ export default function CollaboratorsPage() {
           <h1 id="collaborators-title">Colaboradores</h1>
           <p>Cadastro e situação da equipe própria e terceirizada.</p>
         </div>
-        <button className="primary-button collaborator-add" type="button" onClick={startCreate}><Plus size={17} /> Novo colaborador</button>
+        <div className="collaborator-heading-actions">
+          <button className="secondary-button" type="button" onClick={beginReportSelection}><FileText size={16} /> Emitir relatório</button>
+          <button className="primary-button collaborator-add" type="button" onClick={startCreate}><Plus size={17} /> Novo colaborador</button>
+        </div>
       </div>
 
       {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" aria-label="Fechar aviso" onClick={() => setNotice(null)}>×</button></div>}
@@ -463,6 +969,23 @@ export default function CollaboratorsPage() {
         </table>
       </div>
       <p className="collaborator-privacy-note"><ShieldAlert size={15} /> CPF, telefone e dados dos filhos não aparecem nesta lista. O relatório registra cada visualização.</p>
+      {reportPickerOpen && (
+        <div className="collaborator-report-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setReportPickerOpen(false) }}>
+          <section ref={reportPickerRef} className="collaborator-report-picker" role="dialog" aria-modal="true" aria-labelledby="report-picker-title">
+            <header>
+              <div><span className="eyebrow">CENTRAL DE RELATÓRIOS</span><h2 id="report-picker-title">Emitir relatório</h2><p>Escolha o documento que deseja gerar em PDF.</p></div>
+              <button className="icon-button" type="button" aria-label="Fechar" onClick={() => setReportPickerOpen(false)}><X size={18} /></button>
+            </header>
+            <div className="collaborator-report-picker-options">
+              <button className={`collaborator-report-picker-option ${selectedReportType === 'list' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'list'} onClick={() => setSelectedReportType('list')}><UsersRound size={20} /><span><strong>Lista de colaboradores e funções</strong><small>Equipe, funções, matrícula, situação e foto disponível.</small></span></button>
+              <button className={`collaborator-report-picker-option ${selectedReportType === 'uniforms' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'uniforms'} onClick={() => setSelectedReportType('uniforms')}><FileText size={20} /><span><strong>Fardamentos e tamanhos</strong><small>Tamanhos cadastrados e quantidade de camisas por tipo.</small></span></button>
+              <button className={`collaborator-report-picker-option ${selectedReportType === 'report' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'report'} onClick={() => setSelectedReportType('report')}><ShieldAlert size={20} /><span><strong>Ficha individual</strong><small>Dados pessoais, histórico e assinaturas; o acesso fica auditado.</small></span></button>
+            </div>
+            {selectedReportType === 'report' && <label className="form-field"><span>Colaborador *</span><select value={selectedReportCollaborator} onChange={(event) => setSelectedReportCollaborator(event.target.value)}><option value="">Selecione</option>{reportCollaborators.map((person) => <option key={person.id} value={person.id}>{person.name} · {roleLabel(person.role, roleOptions, person.role_label)}</option>)}</select></label>}
+            <footer className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setReportPickerOpen(false)}>Cancelar</button><button className="primary-button" type="button" disabled={!selectedReportType || (selectedReportType === 'report' && !selectedReportCollaborator)} onClick={confirmReportSelection}>Continuar</button></footer>
+          </section>
+        </div>
+      )}
       </>}
 
       {reportOpen && (
@@ -474,6 +997,7 @@ export default function CollaboratorsPage() {
             ) : (
               <>
                 <div className="report-data-warning"><ShieldAlert size={16} /><span>Contém dados pessoais. Compartilhe apenas quando necessário.</span></div>
+                {report.photoUrl && <img className="collaborator-report-photo" src={report.photoUrl} alt={`Foto de ${report.name}`} />}
                 <dl className="report-grid">
                   <div><dt>Nome</dt><dd>{report.name}</dd></div><div><dt>Apelido</dt><dd>{report.nickname || 'Não informado'}</dd></div>
                   <div><dt>Matrícula</dt><dd>{report.registrationNumber || 'Não informada'}</dd></div>
@@ -483,9 +1007,12 @@ export default function CollaboratorsPage() {
                   <div><dt>Data de desligamento</dt><dd>{formatDate(report.terminationDate)}</dd></div>
                   <div><dt>Situação</dt><dd>{report.terminationDate ? 'Desligado' : report.isOnLeave ? 'Atualmente afastado' : 'Ativo'}</dd></div>
                   {report.isOnLeave && <><div><dt>Data do afastamento</dt><dd>{formatDate(report.leaveStartDate)}</dd></div><div><dt>Retorno previsto</dt><dd>{formatDate(report.expectedReturnDate)}</dd></div><div className="report-children"><dt>Motivo do afastamento</dt><dd>{report.leaveReason}</dd></div></>}
+                  <div><dt>Fardamento atual</dt><dd>Camisa {report.uniform.shirtSize ?? '—'} · curta {report.uniform.shirtShortSleeveQty} · longa {report.uniform.shirtLongSleeveQty} · calça {report.uniform.pantsSize ?? '—'} · bota {report.uniform.bootSize ?? '—'}</dd></div>
                   <div className="report-children"><dt>Filhos</dt><dd>{report.hasChildren ? report.children.map((child, index) => <span className="report-child" key={`${child.name}-${index}`}>{child.name} · {formatDate(child.birthDate)} · {genderOptions.find((gender) => gender.value === child.gender)?.label ?? 'Não informado'}</span>) : 'Não'}</dd></div>
                 </dl>
-                <footer className="dialog-footer"><button className="secondary-button danger-button" type="button" disabled={deletingId === report.id} onClick={() => void deleteCollaborator(report.id, report.name)}><Trash2 size={15} />{deletingId === report.id ? 'Excluindo...' : 'Excluir colaborador'}</button><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir relatório</button><button className="secondary-button" type="button" onClick={editReport}><Pencil size={15} /> Editar cadastro</button><button className="primary-button" type="button" onClick={closeReport}>Concluir</button></footer>
+                <section className="collaborator-history-section"><h3>Histórico de afastamentos</h3>{report.leaveHistory.length ? report.leaveHistory.map((leave) => <p key={leave.id}>{formatDate(leave.startDate)} a {formatDate(leave.expectedReturnDate)} · {leave.current ? 'Atual' : `Encerrado em ${formatDate(leave.endedAt)}`} · {leave.reason}</p>) : <p>Nenhum afastamento registrado.</p>}</section>
+                <section className="collaborator-history-section"><h3>Entregas de fardamento</h3>{report.uniformDeliveries.length ? report.uniformDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={delivery.id}><p>{formatDate(delivery.deliveryDate)} · Camisa {delivery.shirtSize ?? '—'} (curta {delivery.shirtShortSleeveQty}, longa {delivery.shirtLongSleeveQty}) · Calça {delivery.pantsSize ?? '—'} ({delivery.pantsQty}) · Bota {delivery.bootSize ?? '—'} ({delivery.bootQty}) · Entregue por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
+                <footer className="dialog-footer"><button className="secondary-button danger-button" type="button" disabled={deletingId === report.id} onClick={() => void deleteCollaborator(report.id, report.name)}><Trash2 size={15} />{deletingId === report.id ? 'Excluindo...' : 'Excluir colaborador'}</button><button className="secondary-button" type="button" onClick={() => void downloadPdf('report')}>Ficha do colaborador (PDF)</button><button className="secondary-button" type="button" onClick={editReport}><Pencil size={15} /> Editar cadastro</button><button className="primary-button" type="button" onClick={closeReport}>Concluir</button></footer>
               </>
             )}
           </section>
@@ -514,6 +1041,7 @@ export default function CollaboratorsPage() {
                       setPhotoPreview(URL.createObjectURL(file))
                     }} />
                   </div>
+
                 </div>
                 <label className="form-field"><span>Matrícula</span><input maxLength={80} value={form.registrationNumber} onChange={(event) => updateField('registrationNumber', event.target.value)} /></label>
                 <label className="form-field"><span>Apelido</span><input maxLength={80} value={form.nickname} onChange={(event) => updateField('nickname', event.target.value)} /></label>
@@ -545,6 +1073,19 @@ export default function CollaboratorsPage() {
                 <label className="children-toggle"><input type="checkbox" checked={form.hasChildren} onChange={(event) => setForm((current) => ({ ...current, hasChildren: event.target.checked, children: event.target.checked ? current.children : [] }))} /><span>O colaborador tem filhos</span></label>
               </div>
 
+              <section className="collaborator-uniform-editor" aria-label="Fardamento atual">
+                <div className="children-editor-heading"><div><h3>Fardamento atual</h3><p>Quantidades de camisas somadas limitadas a 3.</p></div></div>
+                <div className="collaborator-uniform-fields">
+                  <label className="form-field"><span>Tamanho da camisa</span><select value={uniformForm.shirtSizeId ?? ''} onChange={(event) => setUniformForm((current) => ({ ...current, shirtSizeId: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.shirtSizes.map((size) => <option key={size.id} value={size.id}>{size.name}</option>)}</select></label>
+                  <label className="form-field"><span>Camisas manga curta</span><input type="number" min="0" max={3 - uniformForm.shirtLongSleeveQty} value={uniformForm.shirtShortSleeveQty} onChange={(event) => setUniformForm((current) => ({ ...current, shirtShortSleeveQty: Math.max(0, Math.min(Number(event.target.value) || 0, 3 - current.shirtLongSleeveQty)) }))} /></label>
+                  <label className="form-field"><span>Camisas manga longa</span><input type="number" min="0" max={3 - uniformForm.shirtShortSleeveQty} value={uniformForm.shirtLongSleeveQty} onChange={(event) => setUniformForm((current) => ({ ...current, shirtLongSleeveQty: Math.max(0, Math.min(Number(event.target.value) || 0, 3 - current.shirtShortSleeveQty)) }))} /></label>
+                  <label className="form-field"><span>Calça</span><select value={uniformForm.pantsSize ?? ''} onChange={(event) => setUniformForm((current) => ({ ...current, pantsSize: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.pantsSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+                  <label className="form-field"><span>Bota</span><select value={uniformForm.bootSize ?? ''} onChange={(event) => setUniformForm((current) => ({ ...current, bootSize: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.bootSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+                </div>
+                <div className="collaborator-size-create"><label className="form-field"><span>Novo tamanho de camisa</span><input maxLength={24} value={newShirtSize} onChange={(event) => setNewShirtSize(event.target.value)} placeholder="Ex.: XGG" /></label><button className="secondary-button" type="button" onClick={() => void addShirtSize()} disabled={!newShirtSize.trim()}><Plus size={15} /> Adicionar ao catálogo global</button></div>
+                {deliveryError && <p className="form-error" role="alert">{deliveryError}</p>}
+              </section>
+
               {form.hasChildren && <section className="children-editor" aria-label="Cadastro de filhos"><div className="children-editor-heading"><div><h3>Filhos</h3><p>Nome, nascimento e gênero</p></div><button className="secondary-button add-child-button" type="button" onClick={() => setForm((current) => ({ ...current, children: [...current.children, { name: '', birthDate: '', gender: 'nao_informar' }] }))}><Plus size={15} /> Adicionar filho</button></div>
                 {form.children.map((child, index) => <div className="child-form-row" key={index}><label className="form-field"><span>Nome *</span><input value={child.name} onChange={(event) => updateChild(index, 'name', event.target.value)} required /></label><label className="form-field"><span>Nascimento *</span><input type="date" value={child.birthDate} onChange={(event) => updateChild(index, 'birthDate', event.target.value)} required /></label><label className="form-field"><span>Gênero *</span><select value={child.gender} onChange={(event) => updateChild(index, 'gender', event.target.value as CollaboratorGender)}>{genderOptions.map((gender) => <option key={gender.value} value={gender.value}>{gender.label}</option>)}</select></label><button className="icon-button child-remove" type="button" title="Remover filho" aria-label={`Remover filho ${index + 1}`} onClick={() => setForm((current) => ({ ...current, children: current.children.filter((_, childIndex) => childIndex !== index) }))}><Trash2 size={16} /></button></div>)}
                 {form.children.length === 0 && <p className="children-empty">Adicione ao menos um filho ou desmarque a opção.</p>}
@@ -556,6 +1097,32 @@ export default function CollaboratorsPage() {
             </form>
           </section>
       )}
+    {deliveryCollaborator && (
+      <section ref={deliveryPanelRef} className="full-page-data collaborator-delivery-dialog" role="region" aria-labelledby="delivery-title">
+        <header className="dialog-header"><div><span className="eyebrow">CONTROLE DE FARDAMENTO</span><h2 id="delivery-title">Registrar entrega · {deliveryCollaborator.name}</h2></div><button className="secondary-button page-back-button" type="button" onClick={() => setDeliveryCollaborator(null)}><ArrowLeft size={16} /> Voltar</button></header>
+        <form onSubmit={(event) => void saveUniformDelivery(event)}>
+          <div className="collaborator-uniform-fields">
+            <label className="form-field"><span>Data de entrega *</span><input type="date" value={deliveryForm.deliveryDate} onChange={(event) => setDeliveryForm((current) => ({ ...current, deliveryDate: event.target.value }))} required /></label>
+            <label className="form-field"><span>Tamanho da camisa</span><select value={deliveryForm.shirtSizeId ?? ''} onChange={(event) => setDeliveryForm((current) => ({ ...current, shirtSizeId: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.shirtSizes.map((size) => <option key={size.id} value={size.id}>{size.name}</option>)}</select></label>
+            <label className="form-field"><span>Camisas manga curta</span><input type="number" min="0" max="99" value={deliveryForm.shirtShortSleeveQty} onChange={(event) => setDeliveryForm((current) => ({ ...current, shirtShortSleeveQty: Number(event.target.value) }))} /></label>
+            <label className="form-field"><span>Camisas manga longa</span><input type="number" min="0" max="99" value={deliveryForm.shirtLongSleeveQty} onChange={(event) => setDeliveryForm((current) => ({ ...current, shirtLongSleeveQty: Number(event.target.value) }))} /></label>
+            <label className="form-field"><span>Tamanho da calça</span><select value={deliveryForm.pantsSize ?? ''} onChange={(event) => setDeliveryForm((current) => ({ ...current, pantsSize: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.pantsSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+            <label className="form-field"><span>Quantidade de calças</span><input type="number" min="0" max="99" value={deliveryForm.pantsQty} onChange={(event) => setDeliveryForm((current) => ({ ...current, pantsQty: Number(event.target.value) }))} /></label>
+            <label className="form-field"><span>Tamanho da bota</span><select value={deliveryForm.bootSize ?? ''} onChange={(event) => setDeliveryForm((current) => ({ ...current, bootSize: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.bootSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+            <label className="form-field"><span>Quantidade de botas</span><input type="number" min="0" max="99" value={deliveryForm.bootQty} onChange={(event) => setDeliveryForm((current) => ({ ...current, bootQty: Number(event.target.value) }))} /></label>
+          </div>
+          <section className="collaborator-signature-section">
+            <h3>Assinatura de quem entrega</h3>
+            {delivererSignatureUnlocked ? <div className="signature-confirmation"><ShieldAlert size={16} /> PIN informado; o servidor verificará o PIN e recuperará a assinatura protegida ao registrar.</div> : <div className="collaborator-pin-form"><label className="form-field"><span>PIN de assinatura *</span><input type="password" inputMode="numeric" autoComplete="current-password" value={deliveryPin} onChange={(event) => { setDeliveryPin(event.target.value); setDelivererSignatureUnlocked(false) }} required /></label><button className="secondary-button" type="button" onClick={confirmDelivererPin}>Confirmar PIN</button></div>}
+            <h3>Assinatura de quem recebe *</h3>
+            <canvas ref={recipientCanvasRef} className="collaborator-signature-canvas" width={720} height={180} aria-label="Desenhe a assinatura de quem recebe" onPointerDown={startRecipientSignature} onPointerMove={drawRecipientSignature} onPointerUp={finishRecipientSignature} onPointerCancel={finishRecipientSignature} />
+            <button className="secondary-button" type="button" onClick={() => { recipientCanvasRef.current?.getContext('2d')?.clearRect(0, 0, 720, 180); recipientInk.current = false; setRecipientSignature(null) }}>Limpar assinatura</button>
+          </section>
+          {deliveryError && <p className="form-error" role="alert">{deliveryError}</p>}
+          <footer className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDeliveryCollaborator(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={deliverySubmitting}>{deliverySubmitting ? 'Salvando entrega...' : 'Registrar entrega'}</button></footer>
+        </form>
+      </section>
+    )}
     </section>
   )
 }
@@ -565,4 +1132,17 @@ function localDateString(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function emptyDeliveryForm(): UniformDeliveryForm {
+  return {
+    deliveryDate: localDateString(new Date()),
+    shirtSizeId: null,
+    shirtShortSleeveQty: 0,
+    shirtLongSleeveQty: 0,
+    pantsSize: null,
+    pantsQty: 0,
+    bootSize: null,
+    bootQty: 0,
+  }
 }
