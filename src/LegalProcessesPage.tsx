@@ -13,6 +13,7 @@ import {
   List,
   MessageCircle,
   AtSign,
+  CalendarDays,
   Pencil,
   Plus,
   Save,
@@ -24,6 +25,8 @@ import {
 import Papa from 'papaparse'
 import { apiRequest } from './api/client'
 import SearchableMultiSelect from './SearchableMultiSelect'
+import TicketProgrammingForm from './tickets/TicketProgrammingForm'
+import type { LegalProcessOption } from './tickets/types'
 import './LegalProcessesPage.css'
 
 interface LegalStatus { id: number; name: string; position: number; color: string }
@@ -239,7 +242,15 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [editingStatusId, setEditingStatusId] = useState<number | null>(null)
   const [editingStatusName, setEditingStatusName] = useState('')
   const [newProcess, setNewProcess] = useState(false)
+  const [showProgrammingForm, setShowProgrammingForm] = useState(false)
   const [selected, setSelected] = useState<ProcessDetail | null>(null)
+  const scheduleProcess = useMemo<LegalProcessOption | undefined>(() => selected ? ({
+    id: String(selected.id),
+    title: selected.title,
+    enterprise_name: selected.enterpriseName,
+    claimant: selected.claimant,
+    child_process_numbers: selected.children.map((child) => child.processNumber),
+  }) : undefined, [selected])
   const processModalOpen = newProcess || Boolean(selected)
   const [draft, setDraft] = useState<ProcessDraft | null>(null)
   const [autoSaveState, setAutoSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
@@ -578,7 +589,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     localStorage.setItem('legal-process-card-face', JSON.stringify(updated))
   }
 
-  async function openDetail(item: LegalProcess) {
+  async function openDetail(item: LegalProcess, openScheduler = false) {
     setNotice(null)
     const token = ++editTokenRef.current
     try {
@@ -586,6 +597,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       if (token !== editTokenRef.current) return
       processIdRef.current = result.process.id
       setSelected(result.process)
+      setShowProgrammingForm(openScheduler)
       const initialDraft = toDraft(result.process)
       savedDraftRef.current = JSON.stringify(initialDraft)
       setDraft(initialDraft)
@@ -602,6 +614,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     editTokenRef.current += 1
     processIdRef.current = null
     setSelected(null)
+    setShowProgrammingForm(false)
     const initialDraft = blankDraft(statusId)
     savedDraftRef.current = JSON.stringify(initialDraft)
     setDraft(initialDraft)
@@ -623,6 +636,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     editTokenRef.current += 1
     setNewProcess(false)
     setSelected(null)
+    setShowProgrammingForm(false)
     processIdRef.current = null
     setDraft(null)
     setEditingLink(null)
@@ -884,7 +898,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   }
 
   async function deleteProcess() {
-    if (!selected || !window.confirm('Excluir este processo e todos os pagamentos e comprovantes vinculados?')) return
+    if (!selected || !window.confirm('Excluir este processo e todos os pagamentos, comprovantes e programações vinculados?')) return
     try {
       await apiRequest(`/api/legal-processes/${selected.id}`, { method: 'DELETE' })
       closeEditor()
@@ -1017,7 +1031,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
           void openDetail(process)
         }}
       >
-        <div className="legal-process-card-top"><span>{process.is_demo ? 'EXEMPLO' : `#${process.id}`}</span><GripVertical size={14} /></div>
+        <div className="legal-process-card-top"><span>{process.is_demo ? 'EXEMPLO' : `#${process.id}`}</span><span className="legal-process-card-tools">{!process.is_demo && <button type="button" aria-label={`Agendar atividade para ${process.title}`} title="Agendar atividade para este processo" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void openDetail(process, true) }}><CalendarDays size={13} /></button>}<GripVertical size={14} /></span></div>
         <strong className="legal-process-card-title">{process.title}</strong>
         {face.map((field) => <small className="legal-process-card-meta" key={field}>{faceValue(process, field)}</small>)}
         <footer><span className="legal-process-assignee-icons">{process.assignees.slice(0, 3).map((person) => <i title={assigneeName(person)} key={person.id}>{assigneeName(person).slice(0, 1).toUpperCase()}</i>)}</span><span>{process.payment_count} pagamento(s)</span></footer>
@@ -1169,6 +1183,22 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
             </section>
             <div className="legal-form-actions legal-field-full"><button type="button" className="secondary-button" onClick={() => void closeEditor()}>{autoSaveState === 'saving' || autoSaveState === 'pending' ? 'Salvar e fechar' : 'Fechar'}</button>{selected && <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProcess()}><Trash2 size={14} /> Excluir processo</button>}</div>
           </form>
+
+          {selected && scheduleProcess && <section className="legal-schedule">
+            <header className="legal-payments-heading">
+              <div><h3>Programação</h3><p>Agende uma atividade vinculada a este processo jurídico.</p></div>
+              {!showProgrammingForm && <button type="button" className="secondary-button" onClick={() => setShowProgrammingForm(true)}><CalendarDays size={14} /> Agendar atividade</button>}
+            </header>
+            {showProgrammingForm && <TicketProgrammingForm
+              tickets={[]}
+              initialLegalProcessId={scheduleProcess.id}
+              initialLegalProcess={scheduleProcess}
+              programmingType="general"
+              allowMixedCollaborators
+              onCancel={() => setShowProgrammingForm(false)}
+              onSaved={() => { setShowProgrammingForm(false); void load() }}
+            />}
+          </section>}
 
           {selected && <section className="legal-comments">
             <header className="legal-payments-heading"><div><h3>Comentários</h3><p>Use @ para marcar pessoas; responda e edite comentários da conversa.</p></div><MessageCircle size={17} /></header>

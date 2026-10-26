@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requirePageAccess } from '../auth.js'
+import { requireAuth } from '../auth.js'
 import { pool } from '../db.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 
@@ -10,16 +10,13 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const datetimeSchema = z.string().datetime({ offset: true })
 const programmingTypeSchema = z.enum(['general', 'foreman']).default('general')
 const programmingDetailsSchema = z.object({
-  enterprise: z.string().trim().min(1).max(240),
+  enterprise: z.string().trim().max(240),
   block: z.string().trim().max(120),
   unit: z.string().trim().max(120),
   commonAreaLocation: z.string().trim().max(240),
   materials: z.array(z.string().trim().min(1).max(120)).max(50),
   equipment: z.array(z.string().trim().min(1).max(120)).max(50),
   tools: z.array(z.string().trim().min(1).max(120)).max(50),
-}).refine((entry) => Boolean(entry.commonAreaLocation || (entry.block && entry.unit)), {
-  path: ['commonAreaLocation'],
-  message: 'Informe bloco e unidade ou o local da área comum.',
 })
 
 function isValidDate(value: string) {
@@ -57,8 +54,9 @@ const occurrenceSchema = z.object({
 
 const programmingSchema = z.object({
   programmingType: programmingTypeSchema,
-  activityType: z.enum(['ticket', 'standalone']).default('ticket'),
+  activityType: z.enum(['ticket', 'standalone', 'legal_process']).default('ticket'),
   ticketId: z.coerce.number().int().positive().nullable().optional(),
+  legalProcessId: z.coerce.number().int().positive().nullable().optional(),
   collaboratorIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
   startDate: dateSchema,
   endDate: dateSchema,
@@ -66,14 +64,18 @@ const programmingSchema = z.object({
   activityDescription: z.string().trim().min(1).max(3000),
   standaloneLocation: z.string().trim().max(500).default(''),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
-  if (entry.activityType === 'ticket' && !entry.ticketId) {
-    context.addIssue({ code: 'custom', path: ['ticketId'], message: 'Selecione um chamado ou escolha atividade avulsa.' })
+  if (entry.activityType === 'ticket' &&
+    (!entry.ticketId || entry.legalProcessId || !entry.enterprise ||
+      !(entry.commonAreaLocation || (entry.block && entry.unit)))) {
+    context.addIssue({ code: 'custom', path: ['ticketId'], message: 'Selecione um chamado e informe o empreendimento e a unidade ou área comum.' })
   }
-  if (entry.activityType === 'standalone' && entry.ticketId) {
-    context.addIssue({ code: 'custom', path: ['ticketId'], message: 'Atividades avulsas não podem estar vinculadas a um chamado.' })
-  }
-  if (entry.activityType === 'standalone' && !entry.standaloneLocation) {
+  if (entry.activityType === 'standalone' &&
+    (entry.ticketId || entry.legalProcessId || !entry.standaloneLocation)) {
     context.addIssue({ code: 'custom', path: ['standaloneLocation'], message: 'Descreva o local da atividade avulsa.' })
+  }
+  if (entry.activityType === 'legal_process' &&
+    (!entry.legalProcessId || entry.ticketId || entry.standaloneLocation)) {
+    context.addIssue({ code: 'custom', path: ['legalProcessId'], message: 'Selecione um processo jurídico válido.' })
   }
   if (!isRangeWithinLimit(entry.startDate, entry.endDate)) {
     context.addIssue({ code: 'custom', path: ['endDate'], message: 'O intervalo deve ter no máximo 90 dias corridos.' })
@@ -87,23 +89,91 @@ const programmingSchema = z.object({
 })
 const singleProgrammingSchema = z.object({
   programmingType: programmingTypeSchema,
-  activityType: z.enum(['ticket', 'standalone']).default('ticket'),
+  activityType: z.enum(['ticket', 'standalone', 'legal_process']).default('ticket'),
   ticketId: z.coerce.number().int().positive().nullable().optional(),
+  legalProcessId: z.coerce.number().int().positive().nullable().optional(),
   collaboratorId: z.coerce.number().int().positive(),
   date: dateSchema,
   startsAt: datetimeSchema,
   endsAt: datetimeSchema,
   activityDescription: z.string().trim().min(1).max(3000),
   standaloneLocation: z.string().trim().max(500).default(''),
-}).merge(programmingDetailsSchema).refine((entry) => isValidDate(entry.date) &&
-  datesInRange(entry.date, entry.date).length === 1 &&
-  new Date(entry.endsAt) > new Date(entry.startsAt) &&
-  (entry.activityType === 'ticket' ? Boolean(entry.ticketId) && !entry.standaloneLocation : !entry.ticketId && Boolean(entry.standaloneLocation)), {
-  path: ['endsAt'],
-  message: 'Informe uma associação e local válidos, um dia útil e um horário final posterior ao inicial.',
+}).merge(programmingDetailsSchema).superRefine((entry, context) => {
+  if (!isValidDate(entry.date) || datesInRange(entry.date, entry.date).length !== 1 || new Date(entry.endsAt) <= new Date(entry.startsAt)) {
+    context.addIssue({ code: 'custom', path: ['endsAt'], message: 'Informe um dia útil e um horário final posterior ao inicial.' })
+  }
+  if (entry.activityType === 'ticket' &&
+    (!entry.ticketId || entry.legalProcessId || !entry.enterprise ||
+      !(entry.commonAreaLocation || (entry.block && entry.unit)))) {
+    context.addIssue({ code: 'custom', path: ['ticketId'], message: 'Selecione um chamado e informe o empreendimento e a unidade ou área comum.' })
+  }
+  if (entry.activityType === 'standalone' &&
+    (entry.ticketId || entry.legalProcessId || !entry.standaloneLocation)) {
+    context.addIssue({ code: 'custom', path: ['standaloneLocation'], message: 'Descreva o local da atividade avulsa.' })
+  }
+  if (entry.activityType === 'legal_process' &&
+    (!entry.legalProcessId || entry.ticketId || entry.standaloneLocation)) {
+    context.addIssue({ code: 'custom', path: ['legalProcessId'], message: 'Selecione um processo jurídico válido.' })
+  }
 })
 
-router.use(requireAuth, requirePageAccess('schedule'))
+router.use(requireAuth)
+router.use((req, res, next) => {
+  const user = req.session.user
+  if (user?.role === 'admin') {
+    next()
+    return
+  }
+  pool.query<{ page_key: string }>(
+    `SELECT page_key FROM user_page_access
+     WHERE user_id = $1 AND page_key IN ('schedule', 'legal-processes')`,
+    [user?.id],
+  ).then(async (result) => {
+    const hasScheduleAccess = result.rows.some((row) => row.page_key === 'schedule')
+    const hasLegalAccess = result.rows.some((row) => row.page_key === 'legal-processes')
+    if (hasScheduleAccess) {
+      next()
+      return
+    }
+    const legalReadPath = req.method === 'GET' &&
+      ['/legal-processes', '/collaborators', '/availability'].includes(req.path)
+    const legalCreate = req.method === 'POST' && req.path === '/' && req.body?.activityType === 'legal_process'
+    if (hasLegalAccess && (legalReadPath || legalCreate)) {
+      next()
+      return
+    }
+    if (hasLegalAccess && req.method === 'PUT' && req.body?.activityType === 'legal_process') {
+      const programmingId = z.coerce.number().int().positive().safeParse(req.path.split('/')[1])
+      if (programmingId.success) {
+        const existing = await pool.query(
+          'SELECT 1 FROM ticket_programming WHERE id = $1 AND legal_process_id IS NOT NULL',
+          [programmingId.data],
+        )
+        if (existing.rowCount) {
+          next()
+          return
+        }
+      }
+    }
+    res.status(403).json({ error: 'Você não tem acesso à programação solicitada.' })
+  }).catch(next)
+})
+
+router.get('/collaborators', async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.id::text AS id, c.name, c.nickname, c.role, r.label AS role_label,
+              TRUE AS is_active, c.is_on_leave
+       FROM collaborators c
+       JOIN collaborator_roles r ON r.role_key = c.role
+       WHERE c.termination_date IS NULL OR c.termination_date > CURRENT_DATE
+       ORDER BY lower(c.name), c.id`,
+    )
+    res.json({ collaborators: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
 
 router.get('/role-visibility', async (_req, res, next) => {
   try {
@@ -158,6 +228,39 @@ router.put('/role-visibility', async (req, res, next) => {
   }
 })
 
+router.get('/legal-processes', async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.id::text AS id, p.title,
+              COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS enterprise_name,
+              p.claimant,
+              COALESCE((
+                SELECT array_agg(c.process_number ORDER BY c.position, c.id)
+                FROM legal_process_children c
+                WHERE c.process_id = p.id AND btrim(c.process_number) <> ''
+              ), ARRAY[]::text[]) AS child_process_numbers
+       FROM legal_processes p
+       LEFT JOIN LATERAL (
+         SELECT min(source.enterprise_name) AS enterprise_name
+         FROM (
+           SELECT btrim(t.enterprise) AS enterprise_name
+           FROM tickets t
+           WHERE lower(btrim(t.enterprise)) = p.enterprise_key
+           UNION ALL
+           SELECT i.enterprise_name
+           FROM enterprise_information i
+           WHERE i.enterprise_key = p.enterprise_key
+         ) source
+       ) enterprise ON TRUE
+       WHERE NOT p.is_demo
+       ORDER BY lower(p.title), p.id`,
+    )
+    res.json({ processes: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
 async function getDailyProgramming(date: string, programmingType: 'general' | 'foreman') {
   const [collaborators, appointments] = await Promise.all([
     pool.query<{
@@ -182,12 +285,15 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
     pool.query<{
       id: string
       ticket_id: string | null
+      legal_process_id: string | null
       collaborator_id: string
       activity_description: string
       starts_at: Date
       ends_at: Date
       protocol: string | null
       subject: string | null
+      legal_process_number: string | null
+      legal_process_claimant: string | null
       standalone_location: string
       enterprise: string
       block: string
@@ -203,8 +309,10 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       collaborator_role_label: string
       collaborator_photo_url: string | null
     }>(
-      `SELECT p.id, p.ticket_id, p.collaborator_id, p.activity_description,
-              p.starts_at, p.ends_at, t.protocol, t.subject, p.standalone_location, p.enterprise,
+      `SELECT p.id, p.ticket_id, p.legal_process_id, p.collaborator_id, p.activity_description,
+              p.starts_at, p.ends_at, t.protocol, t.subject,
+              lp.title AS legal_process_number, lp.claimant AS legal_process_claimant,
+              p.standalone_location, p.enterprise,
               p.block, p.unit, p.common_area_location,
               p.materials, p.equipment, p.tools, p.completed, p.programming_type,
               c.name AS collaborator_name,
@@ -212,6 +320,7 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
               CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS collaborator_photo_url
        FROM ticket_programming p
        LEFT JOIN tickets t ON t.source_id = p.ticket_id
+       LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
        JOIN collaborators c ON c.id = p.collaborator_id
        JOIN collaborator_roles r ON r.role_key = c.role
        WHERE p.starts_at < ($1::date + interval '1 day')
@@ -262,7 +371,7 @@ router.get('/availability', async (req, res, next) => {
   }
   try {
     const result = await pool.query(
-      `SELECT id, ticket_id, starts_at, ends_at
+        `SELECT id, ticket_id, legal_process_id, starts_at, ends_at
        FROM ticket_programming
        WHERE collaborator_id = $1
          AND starts_at < ($3::date + interval '1 day')
@@ -331,11 +440,14 @@ async function validateAvailability(
   const conflict = await client.query<{
     id: string
     protocol: string | null
+    legal_process_number: string | null
     starts_at: Date
     ends_at: Date
   }>(
-    `SELECT p.id, t.protocol, p.starts_at, p.ends_at
-     FROM ticket_programming p LEFT JOIN tickets t ON t.source_id = p.ticket_id
+    `SELECT p.id, t.protocol, lp.title AS legal_process_number, p.starts_at, p.ends_at
+     FROM ticket_programming p
+     LEFT JOIN tickets t ON t.source_id = p.ticket_id
+     LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
      WHERE p.collaborator_id = $1 AND p.starts_at < $3 AND p.ends_at > $2
        AND ($4::bigint IS NULL OR p.id <> $4)
      LIMIT 1`,
@@ -344,8 +456,22 @@ async function validateAvailability(
   if (conflict.rows[0]) {
     const starts = conflict.rows[0].starts_at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     const ends = conflict.rows[0].ends_at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    throw new Error(`Conflito com ${conflict.rows[0].protocol ? `o chamado ${conflict.rows[0].protocol}` : 'uma atividade avulsa'}, programado das ${starts} às ${ends}.`)
+    const activity = conflict.rows[0].protocol
+      ? `o chamado ${conflict.rows[0].protocol}`
+      : conflict.rows[0].legal_process_number
+        ? `o processo jurídico ${conflict.rows[0].legal_process_number}`
+        : 'uma atividade avulsa'
+    throw new Error(`Conflito com ${activity}, programado das ${starts} às ${ends}.`)
   }
+}
+
+async function validateLegalProcess(client: import('pg').PoolClient, legalProcessId: number | null | undefined) {
+  if (legalProcessId === null || legalProcessId === undefined) return
+  const process = await client.query(
+    'SELECT 1 FROM legal_processes WHERE id = $1 AND is_demo = FALSE',
+    [legalProcessId],
+  )
+  if (!process.rowCount) throw new Error('Processo jurídico não encontrado.')
 }
 
 router.post('/', async (req, res, next) => {
@@ -363,6 +489,7 @@ router.post('/', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    await validateLegalProcess(client, data.legalProcessId)
     const collaboratorNames = await client.query<{ id: string; name: string; role: string }>(
       'SELECT id, name, role FROM collaborators WHERE id = ANY($1::bigint[])',
       [collaboratorIds],
@@ -370,7 +497,7 @@ router.post('/', async (req, res, next) => {
     const collaboratorNameById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.name]))
     const collaboratorRoleById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.role]))
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = data.activityType === 'ticket' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+      const collaboratorProgrammingType = data.activityType !== 'standalone' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
         ? 'foreman'
         : data.programmingType
       for (const occurrence of data.occurrences) {
@@ -387,18 +514,18 @@ router.post('/', async (req, res, next) => {
 
     const ids: string[] = []
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = data.activityType === 'ticket' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+      const collaboratorProgrammingType = data.activityType !== 'standalone' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
         ? 'foreman'
         : data.programmingType
       for (const occurrence of data.occurrences) {
         const result = await client.query<{ id: string }>(
           `INSERT INTO ticket_programming
-              (ticket_id, collaborator_id, activity_description, starts_at, ends_at,
+              (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
                enterprise, block, unit, common_area_location, materials, equipment, tools,
                standalone_location, programming_type, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
             [
-              data.ticketId ?? null, collaboratorId, data.activityDescription, occurrence.startsAt, occurrence.endsAt,
+              data.ticketId ?? null, data.legalProcessId ?? null, collaboratorId, data.activityDescription, occurrence.startsAt, occurrence.endsAt,
               data.enterprise, data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools,
               data.standaloneLocation,
               collaboratorProgrammingType,
@@ -450,6 +577,7 @@ router.put('/:id', async (req, res, next) => {
     await client.query('BEGIN')
     const previous = await client.query<{
       ticket_id: string | null
+      legal_process_id: string | null
       collaborator_id: string
       activity_description: string
       enterprise: string
@@ -464,14 +592,17 @@ router.put('/:id', async (req, res, next) => {
       ends_at: Date
       programming_type: 'general' | 'foreman'
       protocol: string | null
+      legal_process_number: string | null
       collaborator_name: string
     }>(
-      `SELECT p.ticket_id, p.collaborator_id, p.activity_description, p.enterprise, p.block, p.unit,
+      `SELECT p.ticket_id, p.legal_process_id, p.collaborator_id, p.activity_description, p.enterprise, p.block, p.unit,
               p.common_area_location, p.materials, p.equipment, p.tools, p.starts_at, p.ends_at,
               p.programming_type,
-              p.standalone_location, t.protocol, c.name AS collaborator_name
+              p.standalone_location, t.protocol, lp.title AS legal_process_number,
+              c.name AS collaborator_name
        FROM ticket_programming p
        LEFT JOIN tickets t ON t.source_id = p.ticket_id
+       LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
        JOIN collaborators c ON c.id = p.collaborator_id
        WHERE p.id = $1 FOR UPDATE OF p`,
       [programmingId.data],
@@ -481,6 +612,7 @@ router.put('/:id', async (req, res, next) => {
       res.status(404).json({ error: 'Programação não encontrada.' })
       return
     }
+    await validateLegalProcess(client, data.legalProcessId)
     await validateAvailability(
       client,
       data.collaboratorId,
@@ -490,14 +622,14 @@ router.put('/:id', async (req, res, next) => {
       new Date(data.endsAt),
       programmingId.data,
     )
-    const result = await client.query<{ ticket_id: string }>(
-      `UPDATE ticket_programming SET ticket_id = $1, collaborator_id = $2,
-         activity_description = $3, starts_at = $4, ends_at = $5, enterprise = $6, block = $7,
-         unit = $8, common_area_location = $9, materials = $10, equipment = $11, tools = $12,
-         standalone_location = $13, programming_type = $14, updated_at = now()
-       WHERE id = $15 RETURNING ticket_id`,
+    const result = await client.query<{ ticket_id: string | null; legal_process_id: string | null }>(
+      `UPDATE ticket_programming SET ticket_id = $1, legal_process_id = $2, collaborator_id = $3,
+         activity_description = $4, starts_at = $5, ends_at = $6, enterprise = $7, block = $8,
+         unit = $9, common_area_location = $10, materials = $11, equipment = $12, tools = $13,
+         standalone_location = $14, programming_type = $15, updated_at = now()
+       WHERE id = $16 RETURNING ticket_id, legal_process_id`,
       [
-        data.ticketId ?? null, data.collaboratorId, data.activityDescription, data.startsAt, data.endsAt, data.enterprise,
+        data.ticketId ?? null, data.legalProcessId ?? null, data.collaboratorId, data.activityDescription, data.startsAt, data.endsAt, data.enterprise,
         data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools, data.standaloneLocation,
         data.programmingType, programmingId.data,
       ],

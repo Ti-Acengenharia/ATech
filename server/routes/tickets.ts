@@ -637,8 +637,9 @@ router.get('/dashboard', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   const search = z.string().trim().max(100).catch('').parse(req.query.search)
+  const idSearch = req.query.searchMode === 'id'
   const phoneDigits = search.replace(/\D/g, '')
-  const phoneLookup = phoneDigits.length >= 3 && /^[\d\s()+.-]+$/.test(search)
+  const phoneLookup = !idSearch && phoneDigits.length >= 3 && /^[\d\s()+.-]+$/.test(search)
   if (phoneLookup && !isPersonalDataEncryptionConfigured()) {
     res.status(503).json({ error: 'A busca por telefone exige a chave de criptografia de dados pessoais no servidor.' })
     return
@@ -649,12 +650,15 @@ router.get('/', async (req, res, next) => {
   const selectedUnits = parseTextFilter(req.query.unit, 120)
   const selectedSubjects = parseTextFilter(req.query.subject, 240)
   const selectedSubsubjects = parseTextFilter(req.query.subsubject, 240)
+  const ticketTypes = parseRepeatedTextFilter(req.originalUrl, 'type', 20)
   if (
     selectedEnterprises === null ||
     selectedBlocks === null ||
     selectedUnits === null ||
     selectedSubjects === null ||
-    selectedSubsubjects === null
+    selectedSubsubjects === null ||
+    ticketTypes === null ||
+    ticketTypes.some((type) => type !== 'client' && type !== 'condominium')
   ) {
     res.status(400).json({ error: 'Um ou mais filtros de chamados são inválidos.' })
     return
@@ -740,7 +744,16 @@ router.get('/', async (req, res, next) => {
        WHERE ($9::boolean OR t.source_active = TRUE)
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
            OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1
+           OR t.source_id::text LIKE $1
            OR $10::boolean)
+         AND ($13 <> 'id' OR t.source_id::text LIKE $1 OR lower(t.protocol) LIKE $1)
+         AND (cardinality($11::text[]) = 0 OR
+           CASE
+             WHEN btrim(t.block) <> '' AND btrim(t.unit) <> '' THEN 'client'
+             WHEN btrim(t.block) = '' AND btrim(t.unit) = '' AND btrim(t.enterprise) <> ''
+               AND strpos(lower(t.source_creator_name), lower(btrim(t.enterprise))) > 0 THEN 'condominium'
+             ELSE NULL
+           END = ANY($11::text[]))
          AND (cardinality($2::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($2::text[]))
          AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
          AND (cardinality($4::text[]) = 0 OR lower(btrim(t.unit)) = ANY($4::text[]))
@@ -749,19 +762,23 @@ router.get('/', async (req, res, next) => {
            OR lower(btrim(t.subject)) = ANY($6::text[]))
          AND (cardinality($7::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($7::text[]))
          AND ($8::bigint IS NULL OR t.source_id = $8)
-       ORDER BY t.opened_at ASC NULLS LAST, t.protocol
+       ORDER BY CASE WHEN $12 <> '' AND t.source_id::text = $12 THEN 0 ELSE 1 END,
+                t.opened_at ASC NULLS LAST, t.protocol
        LIMIT CASE WHEN $10::boolean THEN 2147483647 ELSE 1000 END`,
       [
         term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
         includeInactive,
         phoneLookup,
+        ticketTypes,
+        search,
+        idSearch ? 'id' : '',
       ],
     )
 
     const matchedTickets = phoneLookup
       ? result.rows.filter((ticket) => {
-        const matchesText = [ticket.protocol, ticket.customer_name, ticket.enterprise, ticket.subject, ticket.subsubject]
+        const matchesText = [ticket.source_id, ticket.protocol, ticket.customer_name, ticket.enterprise, ticket.subject, ticket.subsubject]
           .some((value) => value.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')))
         const matchesPhone = ticket.customer_phone_ciphertext
           ? decryptPersonalData(ticket.customer_phone_ciphertext, 'ticket-phone').replace(/\D/g, '').includes(phoneDigits)

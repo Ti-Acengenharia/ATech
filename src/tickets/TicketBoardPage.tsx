@@ -100,6 +100,7 @@ type TicketSortDirection = 'asc' | 'desc'
 
 interface SavedTicketFilters {
   search: string
+  types: ('client' | 'condominium')[]
   enterprises: string[]
   block: string[]
   unit: string[]
@@ -139,6 +140,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       .slice(0, 50)
     return {
       search: typeof saved.search === 'string' ? saved.search.slice(0, 100) : '',
+      types: values(saved.types, 20).filter((type): type is 'client' | 'condominium' => type === 'client' || type === 'condominium'),
       enterprises: values(saved.enterprises, 240),
       block: values(saved.block, 120),
       unit: values(saved.unit, 120),
@@ -158,7 +160,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       sortDirection: saved.sortDirection === 'desc' ? 'desc' : 'asc',
     }
   } catch {
-    return { search: '', enterprises: [], block: [], unit: [], customer: '', subject: [], subsubject: [], includeInactive: false, viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
+    return { search: '', types: [], enterprises: [], block: [], unit: [], customer: '', subject: [], subsubject: [], includeInactive: false, viewMode: 'kanban', cardFields: defaultCardFields, sortField: 'openedAt', sortDirection: 'asc' }
   }
 }
 
@@ -289,6 +291,7 @@ export default function TicketBoardPage({
   const [syncState, setSyncState] = useState<SyncState | null>(null)
   const [configured, setConfigured] = useState(false)
   const [search, setSearch] = useState(savedFilters.search)
+  const [ticketTypes, setTicketTypes] = useState<('client' | 'condominium')[]>(savedFilters.types)
   const [enterpriseFilters, setEnterpriseFilters] = useState<string[]>(savedFilters.enterprises)
   const [blockFilter, setBlockFilter] = useState<string[]>(savedFilters.block)
   const [unitFilter, setUnitFilter] = useState<string[]>(savedFilters.unit)
@@ -381,6 +384,7 @@ export default function TicketBoardPage({
   useEffect(() => {
     const saved = saveTicketFilters(currentUser.id, {
       search,
+      types: ticketTypes,
       enterprises: enterpriseFilters,
       block: blockOptionsReady ? activeBlockFilter : blockFilter,
       unit: blockOptionsReady ? activeUnitFilter : unitFilter,
@@ -396,7 +400,7 @@ export default function TicketBoardPage({
     if (!saved) {
       console.error(new Error('Não foi possível salvar os filtros neste navegador. Reduza a quantidade de empreendimentos selecionados e verifique as permissões de cookies.'))
     }
-  }, [currentUser.id, search, enterpriseFilters, blockOptionsReady, activeBlockFilter, activeUnitFilter, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, cardFields, sortField, sortDirection])
+  }, [currentUser.id, search, ticketTypes, enterpriseFilters, blockOptionsReady, activeBlockFilter, activeUnitFilter, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, cardFields, sortField, sortDirection])
 
   useEffect(() => {
     let cancelled = false
@@ -415,6 +419,7 @@ export default function TicketBoardPage({
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams()
       if (search.trim()) params.set('search', search.trim())
+      for (const type of ticketTypes) params.append('type', type)
       for (const enterprise of enterpriseFilters) params.append('enterprise', enterprise)
       for (const block of activeBlockFilter) params.append('block', block)
       for (const unit of activeUnitFilter) params.append('unit', unit)
@@ -449,7 +454,7 @@ export default function TicketBoardPage({
         }).finally(() => { if (!cancelled) setLoading(false) })
     }, 180)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [search, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, initialTicketId, onTicketOpened, refreshKey])
+  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, initialTicketId, onTicketOpened, refreshKey])
 
   async function syncNow() {
     setSyncing(true)
@@ -584,7 +589,7 @@ export default function TicketBoardPage({
     [tickets, sortField, sortDirection],
   )
   const ticketPaginationKey = JSON.stringify([
-    search, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter,
+    search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter,
     subjectFilter, subsubjectFilter, includeInactive, sortField, sortDirection, refreshKey,
   ])
   const ticketListKey = JSON.stringify([ticketPaginationKey, filtered.map((ticket) => ticket.id)])
@@ -774,10 +779,10 @@ export default function TicketBoardPage({
         <button className="ticket-filter-toggle" type="button" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}>
           <ChevronDown size={15} />
           {filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}
-          {!filtersExpanded && <span>{[search, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
+          {!filtersExpanded && <span>{[search, ...ticketTypes, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
         </button>
         {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
-        <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por protocolo, assunto, empreendimento ou telefone" /></label>
+        <label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID, protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone" /></label>
         <SearchableMultiSelect label="Empreendimentos" options={enterpriseOptions} value={enterpriseFilters} onChange={(value) => {
           setEnterpriseFilters(value)
           setBlockFilter([])
@@ -791,8 +796,12 @@ export default function TicketBoardPage({
         <SearchableMultiSelect label="Assunto" options={subjectOptions} value={subjectFilter} onChange={(value) => { setSubjectFilter(value); setSubsubjectFilter([]) }} />
         <SearchableMultiSelect label="Subassunto" options={subsubjectOptions} value={subsubjectFilter} onChange={setSubsubjectFilter} />
         <label className="filter-control customer-name-filter"><span>Nome do cliente</span><input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar cliente" /></label>
-        <button className="filter-clear-button" type="button" disabled={!search && !enterpriseFilters.length && !blockFilter.length && !unitFilter.length && !customerNameFilter && !subjectFilter.length && !subsubjectFilter.length && !includeInactive} onClick={() => {
+        <fieldset className="ticket-type-filter"><legend>Tipo de chamado</legend>
+          {(['client', 'condominium'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : 'Condomínio'}</span></label>)}
+        </fieldset>
+        <button className="filter-clear-button" type="button" disabled={!search && !ticketTypes.length && !enterpriseFilters.length && !blockFilter.length && !unitFilter.length && !customerNameFilter && !subjectFilter.length && !subsubjectFilter.length && !includeInactive} onClick={() => {
           setSearch('')
+          setTicketTypes([])
           setEnterpriseFilters([])
           setBlockFilter([])
           setUnitFilter([])

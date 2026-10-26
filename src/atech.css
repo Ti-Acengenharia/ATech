@@ -2143,6 +2143,10 @@ body, .workspace-shell { background: #f4f7fb; }
 .ticket-board-filters > .search-box { flex: 1 1 240px; }
 .ticket-board-filters .filter-control { flex: 1 1 140px; }
 .ticket-board-filters .customer-name-filter { flex-basis: 175px; }
+.ticket-type-filter { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0; padding: 5px 10px; border: 1px solid #d5e1ec; border-radius: 7px; background: #fff; }
+.ticket-type-filter legend { padding: 0 3px; color: #75889b; font-size: 9px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; }
+.ticket-type-filter label { display: inline-flex; align-items: center; gap: 5px; color: #40576b; font-size: 10px; white-space: nowrap; }
+.ticket-type-filter input { accent-color: #176ca6; }
 .ticket-filter-count { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: #698097; font-size: 9px; white-space: nowrap; }
 .sensitive-data { filter: blur(5px); transition: filter .16s ease; cursor: help; user-select: none; }
 .sensitive-data:hover, .sensitive-data:focus-visible { filter: none; user-select: text; outline-color: #347fb7; }
@@ -2173,6 +2177,7 @@ body, .workspace-shell { background: #f4f7fb; }
 @media (max-width: 760px) {
   .ticket-board-filters { align-items: stretch; }
   .ticket-board-filters .filter-control { flex: 1 1 calc(50% - 10px); }
+  .ticket-type-filter { flex: 1 1 100%; }
   .ticket-filter-count { margin: 0; }
   .programming-location-fields, .programming-kit-fields { grid-template-columns: minmax(0, 1fr); }
   .schedule-staff-cards { grid-template-columns: minmax(0, 1fr); }

@@ -28,6 +28,14 @@ export interface TicketSummary {
   warranty?: TicketWarranty | null
 }
 
+export interface LegalProcessOption {
+  id: string
+  title: string
+  enterprise_name: string
+  claimant: string
+  child_process_numbers: string[]
+}
+
 export interface TicketTag {
   id: string
   name: string

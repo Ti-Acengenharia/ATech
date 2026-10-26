@@ -9,12 +9,15 @@ import { getProgrammingRoleVisibility, saveProgrammingRoleVisibility } from './p
 interface Appointment {
   id: string
   ticket_id: string | null
+  legal_process_id: string | null
   collaborator_id: string
   activity_description: string
   starts_at: string
   ends_at: string
   protocol: string | null
   subject: string | null
+  legal_process_number: string | null
+  legal_process_claimant: string | null
   standalone_location: string
   enterprise: string
   block: string
@@ -194,11 +197,13 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
       drawCollaboratorHeader(person)
       for (const appointment of person.appointments) {
         const lines: { label: string; value: string; bold?: boolean }[] = [
-          { label: appointment.protocol ? 'PROTOCOLO' : 'ATIVIDADE', value: appointment.protocol ? `#${appointment.protocol}  ·  ${appointment.subject || 'Atendimento'}` : 'Atividade avulsa', bold: true },
-          { label: 'EMPREENDIMENTO', value: appointment.protocol ? appointment.enterprise || 'Não informado' : 'Não se aplica' },
+          { label: appointment.protocol ? 'PROTOCOLO' : appointment.legal_process_number ? 'PROCESSO JURÍDICO' : 'ATIVIDADE', value: appointment.protocol ? `#${appointment.protocol}  ·  ${appointment.subject || 'Atendimento'}` : appointment.legal_process_number ? `${appointment.legal_process_number}${appointment.legal_process_claimant ? ` · ${appointment.legal_process_claimant}` : ''}` : 'Atividade avulsa', bold: true },
+          { label: 'EMPREENDIMENTO', value: appointment.protocol || appointment.legal_process_number ? appointment.enterprise || 'Não informado' : 'Não se aplica' },
           { label: 'LOCAL', value: appointment.standalone_location || (appointment.common_area_location
             ? `Área comum: ${appointment.common_area_location}`
-            : `Bloco ${appointment.block || '—'}  ·  Unidade ${appointment.unit || '—'}`) },
+            : appointment.block || appointment.unit
+              ? `Bloco ${appointment.block || '—'}  ·  Unidade ${appointment.unit || '—'}`
+              : 'Local não especificado') },
           { label: 'SERVIÇO', value: appointment.activity_description },
         ]
         if (appointment.materials.length) lines.push({ label: 'MATERIAIS', value: appointment.materials.join(', ') })
@@ -357,7 +362,9 @@ export default function ProgrammingPage() {
   async function deleteAppointment(appointment: Appointment) {
     const description = appointment.protocol
       ? `programação do protocolo ${appointment.protocol}`
-      : `atividade avulsa em ${appointment.standalone_location}`
+      : appointment.legal_process_number
+        ? `programação do processo jurídico ${appointment.legal_process_number}`
+        : `atividade avulsa em ${appointment.standalone_location}`
     if (!window.confirm(`Excluir a ${description}?`)) return
     setError('')
     try {
@@ -485,11 +492,13 @@ export default function ProgrammingPage() {
                     </header>
                     {collaborator.appointments.length ? collaborator.appointments.map((appointment) => (
                       <div className="schedule-appointment-summary" key={appointment.id}>
-                        <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.protocol ? `Protocolo #${appointment.protocol}` : 'Atividade avulsa'}</strong>
-                        <span>{appointment.protocol ? `${appointment.subject || 'Atendimento'} · ${appointment.enterprise}` : 'Sem vínculo com chamado'}</span>
+                        <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.protocol ? `Protocolo #${appointment.protocol}` : appointment.legal_process_number ? `Processo jurídico ${appointment.legal_process_number}` : 'Atividade avulsa'}</strong>
+                        <span>{appointment.protocol ? `${appointment.subject || 'Atendimento'} · ${appointment.enterprise}` : appointment.legal_process_number ? `${appointment.legal_process_claimant || 'Requerente não informado'} · ${appointment.enterprise || 'Sem condomínio associado'}` : 'Sem vínculo com chamado'}</span>
                         <span>{appointment.standalone_location || (appointment.common_area_location
                           ? `Área comum: ${appointment.common_area_location}`
-                          : `Bloco ${appointment.block} · Unidade ${appointment.unit}`)}</span>
+                          : appointment.block || appointment.unit
+                            ? `Bloco ${appointment.block || '—'} · Unidade ${appointment.unit || '—'}`
+                            : 'Local não especificado')}</span>
                         <small>{appointment.activity_description}</small>
                         {[
                           ['Materiais', appointment.materials],

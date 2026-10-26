@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
-import type { TicketSummary } from './types'
+import type { LegalProcessOption, TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
 
 interface CollaboratorOption {
@@ -29,6 +29,7 @@ interface FreeSlot {
 interface EditingAppointment {
   id: string
   ticket_id: string | null
+  legal_process_id?: string | null
   programming_type?: 'general' | 'foreman'
   collaborator_id: string
   activity_description: string
@@ -129,6 +130,8 @@ function roleLabel(role: string, label?: string) {
 export default function TicketProgrammingForm({
   tickets,
   initialTicketId,
+  initialLegalProcessId,
+  initialLegalProcess,
   initialDate,
   programmingType = 'general',
   allowMixedCollaborators = false,
@@ -138,6 +141,8 @@ export default function TicketProgrammingForm({
 }: {
   tickets: TicketSummary[]
   initialTicketId?: string
+  initialLegalProcessId?: string
+  initialLegalProcess?: LegalProcessOption
   initialDate?: string
   programmingType?: 'general' | 'foreman'
   allowMixedCollaborators?: boolean
@@ -148,15 +153,23 @@ export default function TicketProgrammingForm({
   const selectedProgrammingType = editingAppointment?.programming_type ?? programmingType
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([])
   const [hiddenRoleKeys, setHiddenRoleKeys] = useState<Set<string>>(() => new Set())
-  const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(false)
-  const [activityType, setActivityType] = useState<'ticket' | 'standalone'>(() =>
-    editingAppointment?.ticket_id === null ? 'standalone' : 'ticket',
+  const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(allowMixedCollaborators)
+  const [activityType, setActivityType] = useState<'ticket' | 'standalone' | 'legal_process'>(() =>
+    editingAppointment?.legal_process_id || initialLegalProcessId
+      ? 'legal_process'
+      : editingAppointment?.ticket_id === null ? 'standalone' : 'ticket',
   )
   const [collaboratorIds, setCollaboratorIds] = useState<string[]>(() =>
     editingAppointment ? [editingAppointment.collaborator_id] : [],
   )
   const [ticketId, setTicketId] = useState(editingAppointment?.ticket_id ?? initialTicketId ?? '')
-  const initialTicket = tickets.find((ticket) => ticket.id === (editingAppointment?.ticket_id ?? initialTicketId))
+  const [ticketSearchResults, setTicketSearchResults] = useState<TicketSummary[]>([])
+  const [legalProcessId, setLegalProcessId] = useState(editingAppointment?.legal_process_id ?? initialLegalProcessId ?? '')
+  const [legalProcesses, setLegalProcesses] = useState<LegalProcessOption[]>(initialLegalProcess ? [initialLegalProcess] : [])
+  const [legalProcessesLoading, setLegalProcessesLoading] = useState(() => Boolean(initialLegalProcessId || editingAppointment?.legal_process_id))
+  const [legalProcessSearch, setLegalProcessSearch] = useState('')
+  const ticketOptions = [...new Map([...tickets, ...ticketSearchResults].map((ticket) => [ticket.id, ticket])).values()]
+  const initialTicket = ticketOptions.find((ticket) => ticket.id === (editingAppointment?.ticket_id ?? initialTicketId))
   const [startDate, setStartDate] = useState(() =>
     editingAppointment ? localDateString(new Date(editingAppointment.starts_at)) : initialDate ?? localDateString(new Date()),
   )
@@ -166,7 +179,7 @@ export default function TicketProgrammingForm({
   const [startsAt, setStartsAt] = useState(() => editingAppointment ? timeString(editingAppointment.starts_at) : '09:00')
   const [endsAt, setEndsAt] = useState(() => editingAppointment ? timeString(editingAppointment.ends_at) : '10:00')
   const [description, setDescription] = useState(editingAppointment?.activity_description ?? '')
-  const [enterprise, setEnterprise] = useState(editingAppointment?.enterprise ?? initialTicket?.enterprise ?? '')
+  const [enterprise, setEnterprise] = useState(editingAppointment?.enterprise ?? initialTicket?.enterprise ?? initialLegalProcess?.enterprise_name ?? '')
   const [block, setBlock] = useState(editingAppointment?.block ?? initialTicket?.block ?? '')
   const [unit, setUnit] = useState(editingAppointment?.unit ?? initialTicket?.unit ?? '')
   const [commonAreaLocation, setCommonAreaLocation] = useState(editingAppointment?.common_area_location ?? '')
@@ -177,13 +190,18 @@ export default function TicketProgrammingForm({
   const [searchFilter, setSearchFilter] = useState('')
   const [ticketSearchFilter, setTicketSearchFilter] = useState('')
   const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
+  const [legalProcessPickerOpen, setLegalProcessPickerOpen] = useState(false)
   const ticketPickerRef = useRef<HTMLDivElement>(null)
+  const legalProcessPickerRef = useRef<HTMLDivElement>(null)
   const [appointmentsByCollaborator, setAppointmentsByCollaborator] = useState<Record<string, AvailabilityEntry[]>>({})
   const [loadingPeople, setLoadingPeople] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const selectedLegalProcess = legalProcesses.find((process) => process.id === legalProcessId) ??
+    (initialLegalProcess?.id === legalProcessId ? initialLegalProcess : undefined)
 
   useEffect(() => {
+    if (allowMixedCollaborators) return
     let cancelled = false
     const loadVisibility = () => getProgrammingRoleVisibility()
       .then((result) => {
@@ -216,7 +234,7 @@ export default function TicketProgrammingForm({
 
   useEffect(() => {
     let cancelled = false
-    apiRequest<{ collaborators: CollaboratorOption[] }>('/api/collaborators?status=active&role=all')
+    apiRequest<{ collaborators: CollaboratorOption[] }>('/api/programming/collaborators')
       .then((result) => {
         if (cancelled) return
         const active = result.collaborators.filter((person) => person.is_active && !person.is_on_leave)
@@ -230,14 +248,81 @@ export default function TicketProgrammingForm({
   }, [])
 
   useEffect(() => {
+    if (activityType !== 'legal_process') return
+    let cancelled = false
+    apiRequest<{ processes: LegalProcessOption[] }>('/api/programming/legal-processes')
+      .then((result) => {
+        if (!cancelled) {
+          setLegalProcesses(initialLegalProcess
+            ? [initialLegalProcess, ...result.processes.filter((process) => process.id !== initialLegalProcess.id)]
+            : result.processes)
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar os processos jurídicos.')
+      })
+      .finally(() => { if (!cancelled) setLegalProcessesLoading(false) })
+    return () => { cancelled = true }
+  }, [activityType, initialLegalProcess])
+
+  useEffect(() => {
+    const requestedTicketId = editingAppointment?.ticket_id ?? initialTicketId
+    if (!requestedTicketId || tickets.some((ticket) => ticket.id === requestedTicketId)) return
+    let cancelled = false
+    apiRequest<{ tickets: TicketSummary[] }>(`/api/tickets?id=${encodeURIComponent(requestedTicketId)}&includeInactive=true`)
+      .then((result) => {
+        if (cancelled) return
+        setTicketSearchResults((current) => [...new Map([...current, ...result.tickets].map((ticket) => [ticket.id, ticket])).values()])
+        const ticket = result.tickets[0]
+        if (ticket) {
+          setEnterprise((current) => current || ticket.enterprise)
+          setBlock((current) => current || ticket.block)
+          setUnit((current) => current || ticket.unit)
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o chamado selecionado.')
+      })
+    return () => { cancelled = true }
+  }, [editingAppointment?.ticket_id, initialTicketId, tickets])
+
+  useEffect(() => {
+    const term = ticketSearchFilter.trim()
+    if (!ticketPickerOpen || !term) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ search: term })
+      if (/^\d+$/.test(term)) params.set('searchMode', 'id')
+      apiRequest<{ tickets: TicketSummary[] }>(`/api/tickets?${params}`)
+        .then((result) => {
+          if (!cancelled) setTicketSearchResults((current) => [...new Map([...current.filter((ticket) => tickets.some((loaded) => loaded.id === ticket.id)), ...result.tickets].map((ticket) => [ticket.id, ticket])).values()])
+        })
+        .catch((requestError: unknown) => {
+          if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível pesquisar chamados.')
+        })
+    }, 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [ticketPickerOpen, ticketSearchFilter, tickets])
+
+  useEffect(() => {
     function closePicker(event: PointerEvent) {
       if (event.target instanceof Node && !ticketPickerRef.current?.contains(event.target)) {
         setTicketPickerOpen(false)
         setTicketSearchFilter('')
       }
+      if (event.target instanceof Node && !legalProcessPickerRef.current?.contains(event.target)) {
+        setLegalProcessPickerOpen(false)
+        setLegalProcessSearch('')
+      }
     }
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setTicketPickerOpen(false)
+      if (event.key === 'Escape') {
+        setTicketPickerOpen(false)
+        setLegalProcessPickerOpen(false)
+      }
     }
     document.addEventListener('pointerdown', closePicker)
     document.addEventListener('keydown', handleEscape)
@@ -282,15 +367,25 @@ export default function TicketProgrammingForm({
       (person.nickname && person.nickname.toLowerCase().includes(term)) ||
       roleLabel(person.role, person.role_label).toLowerCase().includes(term)
   })
-  const filteredTickets = tickets.filter((ticket) => {
+  const filteredTickets = ticketOptions.filter((ticket) => {
     if (!ticket.sourceActive) return false
     const term = ticketSearchFilter.trim().toLocaleLowerCase('pt-BR')
     return !term || [
       ticket.protocol,
+      ticket.id,
       ticket.subject,
       ticket.enterprise,
       ticket.block,
       ticket.unit,
+    ].some((value) => value?.toLocaleLowerCase('pt-BR').includes(term))
+  })
+  const filteredLegalProcesses = legalProcesses.filter((process) => {
+    const term = legalProcessSearch.trim().toLocaleLowerCase('pt-BR')
+    return process.id === legalProcessId || !term || [
+      process.title,
+      ...process.child_process_numbers,
+      process.enterprise_name,
+      process.claimant,
     ].some((value) => value?.toLocaleLowerCase('pt-BR').includes(term))
   })
 
@@ -323,6 +418,10 @@ export default function TicketProgrammingForm({
       setError('Selecione um chamado ativo para a atividade.')
       return
     }
+    if (activityType === 'legal_process' && !legalProcessId) {
+      setError('Selecione um processo jurídico para a atividade.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -341,12 +440,13 @@ export default function TicketProgrammingForm({
               : selectedProgrammingType,
             activityType,
             ticketId: activityType === 'ticket' ? Number(ticketId) : null,
+            legalProcessId: activityType === 'legal_process' ? Number(legalProcessId) : null,
             collaboratorId: Number(collaboratorIds[0]),
             date: startDate,
             startsAt: toIso(startDate, startsAt),
             endsAt: toIso(startDate, endsAt),
             activityDescription: description,
-            enterprise: activityType === 'standalone' ? 'Atividade avulsa' : enterprise,
+            enterprise: activityType === 'standalone' ? 'Atividade avulsa' : activityType === 'legal_process' ? selectedLegalProcess?.enterprise_name ?? enterprise : enterprise,
             block,
             unit,
             commonAreaLocation: activityType === 'standalone' ? standaloneLocation : commonAreaLocation,
@@ -363,6 +463,7 @@ export default function TicketProgrammingForm({
             programmingType: allowMixedCollaborators ? 'general' : selectedProgrammingType,
             activityType,
             ticketId: activityType === 'ticket' ? Number(ticketId) : null,
+            legalProcessId: activityType === 'legal_process' ? Number(legalProcessId) : null,
             collaboratorIds: collaboratorIds.map(Number),
             startDate,
             endDate,
@@ -372,7 +473,7 @@ export default function TicketProgrammingForm({
               endsAt: toIso(date, endsAt),
             })),
             activityDescription: description,
-            enterprise: activityType === 'standalone' ? 'Atividade avulsa' : enterprise,
+            enterprise: activityType === 'standalone' ? 'Atividade avulsa' : activityType === 'legal_process' ? selectedLegalProcess?.enterprise_name ?? enterprise : enterprise,
             block,
             unit,
             commonAreaLocation: activityType === 'standalone' ? standaloneLocation : commonAreaLocation,
@@ -395,13 +496,17 @@ export default function TicketProgrammingForm({
 
   return (
     <form className="ticket-programming-form" onSubmit={(event) => void submit(event)}>
-      {!initialTicketId && !editingAppointment && (
+      {!initialTicketId && !initialLegalProcessId && !editingAppointment && (
         <label className="ticket-form-field programming-type-field">
           <span>Tipo de programação</span>
           <select value={activityType} onChange={(event) => {
-            const nextType = event.target.value as 'ticket' | 'standalone'
+            const nextType = event.target.value as 'ticket' | 'standalone' | 'legal_process'
             setActivityType(nextType)
+            setLegalProcessesLoading(nextType === 'legal_process')
             setTicketId('')
+            setLegalProcessId('')
+            setLegalProcessPickerOpen(false)
+            setLegalProcessSearch('')
             setStandaloneLocation('')
             setEnterprise('')
             setBlock('')
@@ -410,11 +515,51 @@ export default function TicketProgrammingForm({
           }}>
             <option value="ticket">Programação vinculada a chamado</option>
             <option value="standalone">Atividade avulsa</option>
+            <option value="legal_process">Atividade jurídica</option>
           </select>
           <small className="programming-type-help">{activityType === 'standalone'
             ? 'Use para serviços internos ou atividades sem protocolo CVCRM.'
-            : 'Vincule a atividade a um chamado ativo do CVCRM.'}</small>
+            : activityType === 'legal_process'
+              ? 'Vincule a atividade a um processo jurídico cadastrado.'
+              : 'Vincule a atividade a um chamado ativo do CVCRM.'}</small>
         </label>
+      )}
+
+      {activityType === 'legal_process' && !initialLegalProcessId && (
+        <div className="ticket-form-field programming-legal-picker">
+          <span>Processo jurídico</span>
+          <div className="programming-ticket-picker" ref={legalProcessPickerRef}>
+            <button type="button" className="programming-ticket-trigger" aria-haspopup="listbox" aria-expanded={legalProcessPickerOpen} aria-label="Selecionar processo jurídico" onClick={() => setLegalProcessPickerOpen((open) => !open)}>
+              <span>{selectedLegalProcess
+                ? `${selectedLegalProcess.title}${selectedLegalProcess.enterprise_name ? ` · ${selectedLegalProcess.enterprise_name}` : ''}`
+                : 'Selecione um processo jurídico'}</span>
+              <ChevronDown size={15} />
+            </button>
+            {legalProcessPickerOpen && <div className="programming-ticket-popover">
+              <label className="programming-ticket-search"><Search size={15} /><input type="search" value={legalProcessSearch} onChange={(event) => setLegalProcessSearch(event.target.value)} placeholder="Número, condomínio ou requerente" autoFocus /></label>
+              <div className="programming-ticket-options" role="listbox" aria-label="Processos jurídicos">
+                {legalProcessesLoading
+                  ? <span className="programming-ticket-empty">Carregando processos jurídicos...</span>
+                  : filteredLegalProcesses.length ? filteredLegalProcesses.map((process) => (
+                    <button type="button" key={process.id} role="option" aria-selected={process.id === legalProcessId} className={process.id === legalProcessId ? 'selected' : ''} onClick={() => {
+                      setLegalProcessId(process.id)
+                      setLegalProcessPickerOpen(false)
+                      setLegalProcessSearch('')
+                      setEnterprise(process.enterprise_name)
+                      setBlock('')
+                      setUnit('')
+                      setCommonAreaLocation('')
+                    }}>
+                      <strong>{process.title}</strong>
+                      <span>{process.enterprise_name || 'Condomínio não informado'}{process.claimant ? ` · ${process.claimant}` : ''}</span>
+                      {process.child_process_numbers.length > 0 && <small>Processos relacionados: {process.child_process_numbers.join(', ')}</small>}
+                    </button>
+                  )) : <span className="programming-ticket-empty">Nenhum processo corresponde à busca.</span>}
+              </div>
+            </div>}
+          </div>
+          {selectedLegalProcess && selectedLegalProcess.child_process_numbers.length > 0 && <small>Processos relacionados: {selectedLegalProcess.child_process_numbers.join(', ')}</small>}
+        </div>
       )}
 
       {activityType === 'ticket' && (!initialTicketId || editingAppointment) && (
@@ -422,13 +567,13 @@ export default function TicketProgrammingForm({
           <span>Chamado</span>
           <div className="programming-ticket-picker" ref={ticketPickerRef}>
             <button type="button" className="programming-ticket-trigger" aria-haspopup="listbox" aria-expanded={ticketPickerOpen} onClick={() => setTicketPickerOpen((open) => !open)}>
-              <span>{tickets.find((ticket) => ticket.id === ticketId)?.protocol
-                ? `${tickets.find((ticket) => ticket.id === ticketId)?.protocol} · ${tickets.find((ticket) => ticket.id === ticketId)?.subject || tickets.find((ticket) => ticket.id === ticketId)?.enterprise}`
+              <span>{ticketOptions.find((ticket) => ticket.id === ticketId)?.protocol
+                ? `ID ${ticketId} · ${ticketOptions.find((ticket) => ticket.id === ticketId)?.protocol} · ${ticketOptions.find((ticket) => ticket.id === ticketId)?.subject || ticketOptions.find((ticket) => ticket.id === ticketId)?.enterprise}`
                 : 'Selecione um protocolo'}</span>
               <ChevronDown size={15} />
             </button>
             {ticketPickerOpen && <div className="programming-ticket-popover">
-              <label className="programming-ticket-search"><Search size={15} /><input type="search" value={ticketSearchFilter} onChange={(event) => setTicketSearchFilter(event.target.value)} placeholder="Pesquisar chamado" autoFocus /></label>
+              <label className="programming-ticket-search"><Search size={15} /><input type="search" value={ticketSearchFilter} onChange={(event) => setTicketSearchFilter(event.target.value)} placeholder="ID, protocolo, assunto, condomínio..." autoFocus /></label>
               <div className="programming-ticket-options" role="listbox" aria-label="Chamados ativos">
                 {filteredTickets.length ? filteredTickets.map((ticket) => (
                   <button type="button" key={ticket.id} role="option" aria-selected={ticket.id === ticketId} className={ticket.id === ticketId ? 'selected' : ''} onClick={() => {
@@ -441,7 +586,7 @@ export default function TicketProgrammingForm({
                     setUnit(ticket.unit)
                     setCommonAreaLocation('')
                   }}>
-                    <strong>{ticket.protocol}</strong><span>{ticket.subject || ticket.enterprise}</span><small>{ticket.enterprise}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</small>
+                    <strong>ID {ticket.id} · {ticket.protocol}</strong><span>{ticket.subject || ticket.enterprise}</span><small>{ticket.enterprise}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</small>
                   </button>
                 )) : <span className="programming-ticket-empty">Nenhum chamado ativo corresponde à pesquisa.</span>}
               </div>
@@ -616,9 +761,9 @@ export default function TicketProgrammingForm({
           <small>Informe um ponto de referência claro para a equipe de campo.</small>
         </label>
       ) : <div className="programming-location-fields">
-        <label className="ticket-form-field"><span>Empreendimento *</span><input value={enterprise} onChange={(event) => setEnterprise(event.target.value)} maxLength={240} required /></label>
-        <label className="ticket-form-field"><span>Bloco</span><input value={block} onChange={(event) => setBlock(event.target.value)} maxLength={120} disabled={Boolean(commonAreaLocation.trim())} required={!commonAreaLocation.trim()} /></label>
-        <label className="ticket-form-field"><span>Unidade</span><input value={unit} onChange={(event) => setUnit(event.target.value)} maxLength={120} disabled={Boolean(commonAreaLocation.trim())} required={!commonAreaLocation.trim()} /></label>
+        <label className="ticket-form-field"><span>Empreendimento {activityType === 'ticket' ? '*' : ''}</span><input value={enterprise} onChange={(event) => setEnterprise(event.target.value)} maxLength={240} required={activityType === 'ticket'} /></label>
+        <label className="ticket-form-field"><span>Bloco</span><input value={block} onChange={(event) => setBlock(event.target.value)} maxLength={120} disabled={Boolean(commonAreaLocation.trim())} required={activityType === 'ticket' && !commonAreaLocation.trim()} /></label>
+        <label className="ticket-form-field"><span>Unidade</span><input value={unit} onChange={(event) => setUnit(event.target.value)} maxLength={120} disabled={Boolean(commonAreaLocation.trim())} required={activityType === 'ticket' && !commonAreaLocation.trim()} /></label>
         <label className="ticket-form-field"><span>Local da área comum (alternativa a bloco/unidade)</span><input value={commonAreaLocation} onChange={(event) => { const value = event.target.value; setCommonAreaLocation(value); if (value.trim()) { setBlock(''); setUnit('') } }} maxLength={240} /></label>
       </div>}
 

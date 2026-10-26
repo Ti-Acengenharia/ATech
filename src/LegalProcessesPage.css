@@ -49,6 +49,9 @@
 .legal-process-card:hover { border-color: #9bbbd3; box-shadow: 0 5px 14px #1c2f4010; }
 .legal-process-card:focus-visible { outline: 3px solid #70a9d6; outline-offset: 2px; }
 .legal-process-card-top, .legal-process-card footer { justify-content: space-between; gap: 8px; color: #8798a5; font: 9px var(--mono); }
+.legal-process-card-tools { display: inline-flex; align-items: center; gap: 7px; }
+.legal-process-card-tools button { display: grid; width: 25px; height: 25px; place-items: center; padding: 0; color: #315d7e; background: #edf5fb; border: 1px solid #dceaf4; border-radius: 6px; cursor: pointer; }
+.legal-process-card-tools button:hover { color: #176ca6; background: #e0eff9; }
 .legal-process-card-title { color: var(--ink); font-size: 13px; line-height: 1.45; }
 .legal-process-card-meta { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .legal-process-assignee-icons { display: flex; }
@@ -107,6 +110,9 @@
 .legal-child-row input:not([type=checkbox]) { width: 100%; min-height: 36px; padding: 8px; border: 1px solid var(--line); border-radius: 5px; }
 .legal-form-actions { grid-column: 1 / -1; flex-wrap: wrap; justify-content: flex-end; gap: 9px; padding-top: 7px; }
 .legal-payments { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.legal-schedule { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.legal-schedule .legal-payments-heading { gap: 10px; }
+.legal-schedule .ticket-programming-form { margin-top: 12px; }
 .legal-payments-heading { justify-content: space-between; margin-bottom: 13px; }
 .legal-payments-heading h3 { margin: 0; color: var(--ink); font: 700 16px var(--display); }
 .legal-payments-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
