@@ -13,6 +13,7 @@ export type PersonalDataField =
   | 'leave-reason'
   | 'ticket-phone'
   | 'uniform-delivery-signature'
+  | 'inventory-delivery-signature'
   | 'user-signature'
 
 export function isPersonalDataEncryptionConfigured() {

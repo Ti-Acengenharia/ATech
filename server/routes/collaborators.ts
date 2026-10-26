@@ -1129,12 +1129,63 @@ router.get('/:id/report', async (req, res, next) => {
        ORDER BY delivery.delivery_date DESC, delivery.id DESC`,
       [collaboratorId.data],
     )
+    const inventoryHistory = await client.query<{
+      id: string
+      transaction_date: string
+      document_type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+      deliverer_name: string
+      deliverer_signature_ciphertext: string
+      recipient_signature_ciphertext: string
+      item_name: string
+      quantity: string
+      unit_name: string
+    }>(
+      `SELECT document.id, document.transaction_date::text, document.document_type,
+              user_account.display_name AS deliverer_name,
+              document.deliverer_signature_ciphertext, document.recipient_signature_ciphertext,
+              item.name AS item_name, line.quantity::text, line.unit_name
+       FROM inventory_documents document
+       JOIN users user_account ON user_account.id = document.created_by
+       JOIN inventory_document_items line ON line.document_id = document.id
+       JOIN inventory_items item ON item.id = line.item_id
+       WHERE document.collaborator_id = $1
+         AND document.document_type IN ('epi_delivery', 'tool_delivery', 'tool_return')
+       ORDER BY document.transaction_date DESC, document.id DESC, line.id`,
+      [collaboratorId.data],
+    )
     await client.query(
       `INSERT INTO collaborator_sensitive_data_access (collaborator_id, accessed_by)
        VALUES ($1, $2)`,
       [collaboratorId.data, req.session.user!.id],
     )
     await client.query('COMMIT')
+
+    const inventoryDeliveries = new Map<number, {
+      id: number
+      deliveryDate: string
+      type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+      delivererName: string
+      delivererSignatureBase64: string
+      recipientSignatureBase64: string
+      items: { name: string; quantity: number; unitName: string }[]
+    }>()
+    for (const entry of inventoryHistory.rows) {
+      const id = Number(entry.id)
+      let record = inventoryDeliveries.get(id)
+      if (!record) {
+        record = {
+          id,
+          deliveryDate: entry.transaction_date,
+          type: entry.document_type,
+          delivererName: entry.deliverer_name,
+          delivererSignatureBase64: decryptPersonalData(entry.deliverer_signature_ciphertext, 'inventory-delivery-signature'),
+          recipientSignatureBase64: decryptPersonalData(entry.recipient_signature_ciphertext, 'inventory-delivery-signature'),
+          items: [],
+        }
+        inventoryDeliveries.set(id, record)
+      }
+      record.items.push({ name: entry.item_name, quantity: Number(entry.quantity), unitName: entry.unit_name })
+    }
 
     res.json({
       report: {
@@ -1196,6 +1247,7 @@ router.get('/:id/report', async (req, res, next) => {
           delivererSignatureBase64: decryptPersonalData(delivery.deliverer_signature_ciphertext, 'uniform-delivery-signature'),
           recipientSignatureBase64: decryptPersonalData(delivery.recipient_signature_ciphertext, 'uniform-delivery-signature'),
         })),
+        inventoryDeliveries: [...inventoryDeliveries.values()],
       },
     })
   } catch (error) {

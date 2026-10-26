@@ -117,6 +117,15 @@ interface CollaboratorReport {
     delivererSignatureBase64: string
     recipientSignatureBase64: string
   }[]
+  inventoryDeliveries: {
+    id: number
+    deliveryDate: string
+    type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+    delivererName: string
+    delivererSignatureBase64: string
+    recipientSignatureBase64: string
+    items: { name: string; quantity: number; unitName: string }[]
+  }[]
 }
 
 interface UniformOptions {
@@ -746,6 +755,34 @@ export default function CollaboratorsPage() {
           document.addImage(`data:image/png;base64,${delivery.recipientSignatureBase64}`, 'PNG', margin + 91, y + 4, 72, 18)
           y += 27
         }
+        drawSection('Histórico de EPI e ferramentas')
+        if (!report.inventoryDeliveries.length) {
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(8)
+          document.setTextColor(112, 132, 151)
+          document.text('Nenhuma entrega de EPI ou ferramenta registrada.', margin + 2, y)
+          y += 7
+        }
+        for (const delivery of report.inventoryDeliveries) {
+          const label = delivery.type === 'epi_delivery' ? 'Entrega de EPI'
+            : delivery.type === 'tool_delivery' ? 'Entrega de ferramentas' : 'Devolução de ferramentas'
+          const details = document.splitTextToSize(
+            `${formatDate(delivery.deliveryDate)} · ${label} · ${delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por ${delivery.delivererName}`,
+            contentWidth - 8,
+          ) as string[]
+          ensureSpace(details.length * 4 + 30)
+          document.setFillColor(250, 252, 254)
+          document.setDrawColor(229, 236, 243)
+          document.roundedRect(margin, y - 3, contentWidth, details.length * 4 + 29, 2, 2, 'FD')
+          for (const line of details) { document.setFont('helvetica', 'normal'); document.setFontSize(8); document.text(line, margin + 4, y); y += 4 }
+          document.setFontSize(7)
+          document.setTextColor(102, 122, 140)
+          document.text('RESPONSÁVEL PELA ENTREGA', margin + 4, y + 3)
+          document.text('RECEBIDO POR', margin + 91, y + 3)
+          document.addImage(`data:image/png;base64,${delivery.delivererSignatureBase64}`, 'PNG', margin + 4, y + 4, 72, 18)
+          document.addImage(`data:image/png;base64,${delivery.recipientSignatureBase64}`, 'PNG', margin + 91, y + 4, 72, 18)
+          y += 27
+        }
       } else {
         const photoCache = new Map<string, { dataUrl: string; format: 'PNG' | 'JPEG' }>()
         const photo = async (url: string | null, x: number, top: number) => {
@@ -1012,6 +1049,7 @@ export default function CollaboratorsPage() {
                 </dl>
                 <section className="collaborator-history-section"><h3>Histórico de afastamentos</h3>{report.leaveHistory.length ? report.leaveHistory.map((leave) => <p key={leave.id}>{formatDate(leave.startDate)} a {formatDate(leave.expectedReturnDate)} · {leave.current ? 'Atual' : `Encerrado em ${formatDate(leave.endedAt)}`} · {leave.reason}</p>) : <p>Nenhum afastamento registrado.</p>}</section>
                 <section className="collaborator-history-section"><h3>Entregas de fardamento</h3>{report.uniformDeliveries.length ? report.uniformDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={delivery.id}><p>{formatDate(delivery.deliveryDate)} · Camisa {delivery.shirtSize ?? '—'} (curta {delivery.shirtShortSleeveQty}, longa {delivery.shirtLongSleeveQty}) · Calça {delivery.pantsSize ?? '—'} ({delivery.pantsQty}) · Bota {delivery.bootSize ?? '—'} ({delivery.bootQty}) · Entregue por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
+                <section className="collaborator-history-section"><h3>Histórico de EPI e ferramentas</h3>{report.inventoryDeliveries.length ? report.inventoryDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={`inventory-${delivery.id}`}><p>{formatDate(delivery.deliveryDate)} · {delivery.type === 'epi_delivery' ? 'Entrega de EPI' : delivery.type === 'tool_delivery' ? 'Entrega de ferramentas' : 'Devolução de ferramentas'} · {delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega de EPI ou ferramenta registrada.</p>}</section>
                 <footer className="dialog-footer"><button className="secondary-button danger-button" type="button" disabled={deletingId === report.id} onClick={() => void deleteCollaborator(report.id, report.name)}><Trash2 size={15} />{deletingId === report.id ? 'Excluindo...' : 'Excluir colaborador'}</button><button className="secondary-button" type="button" onClick={() => void downloadPdf('report')}>Ficha do colaborador (PDF)</button><button className="secondary-button" type="button" onClick={editReport}><Pencil size={15} /> Editar cadastro</button><button className="primary-button" type="button" onClick={closeReport}>Concluir</button></footer>
               </>
             )}

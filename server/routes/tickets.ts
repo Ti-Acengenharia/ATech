@@ -200,6 +200,162 @@ router.get('/workflow', async (_req, res, next) => {
   }
 })
 
+router.get('/letters/search', async (req, res, next) => {
+  const parsed = z.string().trim().max(100).catch('').parse(req.query.search)
+  const customerName = z.string().trim().max(240).catch('').parse(req.query.customerName)
+  const term = `%${parsed}%`
+  try {
+    const result = await pool.query<{
+      id: string
+      protocol: string
+      status_id: number | null
+      status: string
+      source_active: boolean
+      opened_at: Date | null
+      customer_name: string
+      customer_phone_ciphertext: string | null
+      source_subject_id: number | null
+      opened_date: string | null
+      delivery_date: string | null
+      warranty_years: number | null
+      enterprise: string
+      work_address: string
+      block: string
+      unit: string
+      subject: string
+      subsubject: string
+      description: string
+      priority: string
+      local_due_at: Date | null
+      background_color: string | null
+      text_color: string | null
+      comment_count: number
+      subtask_count: number
+      completed_subtask_count: number
+      programming_count: number
+      custom_tags: Array<{ id: string; name: string; color: string }>
+    }>(
+      `SELECT t.source_id::text AS id, t.protocol, t.source_status_id AS status_id,
+              t.source_status_name AS status, t.source_active, t.opened_at,
+              t.customer_name, t.customer_phone_ciphertext, t.source_subject_id,
+              t.opened_at::date::text AS opened_date,
+              information.condominium_delivery_date::text AS delivery_date,
+              warranty.warranty_years, t.enterprise,
+              COALESCE(information.work_address, '') AS work_address,
+              t.block, t.unit, t.subject, t.subsubject, t.description, t.priority,
+              t.local_due_at, stage.background_color, stage.text_color,
+              (SELECT count(*)::int FROM ticket_comments comment WHERE comment.ticket_id = t.source_id) AS comment_count,
+              (SELECT count(*)::int FROM ticket_subtasks subtask WHERE subtask.ticket_id = t.source_id) AS subtask_count,
+              (SELECT count(*)::int FROM ticket_subtasks subtask WHERE subtask.ticket_id = t.source_id AND subtask.is_done) AS completed_subtask_count,
+              (SELECT count(*)::int FROM ticket_programming programming WHERE programming.ticket_id = t.source_id) AS programming_count,
+              COALESCE((
+                SELECT json_agg(json_build_object('id', tag.id::text, 'name', tag.name, 'color', tag.color) ORDER BY lower(tag.name))
+                FROM ticket_tag_assignments assigned
+                JOIN ticket_tags tag ON tag.id = assigned.tag_id
+                WHERE assigned.ticket_id = t.source_id
+              ), '[]'::json) AS custom_tags
+       FROM tickets t
+       JOIN ticket_workflow_stages stage ON stage.source_status_id = t.source_status_id
+       LEFT JOIN enterprise_information information
+         ON information.enterprise_key = lower(btrim(t.enterprise))
+       LEFT JOIN LATERAL (
+         SELECT warranty_subsubjects.warranty_years
+         FROM warranty_subsubjects
+         WHERE warranty_subsubjects.source_subject_id = COALESCE(t.source_subject_id, 16)
+           AND ((t.source_subsubject_id IS NOT NULL
+                 AND warranty_subsubjects.source_subsubject_id = t.source_subsubject_id)
+                OR (t.source_subsubject_id IS NULL
+                 AND lower(warranty_subsubjects.name) = lower(t.subsubject)))
+         ORDER BY CASE WHEN warranty_subsubjects.source_subsubject_id = t.source_subsubject_id THEN 0 ELSE 1 END
+         LIMIT 1
+       ) warranty ON TRUE
+       WHERE (
+           stage.position = 7.1
+           OR stage.name ~* '(^|[^[:digit:]])7[.,]1([^[:digit:]]|$)'
+         )
+         AND ($1 = '' OR t.source_id::text ILIKE $2 OR t.protocol ILIKE $2
+           OR t.customer_name ILIKE $2 OR t.enterprise ILIKE $2
+           OR t.subject ILIKE $2 OR t.subsubject ILIKE $2
+         OR t.block ILIKE $2 OR t.unit ILIKE $2 OR t.description ILIKE $2)
+       AND ($3 = '' OR lower(btrim(t.customer_name)) = lower(btrim($3)))
+       ORDER BY lower(t.customer_name), t.enterprise, t.block, t.unit, t.source_id DESC
+       `,
+      [parsed, term, customerName],
+    )
+    res.json({
+      tickets: result.rows.map((ticket) => ({
+        id: ticket.id,
+        protocol: ticket.protocol,
+        statusId: ticket.status_id,
+        status: ticket.status,
+        sourceActive: ticket.source_active,
+        openedAt: ticket.opened_at?.toISOString() ?? null,
+        customerName: ticket.customer_name,
+        customerPhone: ticket.customer_phone_ciphertext && isPersonalDataEncryptionConfigured()
+          ? decryptPersonalData(ticket.customer_phone_ciphertext, 'ticket-phone')
+          : null,
+        enterprise: ticket.enterprise,
+        workAddress: ticket.work_address,
+        block: ticket.block,
+        unit: ticket.unit,
+        subject: ticket.subject,
+        subsubject: ticket.subsubject,
+        description: ticket.description,
+        priority: ticket.priority,
+        localDueAt: ticket.local_due_at?.toISOString() ?? null,
+        backgroundColor: ticket.background_color,
+        textColor: ticket.text_color,
+        openSeconds: ticket.opened_at ? Math.max(0, Math.floor((Date.now() - ticket.opened_at.valueOf()) / 1000)) : null,
+        commentCount: ticket.comment_count,
+        subtaskCount: ticket.subtask_count,
+        completedSubtaskCount: ticket.completed_subtask_count,
+        programmingCount: ticket.programming_count,
+        tags: ticket.custom_tags,
+        warranty: evaluateTicketWarranty({
+          subjectId: ticket.source_subject_id,
+          subject: ticket.subject,
+          openedDate: ticket.opened_date,
+          deliveryDate: ticket.delivery_date,
+          warrantyYears: ticket.warranty_years === null ? null : Number(ticket.warranty_years),
+        }),
+      })),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.put('/letters/enterprise-address', async (req, res, next) => {
+  const parsed = z.object({
+    enterpriseName: z.string().trim().min(1).max(240),
+    workAddress: z.string().trim().min(3).max(500),
+  }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Informe um endereço válido.' })
+    return
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO enterprise_information (enterprise_key, enterprise_name, work_address)
+       SELECT lower(btrim(enterprise)), min(btrim(enterprise)), $2
+       FROM tickets
+       WHERE lower(btrim(enterprise)) = lower(btrim($1))
+       GROUP BY lower(btrim(enterprise))
+       ON CONFLICT (enterprise_key) DO UPDATE SET
+         work_address = EXCLUDED.work_address, updated_at = now()
+       RETURNING enterprise_key`,
+      [parsed.data.enterpriseName, parsed.data.workAddress],
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'O empreendimento não foi encontrado nos chamados.' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
 router.get('/tags', async (_req, res, next) => {
   try {
     const result = await pool.query(

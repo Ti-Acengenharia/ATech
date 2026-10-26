@@ -421,6 +421,20 @@ CPF, telefone, data de nascimento e dados dos filhos são criptografados com AES
 
 O cadastro permite informar o tamanho atual de camisa (uma opção por colaborador, com catálogo inicial P, M, G, GG, XG e XXG), quantidades atuais de mangas curta/longa somadas até três, calça (32–58, de dois em dois) e bota (34–48). Administradores podem acrescentar opções de camisa ao catálogo compartilhado. Os afastamentos são preservados no histórico mesmo quando encerrados ou alterados. Na lista, registre entregas com data, tamanhos e quantidades; o servidor valida o PIN do responsável e recupera a assinatura criptografada do perfil, enquanto o recebedor assina na tela. As duas assinaturas são criptografadas no banco e aparecem na ficha individual, cujo acesso é auditado. O botão **Emitir relatório** abre a seleção da lista de colaboradores/funções, fardamentos/tamanhos ou ficha individual; os PDFs têm cabeçalho, seções e paginação, e incluem fotos disponíveis. A programação também inclui a foto ao lado do nome no PDF.
 
+## Estoque da assistência técnica
+
+O menu **Estoque** fica disponível para administradores e usuários com acesso à página **Colaboradores**. Cadastre insumos com tipo (Material, Equipamento, EPI, EPC, Ferramenta ou tipo personalizado), unidade-base, conversões para embalagens e estoque mínimo. Por exemplo, para um insumo em kg, cadastre a conversão “saco de 20 kg” com fator 20. O saldo e o alerta de mínimo são calculados na unidade-base e no total dos locais; conversões são registradas com cada movimentação para preservar o histórico. Os locais iniciais são **Galpão Santa Lúcia** e **Ponto de Apoio GrandView**. É possível cadastrar novos locais e inativar locais sem apagar o histórico.
+
+Na gestão do estoque, registre entradas e saídas por local, transfira materiais entre locais, monte kits de EPI, entregue ferramentas e registre devoluções. O servidor valida o saldo na origem e impede saídas ou transferências acima do disponível. Entregas de EPI e ferramentas exigem o PIN do perfil de quem entrega e a assinatura desenhada de quem recebe; após validar o PIN, o servidor recupera a assinatura cadastrada no perfil, sem enviá-la pelo navegador. As assinaturas são criptografadas com `PII_ENCRYPTION_KEY`, e a data pode ser escolhida no formulário. As entregas e devoluções aparecem no histórico da ficha do colaborador e no PDF individual. Ferramentas ficam associadas ao colaborador e ao local de origem até a devolução completa. O relatório de estoque inclui o saldo total e o saldo por local.
+
+Em instalações existentes, execute `npm run db:migrate` para aplicar `038_inventory_management.sql` e `039_inventory_locations_and_profile_signatures.sql`.
+
+## Preenchimento de cartas
+
+A página **Preenchimento de cartas** está disponível para quem tem acesso a **Chamados**. Ela pesquisa chamados na etapa 7.1 por ID, protocolo, cliente, empreendimento, bloco, unidade e assuntos. A seleção pode incluir vários chamados do mesmo cliente; a data de início é informada antes da emissão. O resultado é um PDF simples, sem logo, de duas páginas: a notificação e, na segunda página, duas vias idênticas do termo de entrega e recebimento para separar os documentos assinados dos deixados no envelope.
+
+O endereço da obra é mantido no cadastro de **Informações dos empreendimentos**. Se estiver faltando, a própria tela de cartas solicita o preenchimento e salva o endereço no cadastro para reutilização. Execute `npm run db:migrate` em instalações existentes para aplicar `040_enterprise_work_address.sql`.
+
 ## Empreendimentos e Processos Jurídicos
 
 Na tela **Processos Jurídicos**, edite o nome de uma fase pelo ícone de lápis ao lado dela; nomes duplicados não são aceitos.

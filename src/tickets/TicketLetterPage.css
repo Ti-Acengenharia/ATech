@@ -1,0 +1,76 @@
+.ticket-letter-page { display: flex; max-width: 1440px; flex-direction: column; gap: 18px; margin: 0 auto; }
+.ticket-letter-heading { display: flex; align-items: flex-start; gap: 13px; }
+.ticket-letter-heading-icon { display: grid; width: 46px; height: 46px; flex: 0 0 auto; place-items: center; color: #2878ad; background: #eaf4fa; border: 1px solid #d8e9f4; border-radius: 10px; }
+.ticket-letter-heading h1 { margin: 3px 0 0; color: #203d57; font-size: 24px; }
+.ticket-letter-heading p { margin: 6px 0 0; color: #71869a; font-size: 12px; line-height: 1.5; }
+.ticket-letter-notice { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border: 1px solid; border-radius: 7px; font-size: 11px; }
+.ticket-letter-notice.success { color: #387556; background: #eef8f1; border-color: #cfe7d6; }
+.ticket-letter-notice.error { color: #a34d4d; background: #fff3f1; border-color: #f1d3ce; }
+.ticket-letter-notice > span { display: flex; }
+.ticket-letter-notice > button { margin-left: auto; color: inherit; background: transparent; border: 0; font-size: 18px; cursor: pointer; }
+.ticket-letter-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, .8fr); align-items: start; gap: 14px; }
+.ticket-letter-search-card, .ticket-letter-date-card, .ticket-letter-address-card { padding: 16px; background: #fff; border: 1px solid #e1e9f0; border-radius: 9px; box-shadow: 0 4px 14px #203d5708; }
+.ticket-letter-search-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ticket-letter-search-card h2, .ticket-letter-date-card h2, .ticket-letter-address-card h2 { margin: 0; color: #29445c; font-size: 14px; }
+.ticket-letter-search-card header p, .ticket-letter-address-card > p { margin: 5px 0 0; color: #7b8d9c; font-size: 10px; line-height: 1.5; }
+.ticket-letter-search-card > header > span { flex: 0 0 auto; padding: 5px 8px; color: #55738c; background: #f1f6f9; border-radius: 999px; font-size: 9px; }
+.ticket-letter-search { display: flex; align-items: center; gap: 8px; margin-top: 13px; padding: 0 10px; color: #71889a; background: #fbfcfd; border: 1px solid #dce5ec; border-radius: 6px; }
+.ticket-letter-search input { width: 100%; min-height: 38px; color: #30465c; border: 0; outline: 0; background: transparent; font: inherit; font-size: 11px; }
+.ticket-letter-client-lock { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding: 9px; color: #487493; background: #eff7fb; border-radius: 6px; font-size: 9px; line-height: 1.45; }
+.ticket-letter-client-lock > svg { flex: 0 0 auto; }
+.ticket-letter-client-lock > button { margin-left: auto; padding: 3px 5px; color: #39759e; background: #fff; border: 1px solid #d5e5ef; border-radius: 4px; font: inherit; white-space: nowrap; cursor: pointer; }
+.ticket-letter-results { display: flex; max-height: 570px; flex-direction: column; gap: 6px; overflow: auto; margin-top: 10px; }
+.ticket-letter-result { display: flex; align-items: flex-start; gap: 9px; padding: 10px; background: #fff; border: 1px solid #e7edf2; border-radius: 6px; cursor: pointer; }
+.ticket-letter-result:hover { border-color: #aacbdf; background: #fbfdff; }
+.ticket-letter-result.selected { border-color: #7fb1d1; background: #f1f8fc; }
+.ticket-letter-result.disabled { opacity: .48; cursor: not-allowed; }
+.ticket-letter-result input { flex: 0 0 auto; margin: 2px 0 0; accent-color: #2b78a8; }
+.ticket-letter-result-content { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.ticket-letter-result-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #334f66; }
+.ticket-letter-result-top strong { font-size: 10px; }
+.ticket-letter-result-top small { color: #71879a; font-size: 9px; }
+.ticket-letter-result-top i { padding: 3px 6px; color: #54758d; background: #f0f5f8; border-radius: 999px; font-size: 8px; font-style: normal; }
+.ticket-letter-result-enterprise { color: #60798f; font-size: 9px; }
+.ticket-letter-result-subject { display: flex; flex-direction: column; gap: 2px; color: #3e5b73; font-size: 10px; font-weight: 600; }
+.ticket-letter-result-subject small { color: #71879a; font-size: 9px; font-weight: 400; }
+.ticket-letter-result-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.ticket-letter-result-tags i { padding: 2px 5px; border: 1px solid; border-radius: 999px; font-size: 8px; font-style: normal; }
+.ticket-letter-warranty { align-self: flex-start; padding: 3px 6px; border-radius: 999px; font-size: 8px; }
+.ticket-letter-warranty.within { color: #347a54; background: #eaf6ef; }
+.ticket-letter-warranty.outside { color: #a04f43; background: #fff0ed; }
+.ticket-letter-warranty.undetermined { color: #806a37; background: #faf4e4; }
+.ticket-letter-result-customer { display: flex; flex-direction: column; gap: 2px; color: #526f87; font-size: 9px; }
+.ticket-letter-result-customer small { color: #778c9d; font-size: 9px; }
+.ticket-letter-result-description { display: -webkit-box; overflow: hidden; color: #71869a; font-size: 9px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.ticket-letter-result-meta { display: flex; flex-wrap: wrap; gap: 5px; }
+.ticket-letter-result-meta i { padding: 3px 5px; color: #75899a; background: #f4f7f9; border-radius: 4px; font-size: 8px; font-style: normal; }
+.ticket-letter-empty { padding: 24px 12px; color: #7c8e9d; text-align: center; font-size: 10px; }
+.ticket-letter-options { display: flex; flex-direction: column; gap: 12px; }
+.ticket-letter-date-card { display: flex; flex-direction: column; gap: 12px; }
+.ticket-letter-date-card > label, .ticket-letter-address-entry label { display: flex; flex-direction: column; gap: 5px; color: #526c82; font-size: 10px; font-weight: 600; }
+.ticket-letter-date-card input, .ticket-letter-address-entry textarea { width: 100%; min-width: 0; padding: 8px 9px; color: #30465c; background: #fff; border: 1px solid #dce5ee; border-radius: 5px; font: inherit; font-size: 11px; }
+.ticket-letter-date-card input { min-height: 36px; }
+.ticket-letter-address-entry textarea { resize: vertical; line-height: 1.45; }
+.ticket-letter-selection-count { display: flex; align-items: center; justify-content: space-between; padding: 10px; color: #657d91; background: #f6f9fb; border-radius: 6px; font-size: 10px; }
+.ticket-letter-selection-count strong { color: #29445c; font-size: 18px; }
+.ticket-letter-selected-list { display: flex; max-height: 95px; flex-wrap: wrap; gap: 5px; overflow: auto; }
+.ticket-letter-selected-list span { padding: 4px 6px; color: #56748b; background: #f1f6f9; border-radius: 4px; font-size: 9px; }
+.ticket-letter-address-card > h2 { display: flex; align-items: center; gap: 7px; }
+.ticket-letter-address-card > h2 svg { color: #4882a7; }
+.ticket-letter-address-entry { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #edf1f4; }
+.ticket-letter-address-warning { display: flex; gap: 7px; margin-top: 10px; padding: 8px; color: #98601f; background: #fff8eb; border-radius: 5px; font-size: 9px; line-height: 1.45; }
+.ticket-letter-address-warning svg { flex: 0 0 auto; }
+.ticket-letter-generate { display: flex; flex-direction: column; gap: 9px; padding: 13px; background: #f6f9fb; border: 1px solid #e2eaf0; border-radius: 8px; }
+.ticket-letter-generate p, .ticket-letter-generate small { margin: 0; color: #71869a; font-size: 9px; line-height: 1.5; }
+.ticket-letter-generate > button { justify-content: center; }
+.ticket-letter-generate > button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 900px) {
+  .ticket-letter-layout { grid-template-columns: minmax(0, 1fr); }
+  .ticket-letter-results { max-height: 420px; }
+}
+@media (max-width: 560px) {
+  .ticket-letter-heading h1 { font-size: 20px; }
+  .ticket-letter-search-card, .ticket-letter-date-card, .ticket-letter-address-card { padding: 12px; }
+  .ticket-letter-client-lock { align-items: flex-start; flex-wrap: wrap; }
+  .ticket-letter-client-lock > button { margin-left: 22px; }
+}

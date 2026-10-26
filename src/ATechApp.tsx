@@ -13,11 +13,13 @@ import {
   Clock3,
   ContactRound,
   ClipboardList,
+  FileText,
   Info,
   KeyRound,
   LayoutDashboard,
   ListTodo,
   Mail,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -33,7 +35,7 @@ import './atech.css'
 
 type UserRole = 'admin' | 'member'
 type UserStatus = 'invited' | 'active' | 'suspended'
-type AdminPage = 'home' | 'tickets' | 'schedule' | 'collaborators' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities'
+type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities'
 
 interface SessionUser {
   id: number
@@ -104,7 +106,9 @@ interface UserNotification {
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
 const configuredDomain = import.meta.env.VITE_CORPORATE_DOMAIN ?? 'empresa.com.br'
 const CollaboratorsPage = lazy(() => import('./CollaboratorsPage'))
+const InventoryPage = lazy(() => import('./InventoryPage'))
 const TicketBoardPage = lazy(() => import('./tickets/TicketBoardPage'))
+const TicketLetterPage = lazy(() => import('./tickets/TicketLetterPage'))
 const ProgrammingPage = lazy(() => import('./tickets/ProgrammingPage'))
 const ApiValidationPage = lazy(() => import('./tickets/ApiValidationPage'))
 const EnterpriseInformationPage = lazy(() => import('./EnterpriseInformationPage'))
@@ -275,7 +279,11 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'legal-processes', label: 'Processos Jurídicos' },
     { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
-  const canAccessPage = (key: AdminPage) => user.role === 'admin' || pageAccess.includes(key)
+  const canAccessPage = (key: AdminPage) => key === 'inventory'
+    ? user.role === 'admin' || pageAccess.includes('collaborators')
+    : key === 'letter-filling'
+      ? user.role === 'admin' || pageAccess.includes('tickets')
+      : user.role === 'admin' || pageAccess.includes(key)
   const openPage = (key: AdminPage) => {
     if (canAccessPage(key)) setPage(key)
   }
@@ -418,6 +426,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   const pageTitles: Record<AdminPage, string> = {
     home: 'Visão geral',
     tickets: 'Chamados',
+    'letter-filling': 'Preenchimento de cartas',
     schedule: 'Programação',
     collaborators: 'Colaboradores',
     information: 'Informações',
@@ -426,6 +435,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     warranties: 'Prazos de garantia',
     'legal-processes': 'Processos Jurídicos',
     'personal-activities': 'Atividades pessoais',
+    inventory: 'Gestão de estoque',
   }
 
   return (
@@ -436,8 +446,10 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
         <nav className="sidebar-nav" aria-label="Navegação principal">
           {canAccessPage('home') && <button type="button" title="Início" aria-label="Ir para início" className={`nav-item ${page === 'home' ? 'nav-item-active' : ''}`} onClick={() => setPage('home')}><LayoutDashboard size={17} /><span>Início</span></button>}
           {canAccessPage('tickets') && <button type="button" title="Chamados" aria-label="Ir para chamados" className={`nav-item ${page === 'tickets' ? 'nav-item-active' : ''}`} onClick={() => setPage('tickets')}><ClipboardList size={17} /><span>Chamados</span></button>}
+          {canAccessPage('letter-filling') && <button type="button" title="Preenchimento de cartas" aria-label="Ir para preenchimento de cartas" className={`nav-item ${page === 'letter-filling' ? 'nav-item-active' : ''}`} onClick={() => setPage('letter-filling')}><FileText size={17} /><span>Preenchimento de cartas</span></button>}
           {canAccessPage('schedule') && <button type="button" title="Programação" aria-label="Ir para programação" className={`nav-item ${page === 'schedule' ? 'nav-item-active' : ''}`} onClick={() => setPage('schedule')}><CalendarDays size={17} /><span>Programação</span></button>}
           {canAccessPage('collaborators') && <button type="button" title="Colaboradores" aria-label="Ir para colaboradores" className={`nav-item ${page === 'collaborators' ? 'nav-item-active' : ''}`} onClick={() => setPage('collaborators')}><ContactRound size={17} /><span>Colaboradores</span></button>}
+          {canAccessPage('inventory') && <button type="button" title="Gestão de estoque" aria-label="Ir para gestão de estoque" className={`nav-item ${page === 'inventory' ? 'nav-item-active' : ''}`} onClick={() => setPage('inventory')}><Package size={17} /><span>Estoque</span></button>}
           {canAccessPage('api-validation') && <button type="button" title="Validação da API" aria-label="Ir para validação da API" className={`nav-item ${page === 'api-validation' ? 'nav-item-active' : ''}`} onClick={() => setPage('api-validation')}><Zap size={17} /><span>Validação API</span></button>}
           {canAccessPage('warranties') && <button type="button" title="Prazos de garantia" aria-label="Ir para prazos de garantia" className={`nav-item ${page === 'warranties' ? 'nav-item-active' : ''}`} onClick={() => setPage('warranties')}><ShieldCheck size={17} /><span>Garantias</span></button>}
           {canAccessPage('legal-processes') && <button type="button" title="Processos Jurídicos" aria-label="Ir para processos jurídicos" className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`} onClick={() => setPage('legal-processes')}><BriefcaseBusiness size={17} /><span>Processos Jurídicos</span></button>}
@@ -467,10 +479,14 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               initialTicketId={initialTicketId}
               onTicketOpened={clearInitialTicket}
             />
+          ) : page === 'letter-filling' && canAccessPage('letter-filling') ? (
+            <TicketLetterPage />
           ) : page === 'schedule' && canAccessPage('schedule') ? (
             <ProgrammingPage />
           ) : page === 'collaborators' && canAccessPage('collaborators') ? (
             <CollaboratorsPage />
+          ) : page === 'inventory' && canAccessPage('inventory') ? (
+            <InventoryPage />
           ) : page === 'information' && canAccessPage('information') ? (
             <EnterpriseInformationPage />
           ) : page === 'warranties' && canAccessPage('warranties') ? (
@@ -620,6 +636,7 @@ function HomeDashboard({ user, users, loading, pageAccess, onOpenCollaborators, 
       <div className="dashboard-section-title modules-title"><div><span className="eyebrow">PLATAFORMA</span><h2>Áreas de trabalho</h2></div></div>
       <section className="module-grid" aria-label="Áreas da plataforma">
         {canAccessCollaborators && <button className="module-item module-item-live" type="button" onClick={onOpenCollaborators}><span className="module-icon"><ContactRound size={18} /></span><span className="module-copy"><strong>Colaboradores</strong><small>Acessos, convites e permissões</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
+        {canAccessCollaborators && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('inventory')}><span className="module-icon"><Package size={18} /></span><span className="module-copy"><strong>Estoque</strong><small>Insumos, EPI e ferramentas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('tickets') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('tickets')}><span className="module-icon"><ClipboardList size={17} /></span><span className="module-copy"><strong>Chamados</strong><small>Quadro Kanban e atendimentos</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('schedule') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('schedule')}><span className="module-icon"><CalendarDays size={17} /></span><span className="module-copy"><strong>Programação</strong><small>Agenda e atividades técnicas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('api-validation') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('api-validation')}><span className="module-icon"><Zap size={17} /></span><span className="module-copy"><strong>Validação API</strong><small>Integração CVCRM e carga CSV</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
@@ -635,6 +652,7 @@ function HomeDashboard({ user, users, loading, pageAccess, onOpenCollaborators, 
 function FutureModulePage({ page }: { page: AdminPage }) {
   const module = {
     tickets: { title: 'Chamados', description: 'Atendimentos técnicos e solicitações em um só lugar.', icon: ClipboardList },
+    'letter-filling': { title: 'Preenchimento de cartas', description: 'Geração de notificações e termos a partir dos chamados.', icon: FileText },
     schedule: { title: 'Programação', description: 'Agenda de serviços e atividades da equipe.', icon: CalendarDays },
     information: { title: 'Informações', description: 'Referências e dados úteis para a operação técnica.', icon: Info },
     accesses: { title: 'Acessos', description: 'Contas administrativas e convites.', icon: UsersRound },
@@ -644,6 +662,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     'personal-activities': { title: 'Atividades pessoais', description: 'Seu quadro privado para organizar atividades.', icon: ListTodo },
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
+    inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
   }[page]
   const ModuleIcon = module.icon
 

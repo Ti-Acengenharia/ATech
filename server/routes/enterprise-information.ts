@@ -22,6 +22,7 @@ const informationSchema = z.object({
   supervisorPhone: z.string().trim().max(40),
   supervisorEmail: optionalEmail,
   condominiumEmail: optionalEmail,
+  workAddress: z.string().trim().max(500),
   occupancyPermitDate: nullableDate,
   condominiumDeliveryDate: nullableDate,
 })
@@ -47,7 +48,7 @@ router.get('/', async (_req, res, next) => {
        SELECT p.enterprise_key, p.enterprise_name, p.ticket_count,
               i.syndic_name, i.syndic_phone, i.syndic_email,
               i.supervisor_name, i.supervisor_phone, i.supervisor_email,
-              i.condominium_email, i.occupancy_permit_date, i.condominium_delivery_date
+              i.condominium_email, i.work_address, i.occupancy_permit_date, i.condominium_delivery_date
        FROM properties p
        LEFT JOIN enterprise_information i USING (enterprise_key)
        ORDER BY lower(p.enterprise_name)`,
@@ -71,8 +72,8 @@ router.put('/', async (req, res, next) => {
       `INSERT INTO enterprise_information (
          enterprise_key, enterprise_name, syndic_name, syndic_phone, syndic_email,
          supervisor_name, supervisor_phone, supervisor_email, condominium_email,
-         occupancy_permit_date, condominium_delivery_date
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         work_address, occupancy_permit_date, condominium_delivery_date
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (enterprise_key) DO UPDATE SET
          enterprise_name = EXCLUDED.enterprise_name,
          syndic_name = EXCLUDED.syndic_name,
@@ -82,12 +83,13 @@ router.put('/', async (req, res, next) => {
          supervisor_phone = EXCLUDED.supervisor_phone,
          supervisor_email = EXCLUDED.supervisor_email,
          condominium_email = EXCLUDED.condominium_email,
+         work_address = EXCLUDED.work_address,
          occupancy_permit_date = EXCLUDED.occupancy_permit_date,
          condominium_delivery_date = EXCLUDED.condominium_delivery_date,
          updated_at = now()`,
       [
         enterpriseKey, data.enterpriseName, data.syndicName, data.syndicPhone, data.syndicEmail,
-        data.supervisorName, data.supervisorPhone, data.supervisorEmail, data.condominiumEmail,
+        data.supervisorName, data.supervisorPhone, data.supervisorEmail, data.condominiumEmail, data.workAddress,
         data.occupancyPermitDate, data.condominiumDeliveryDate,
       ],
     )

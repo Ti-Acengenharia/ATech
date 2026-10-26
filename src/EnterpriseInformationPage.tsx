@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Building2, CalendarDays, Check, CircleAlert, Mail, Pencil, Phone, Plus, Save, Search, ShieldCheck, UserRound, X } from 'lucide-react'
+import { Building2, CalendarDays, Check, CircleAlert, Mail, MapPin, Pencil, Phone, Plus, Save, Search, ShieldCheck, UserRound, X } from 'lucide-react'
 import { apiRequest } from './api/client'
 
 interface EnterpriseInformation {
@@ -13,6 +13,7 @@ interface EnterpriseInformation {
   supervisor_phone: string | null
   supervisor_email: string | null
   condominium_email: string | null
+  work_address: string | null
   occupancy_permit_date: string | null
   condominium_delivery_date: string | null
 }
@@ -26,6 +27,7 @@ interface EnterpriseForm {
   supervisorPhone: string
   supervisorEmail: string
   condominiumEmail: string
+  workAddress: string
   occupancyPermitDate: string
   condominiumDeliveryDate: string
 }
@@ -63,6 +65,7 @@ function formFromEnterprise(enterprise: EnterpriseInformation): EnterpriseForm {
     supervisorPhone: enterprise.supervisor_phone ?? '',
     supervisorEmail: enterprise.supervisor_email ?? '',
     condominiumEmail: enterprise.condominium_email ?? '',
+    workAddress: enterprise.work_address ?? '',
     occupancyPermitDate: inputDate(enterprise.occupancy_permit_date),
     condominiumDeliveryDate: inputDate(enterprise.condominium_delivery_date),
   }
@@ -94,6 +97,7 @@ function emptyEnterpriseForm(): EnterpriseForm {
     supervisorPhone: '',
     supervisorEmail: '',
     condominiumEmail: '',
+    workAddress: '',
     occupancyPermitDate: '',
     condominiumDeliveryDate: '',
   }
@@ -190,6 +194,7 @@ export default function EnterpriseInformationPage() {
       enterprise.supervisor_phone,
       enterprise.supervisor_email,
       enterprise.condominium_email,
+      enterprise.work_address,
     ].some((value) => value?.toLocaleLowerCase('pt-BR').includes(normalizedSearch))
     const deliveryDate = inputDate(enterprise.condominium_delivery_date)
     const matchesDelivery = deliveryFilter === 'all' ||
@@ -247,6 +252,7 @@ export default function EnterpriseInformationPage() {
                     </div>
                     <div className="enterprise-facts">
                       <div className="enterprise-fact"><Mail size={15} /><span><small>E-mail do condomínio</small><strong>{enterprise.condominium_email || 'Não informado'}</strong></span></div>
+                      <div className="enterprise-fact"><MapPin size={15} /><span><small>Endereço da obra</small><strong>{enterprise.work_address || 'Não informado'}</strong></span></div>
                       <div className="enterprise-fact"><CalendarDays size={15} /><span><small>Emissão do habite-se</small><strong>{displayDate(enterprise.occupancy_permit_date)}</strong></span></div>
                       <div className="enterprise-fact"><CalendarDays size={15} /><span><small>Entrega do condomínio</small><strong>{displayDate(enterprise.condominium_delivery_date)}</strong></span></div>
                       <div className={`enterprise-delivery-counter ${duration ? 'has-delivery-date' : ''}`}><ShieldCheck size={17} /><span><small>Tempo desde a entrega</small><strong>{duration ?? 'Data de entrega não informada'}</strong></span></div>
@@ -291,6 +297,7 @@ function EnterpriseEditForm({
         <label><span>Telefone do supervisor</span><input type="tel" value={form.supervisorPhone} maxLength={40} onChange={(event) => onUpdate('supervisorPhone', event.target.value)} /></label>
         <label><span>E-mail do supervisor</span><input type="email" value={form.supervisorEmail} maxLength={254} onChange={(event) => onUpdate('supervisorEmail', event.target.value)} /></label>
         <label><span>E-mail do condomínio</span><input type="email" value={form.condominiumEmail} maxLength={254} onChange={(event) => onUpdate('condominiumEmail', event.target.value)} /></label>
+        <label className="enterprise-address-field"><span>Endereço da obra (usado nas cartas)</span><textarea value={form.workAddress} maxLength={500} rows={3} onChange={(event) => onUpdate('workAddress', event.target.value)} /></label>
       </div>
       <div className="enterprise-form-section enterprise-dates-form">
         <h3>Datas do empreendimento</h3>

@@ -2648,6 +2648,8 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .enterprise-form-section h3 { grid-column: 1 / -1; margin: 0 0 2px; color: #35536c; font-size: 10px; }
 .enterprise-form-section label { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: #667e93; font-size: 8px; font-weight: 700; }
 .enterprise-form-section input { width: 100%; min-width: 0; height: 34px; padding: 0 8px; color: #314e66; background: #fff; border: 1px solid #dbe5ed; border-radius: 5px; font: inherit; font-size: 10px; }
+.enterprise-form-section textarea { width: 100%; min-width: 0; padding: 8px; color: #314e66; background: #fff; border: 1px solid #dbe5ed; border-radius: 5px; font: inherit; font-size: 10px; resize: vertical; }
+.enterprise-form-section .enterprise-address-field { grid-column: 1 / -1; }
 .enterprise-form-section input:focus { outline: 0; border-color: #72a4cb; box-shadow: 0 0 0 3px rgba(62, 130, 184, .1); }
 .enterprise-edit-form footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; padding-top: 4px; }
 .enterprise-edit-form footer .primary-button, .enterprise-edit-form footer .secondary-button { min-height: 35px; font-size: 9px; }
