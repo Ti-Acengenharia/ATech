@@ -34,6 +34,16 @@ function normalize(value: string) {
   return value.trim().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR')
 }
 
+function filenamePart(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^A-Za-z0-9._ -]/g, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+}
+
 function enterpriseKey(value: string) {
   return normalize(value)
 }
@@ -162,7 +172,9 @@ export default function TicketLetterPage() {
       const url = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }))
       const link = document.createElement('a')
       link.href = url
-      link.download = `cartas-chamados-${startDate}.pdf`
+      const customer = filenamePart(selectedTickets[0].customerName) || 'Cliente'
+      const ticketNumbers = selectedTickets.map((ticket) => filenamePart(ticket.id)).join('-')
+      link.download = `Carta_${customer}_${ticketNumbers}.pdf`
       link.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
       setNotice({ kind: 'success', text: 'PDF gerado: notificação e duas vias do termo de entrega e recebimento.' })
