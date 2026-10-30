@@ -76,6 +76,9 @@ function warrantyLabel(warranty: TicketWarranty | null) {
 
 export default function TicketLetterPage() {
   const [search, setSearch] = useState('')
+  const [enterpriseFilter, setEnterpriseFilter] = useState('')
+  const [blockFilter, setBlockFilter] = useState('')
+  const [unitFilter, setUnitFilter] = useState('')
   const [tickets, setTickets] = useState<LetterSearchResult[]>([])
   const [selectedTickets, setSelectedTickets] = useState<LetterSearchResult[]>([])
   const [startDate, setStartDate] = useState(todayString)
@@ -105,6 +108,28 @@ export default function TicketLetterPage() {
   }, [search, selectedCustomerName])
 
   const selectedIds = useMemo(() => new Set(selectedTickets.map((ticket) => ticket.id)), [selectedTickets])
+  const filterOptions = useMemo(() => ({
+    enterprises: [...new Set(tickets.map((ticket) => ticket.enterprise.trim()).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, 'pt-BR')),
+    blocks: [...new Set(tickets
+      .filter((ticket) => !enterpriseFilter || ticket.enterprise === enterpriseFilter)
+      .map((ticket) => ticket.block.trim())
+      .filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true })),
+    units: [...new Set(tickets
+      .filter((ticket) =>
+        (!enterpriseFilter || ticket.enterprise === enterpriseFilter) &&
+        (!blockFilter || ticket.block === blockFilter),
+      )
+      .map((ticket) => ticket.unit.trim())
+      .filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true })),
+  }), [tickets, enterpriseFilter, blockFilter])
+  const filteredTickets = useMemo(() => tickets.filter((ticket) =>
+    (!enterpriseFilter || ticket.enterprise === enterpriseFilter) &&
+    (!blockFilter || ticket.block === blockFilter) &&
+    (!unitFilter || ticket.unit === unitFilter),
+  ), [tickets, enterpriseFilter, blockFilter, unitFilter])
   const addressGroups = useMemo(() => {
     const groups = new Map<string, { enterprise: string; workAddress: string }>()
     for (const ticket of selectedTickets) {
@@ -134,6 +159,17 @@ export default function TicketLetterPage() {
   function updateSearch(value: string) {
     setLoading(true)
     setSearch(value)
+  }
+
+  function updateEnterpriseFilter(value: string) {
+    setEnterpriseFilter(value)
+    setBlockFilter('')
+    setUnitFilter('')
+  }
+
+  function updateBlockFilter(value: string) {
+    setBlockFilter(value)
+    setUnitFilter('')
   }
 
   async function saveAddress(key: string, enterpriseName: string) {
@@ -199,11 +235,16 @@ export default function TicketLetterPage() {
 
       <div className="ticket-letter-layout">
         <section className="ticket-letter-search-card">
-          <header><div><h2>Chamados na etapa 7.1</h2><p>A busca considera ID, protocolo, cliente, empreendimento, bloco, unidade e assunto.</p></div><span>{tickets.length} resultado(s)</span></header>
+          <header><div><h2>Chamados na etapa 7.1</h2><p>A busca considera ID, protocolo, cliente, centro de custo, bloco, apartamento/unidade e assunto.</p></div><span>{filteredTickets.length} resultado(s)</span></header>
           <label className="ticket-letter-search"><Search size={16} /><input type="search" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Buscar chamado, cliente, protocolo..." aria-label="Pesquisar chamados da etapa 7.1" /></label>
+          <div className="ticket-letter-filters" aria-label="Filtros de chamados">
+            <label><span>Centro de custo</span><select value={enterpriseFilter} onChange={(event) => updateEnterpriseFilter(event.target.value)}><option value="">Todos os centros de custo</option>{filterOptions.enterprises.map((enterprise) => <option key={enterprise} value={enterprise}>{enterprise}</option>)}</select></label>
+            <label><span>Bloco</span><select value={blockFilter} onChange={(event) => updateBlockFilter(event.target.value)} disabled={!filterOptions.blocks.length}><option value="">Todos os blocos</option>{filterOptions.blocks.map((block) => <option key={block} value={block}>{block}</option>)}</select></label>
+            <label><span>Apartamento / unidade</span><select value={unitFilter} onChange={(event) => setUnitFilter(event.target.value)} disabled={!filterOptions.units.length}><option value="">Todas as unidades</option>{filterOptions.units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label>
+          </div>
           {selectedTickets.length > 0 && <div className="ticket-letter-client-lock"><ShieldCheck size={15} /><span>Exibindo chamados 7.1 do mesmo cliente: <strong>{selectedTickets[0].customerName || 'Nome não informado'}</strong>.</span><button type="button" onClick={() => setSelectedTickets([])}>Limpar seleção</button></div>}
           <div className="ticket-letter-results" aria-live="polite">
-            {loading ? <p className="ticket-letter-empty">Pesquisando chamados...</p> : tickets.length ? tickets.map((ticket) => {
+            {loading ? <p className="ticket-letter-empty">Pesquisando chamados...</p> : filteredTickets.length ? filteredTickets.map((ticket) => {
               const selected = selectedIds.has(ticket.id)
               return (
                 <label key={ticket.id} className={`ticket-letter-result ${selected ? 'selected' : ''}`}>
@@ -220,7 +261,7 @@ export default function TicketLetterPage() {
                   </span>
                 </label>
               )
-            }) : <p className="ticket-letter-empty">Nenhum chamado da etapa 7.1 corresponde à busca.</p>}
+            }) : <p className="ticket-letter-empty">{tickets.length ? 'Nenhum chamado corresponde aos filtros selecionados.' : 'Nenhum chamado da etapa 7.1 corresponde à busca.'}</p>}
           </div>
         </section>
 

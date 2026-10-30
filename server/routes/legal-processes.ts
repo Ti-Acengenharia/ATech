@@ -7,6 +7,10 @@ import { pool } from '../db.js'
 const router = Router()
 const idSchema = z.coerce.number().int().positive()
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable()
+function isConcludedStatus(name: string) {
+  return name.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('pt-BR') === 'concluido'
+}
+
 const externalUrlSchema = z.string().trim().max(2000).refine((value) => {
   if (!value) return true
   try {
@@ -53,6 +57,19 @@ const statusOrderSchema = z.object({
   statusIds: z.array(idSchema).min(1).max(100),
 }).refine(({ statusIds }) => new Set(statusIds).size === statusIds.length, {
   message: 'A ordem contém status duplicados.',
+})
+const conclusionSchema = z.object({
+  result: z.enum(['full_win', 'partial_win', 'full_loss', 'partial_loss']),
+  summary: z.string().trim().min(1).max(2000),
+})
+const legalTagSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  color: z.string().regex(/^#[\da-f]{6}$/i),
+})
+const legalTagAssignmentsSchema = z.object({
+  tagIds: z.array(idSchema).max(100),
+}).refine(({ tagIds }) => new Set(tagIds).size === tagIds.length, {
+  message: 'A lista de tags contém itens duplicados.',
 })
 const paymentSchema = z.object({
   description: z.string().trim().min(1).max(500),
@@ -136,6 +153,92 @@ async function validateEnterpriseKey(client: PoolClient, enterpriseKey: string |
 }
 
 router.use(requirePageAccess('legal-processes'))
+
+router.get('/tags', async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT id::int AS id, name, color
+       FROM legal_process_tags
+       ORDER BY lower(name), id`,
+    )
+    res.json({ tags: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/tags', async (req, res, next) => {
+  const parsed = legalTagSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Tag inválida.' })
+    return
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO legal_process_tags (name, color, created_by)
+       VALUES ($1, $2, $3)
+       RETURNING id::int AS id, name, color`,
+      [parsed.data.name, parsed.data.color, req.session.user!.id],
+    )
+    res.status(201).json({ tag: result.rows[0] })
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+      res.status(409).json({ error: 'Já existe uma tag jurídica com esse nome.' })
+      return
+    }
+    next(error)
+  }
+})
+
+router.put('/:id/tags', async (req, res, next) => {
+  const processId = idSchema.safeParse(req.params.id)
+  const parsed = legalTagAssignmentsSchema.safeParse(req.body)
+  if (!processId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador de processo inválido.' : parsed.error.issues[0]?.message ?? 'Tags inválidas.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const process = await client.query('SELECT id FROM legal_processes WHERE id = $1 FOR UPDATE', [processId.data])
+    if (!process.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Processo não encontrado.' })
+      return
+    }
+    if (parsed.data.tagIds.length) {
+      const tags = await client.query('SELECT id FROM legal_process_tags WHERE id = ANY($1::bigint[])', [parsed.data.tagIds])
+      if (tags.rowCount !== parsed.data.tagIds.length) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'Uma ou mais tags jurídicas não existem.' })
+        return
+      }
+    }
+    await client.query('DELETE FROM legal_process_tag_assignments WHERE process_id = $1', [processId.data])
+    for (const tagId of parsed.data.tagIds) {
+      await client.query(
+        `INSERT INTO legal_process_tag_assignments (process_id, tag_id, assigned_by)
+         VALUES ($1, $2, $3)`,
+        [processId.data, tagId, req.session.user!.id],
+      )
+    }
+    const tags = await client.query(
+      `SELECT tag.id::int AS id, tag.name, tag.color
+       FROM legal_process_tag_assignments assignment
+       JOIN legal_process_tags tag ON tag.id = assignment.tag_id
+       WHERE assignment.process_id = $1
+       ORDER BY lower(tag.name), tag.id`,
+      [processId.data],
+    )
+    await client.query('COMMIT')
+    res.json({ tags: tags.rows })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
 
 router.post('/import-csv', (req, res, next) => {
   if (req.session.user?.role !== 'admin') {
@@ -412,7 +515,14 @@ router.get('/', async (_req, res, next) => {
               COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS enterprise_name,
               p.start_date, p.end_date, p.description, p.case_value::text, p.claimant,
               p.drive_url, p.notebook_url, p.distribution_date, p.is_demo,
-              p.created_at, p.updated_at,
+              p.created_at, p.updated_at, p.conclusion_result, p.conclusion_summary,
+              COALESCE((
+                SELECT json_agg(json_build_object('id', tag.id::int, 'name', tag.name, 'color', tag.color)
+                                ORDER BY lower(tag.name), tag.id)
+                FROM legal_process_tag_assignments assignment
+                JOIN legal_process_tags tag ON tag.id = assignment.tag_id
+                WHERE assignment.process_id = p.id
+              ), '[]'::json) AS tags,
               COALESCE((
                 SELECT json_agg(json_build_object('id', u.id::int, 'displayName', u.display_name)
                                 ORDER BY lower(u.display_name))
@@ -512,6 +622,23 @@ router.get('/:id', async (req, res, next) => {
               p.end_date AS "endDate", p.description, p.case_value::text AS "caseValue",
               p.claimant, p.drive_url AS "driveUrl", p.notebook_url AS "notebookUrl",
               p.distribution_date AS "distributionDate", p.is_demo AS "isDemo",
+              p.conclusion_result AS "conclusionResult", p.conclusion_summary AS "conclusionSummary",
+              COALESCE((SELECT json_agg(json_build_object(
+                'id', tag.id::int, 'name', tag.name, 'color', tag.color
+              ) ORDER BY lower(tag.name), tag.id)
+                FROM legal_process_tag_assignments assignment
+                JOIN legal_process_tags tag ON tag.id = assignment.tag_id
+                WHERE assignment.process_id = p.id), '[]'::json) AS tags,
+              COALESCE((SELECT json_agg(json_build_object(
+                'id', history.id::int,
+                'result', history.result,
+                'summary', history.summary,
+                'concludedAt', history.concluded_at,
+                'concludedByName', COALESCE(conclusion_author.display_name, '')
+              ) ORDER BY history.concluded_at DESC, history.id DESC)
+                FROM legal_process_conclusion_history history
+                LEFT JOIN users conclusion_author ON conclusion_author.id = history.concluded_by
+                WHERE history.process_id = p.id), '[]'::json) AS "conclusionHistory",
               COALESCE((SELECT array_agg(user_id::int ORDER BY user_id)
                         FROM legal_process_assignees WHERE process_id = p.id), '{}') AS "assigneeIds",
               COALESCE((SELECT json_agg(json_build_object(
@@ -593,10 +720,18 @@ router.post('/', async (req, res, next) => {
       res.status(400).json({ error: 'Selecione um empreendimento válido.' })
       return
     }
-    const status = await client.query('SELECT 1 FROM legal_process_statuses WHERE id = $1', [parsed.data.statusId])
+    const status = await client.query<{ name: string }>(
+      'SELECT name FROM legal_process_statuses WHERE id = $1',
+      [parsed.data.statusId],
+    )
     if (!status.rowCount) {
       await client.query('ROLLBACK')
       res.status(400).json({ error: 'Selecione um status válido.' })
+      return
+    }
+    if (isConcludedStatus(status.rows[0].name)) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Um processo novo não pode ser criado como concluído.' })
       return
     }
     if (!(await validateChildStatuses(client, parsed.data.children))) {
@@ -670,10 +805,32 @@ router.put('/:id', async (req, res, next) => {
       res.status(400).json({ error: 'Selecione um empreendimento válido.' })
       return
     }
-    const status = await client.query('SELECT 1 FROM legal_process_statuses WHERE id = $1', [parsed.data.statusId])
+    const status = await client.query<{ name: string }>(
+      'SELECT name FROM legal_process_statuses WHERE id = $1',
+      [parsed.data.statusId],
+    )
     if (!status.rowCount) {
       await client.query('ROLLBACK')
       res.status(400).json({ error: 'Selecione um status válido.' })
+      return
+    }
+    const current = await client.query<{ status_id: number; status_name: string }>(
+      `SELECT process.status_id::int AS status_id, status.name AS status_name
+       FROM legal_processes process
+       JOIN legal_process_statuses status ON status.id = process.status_id
+       WHERE process.id = $1`,
+      [processId.data],
+    )
+    if (current.rowCount && isConcludedStatus(current.rows[0].status_name) &&
+      parsed.data.statusId !== current.rows[0].status_id) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Use a ação de reabertura para escolher a nova fase do processo.' })
+      return
+    }
+    if (current.rowCount && isConcludedStatus(status.rows[0].name) &&
+      !isConcludedStatus(current.rows[0].status_name)) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Registre o resultado e o resumo do encerramento antes de concluir o processo.' })
       return
     }
     if (!(await validateChildStatuses(client, parsed.data.children))) {
@@ -743,6 +900,34 @@ router.patch('/:id/status', async (req, res, next) => {
     return
   }
   try {
+    const status = await pool.query<{
+      name: string
+      process_id: string | null
+      current_status_name: string | null
+    }>(
+      `SELECT s.name, p.id AS process_id, current_status.name AS current_status_name
+       FROM legal_process_statuses s
+       LEFT JOIN legal_processes p ON p.id = $2
+       LEFT JOIN legal_process_statuses current_status ON current_status.id = p.status_id
+       WHERE s.id = $1`,
+      [parsed.data.statusId, processId.data],
+    )
+    if (!status.rowCount) {
+      res.status(404).json({ error: 'Processo ou status não encontrado.' })
+      return
+    }
+    if (!status.rows[0].process_id) {
+      res.status(404).json({ error: 'Processo ou status não encontrado.' })
+      return
+    }
+    if (isConcludedStatus(status.rows[0].name) && !isConcludedStatus(status.rows[0].current_status_name ?? '')) {
+      res.status(409).json({ error: 'Registre o resultado e o resumo do encerramento antes de concluir o processo.' })
+      return
+    }
+    if (!isConcludedStatus(status.rows[0].name) && isConcludedStatus(status.rows[0].current_status_name ?? '')) {
+      res.status(409).json({ error: 'Use a ação de reabertura para escolher a nova fase do processo.' })
+      return
+    }
     const result = await pool.query(
       `UPDATE legal_processes p SET status_id = $1, updated_at = now()
        WHERE p.id = $2 AND EXISTS (SELECT 1 FROM legal_process_statuses s WHERE s.id = $1)
@@ -751,6 +936,142 @@ router.patch('/:id/status', async (req, res, next) => {
     )
     if (!result.rowCount) {
       res.status(404).json({ error: 'Processo ou status não encontrado.' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.patch('/:id/complete', async (req, res, next) => {
+  const processId = idSchema.safeParse(req.params.id)
+  const parsed = conclusionSchema.safeParse(req.body)
+  if (!processId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador de processo inválido.' : parsed.error.issues[0]?.message ?? 'Dados de conclusão inválidos.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const process = await client.query<{
+      status_name: string
+      conclusion_result: string | null
+      conclusion_summary: string
+    }>(
+      `SELECT status.name AS status_name, process.conclusion_result, process.conclusion_summary
+       FROM legal_processes process
+       JOIN legal_process_statuses status ON status.id = process.status_id
+       WHERE process.id = $1
+       FOR UPDATE OF process`,
+      [processId.data],
+    )
+    if (!process.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Processo não encontrado.' })
+      return
+    }
+    if (isConcludedStatus(process.rows[0].status_name)) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Este processo já está concluído.' })
+      return
+    }
+    const concludedStatus = await client.query<{ id: number }>(
+      `SELECT id::int AS id
+       FROM legal_process_statuses
+       WHERE lower(translate(name, 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')) = 'concluido'
+       ORDER BY position, id
+       LIMIT 1`,
+    )
+    if (!concludedStatus.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: 'Cadastre um status chamado “Concluído” para encerrar processos.' })
+      return
+    }
+    if (process.rows[0].conclusion_result) {
+      await client.query(
+        `INSERT INTO legal_process_conclusion_history
+           (process_id, result, summary, concluded_at, concluded_by)
+         SELECT p.id, p.conclusion_result, p.conclusion_summary, p.updated_at, $2
+         FROM legal_processes p
+         WHERE p.id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM legal_process_conclusion_history history
+             WHERE history.process_id = p.id
+               AND history.result = p.conclusion_result
+               AND history.summary = p.conclusion_summary
+           )`,
+        [processId.data, req.session.user!.id],
+      )
+    }
+    await client.query(
+      `INSERT INTO legal_process_conclusion_history
+         (process_id, result, summary, concluded_by)
+       VALUES ($1, $2, $3, $4)`,
+      [processId.data, parsed.data.result, parsed.data.summary, req.session.user!.id],
+    )
+    await client.query(
+      `UPDATE legal_processes
+       SET status_id = $1, conclusion_result = $2, conclusion_summary = $3, updated_at = now()
+       WHERE id = $4`,
+      [concludedStatus.rows[0].id, parsed.data.result, parsed.data.summary, processId.data],
+    )
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.patch('/:id/reopen', async (req, res, next) => {
+  const processId = idSchema.safeParse(req.params.id)
+  const parsed = z.object({ statusId: z.number().int().positive() }).safeParse(req.body)
+  if (!processId.success || !parsed.success) {
+    res.status(400).json({ error: 'Processo ou status inválido.' })
+    return
+  }
+  try {
+    const reopened = await pool.query(
+      `UPDATE legal_processes p
+       SET status_id = $1, updated_at = now()
+       WHERE p.id = $2
+         AND EXISTS (
+           SELECT 1 FROM legal_process_statuses target
+           WHERE target.id = $1
+             AND lower(translate(target.name, 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')) <> 'concluido'
+         )
+         AND EXISTS (
+           SELECT 1 FROM legal_process_statuses current_status
+           WHERE current_status.id = p.status_id
+             AND lower(translate(current_status.name, 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')) = 'concluido'
+         )
+       RETURNING p.id`,
+      [parsed.data.statusId, processId.data],
+    )
+    if (!reopened.rowCount) {
+      const state = await pool.query<{ process_exists: boolean; target_exists: boolean; is_concluded: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM legal_processes WHERE id = $2) AS process_exists,
+                EXISTS (SELECT 1 FROM legal_process_statuses WHERE id = $1) AS target_exists,
+                EXISTS (
+                  SELECT 1 FROM legal_processes p
+                  JOIN legal_process_statuses current_status ON current_status.id = p.status_id
+                  WHERE p.id = $2
+                    AND lower(translate(current_status.name, 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')) = 'concluido'
+                ) AS is_concluded`,
+        [parsed.data.statusId, processId.data],
+      )
+      if (!state.rows[0].process_exists || !state.rows[0].target_exists) {
+        res.status(404).json({ error: 'Processo ou fase não encontrada.' })
+        return
+      }
+      res.status(409).json({
+        error: state.rows[0].is_concluded
+          ? 'Escolha uma fase diferente de Concluído.'
+          : 'Somente processos concluídos podem ser reabertos.',
+      })
       return
     }
     res.status(204).end()

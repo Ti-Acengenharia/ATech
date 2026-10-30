@@ -3,6 +3,12 @@ import { CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X
 import { apiRequest } from '../api/client'
 import type { LegalProcessOption, TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
+import {
+  programmingDateString,
+  programmingDateTimeToIso,
+  programmingMinutes,
+  programmingTimeString,
+} from './programming-time'
 
 interface CollaboratorOption {
   id: string
@@ -45,17 +51,6 @@ interface EditingAppointment {
   ends_at: string
 }
 
-function localDateString(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function toMinutes(value: Date) {
-  return value.getHours() * 60 + value.getMinutes()
-}
-
 function formatMinutes(value: number) {
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
 }
@@ -65,8 +60,16 @@ function getFreeSlots(date: string, appointments: AvailabilityEntry[]): FreeSlot
   const windowEnd = 18 * 60
   const booked = appointments
     .map((appointment) => ({ start: new Date(appointment.starts_at), end: new Date(appointment.ends_at) }))
-    .filter(({ start, end }) => localDateString(start) === date && localDateString(end) === date)
-    .map(({ start, end }) => ({ start: toMinutes(start), end: toMinutes(end) }))
+    .filter(({ start, end }) =>
+      programmingDateString(start) === date &&
+      programmingDateString(end) === date &&
+      programmingMinutes(start) < windowEnd &&
+      programmingMinutes(end) > windowStart,
+    )
+    .map(({ start, end }) => ({
+      start: Math.max(windowStart, programmingMinutes(start)),
+      end: Math.min(windowEnd, programmingMinutes(end)),
+    }))
     .sort((left, right) => left.start - right.start)
 
   const slots: FreeSlot[] = []
@@ -89,38 +92,34 @@ function intersectSlots(slotGroups: FreeSlot[][]) {
     const [hours, minutes] = value.split(':').map(Number)
     return hours * 60 + minutes
   }
-  return slotGroups[0].flatMap((firstSlot) => {
-    let start = parseMin(firstSlot.startsAt)
-    let end = parseMin(firstSlot.endsAt)
-    for (const slots of slotGroups.slice(1)) {
-      const match = slots.find((slot) => parseMin(slot.startsAt) < end && parseMin(slot.endsAt) > start)
-      if (!match) return []
-      start = Math.max(start, parseMin(match.startsAt))
-      end = Math.min(end, parseMin(match.endsAt))
+  let intersections = slotGroups[0]
+  for (const slots of slotGroups.slice(1)) {
+    const nextIntersections: FreeSlot[] = []
+    for (const intersection of intersections) {
+      for (const slot of slots) {
+        const start = Math.max(parseMin(intersection.startsAt), parseMin(slot.startsAt))
+        const end = Math.min(parseMin(intersection.endsAt), parseMin(slot.endsAt))
+        if (end > start) {
+          nextIntersections.push({ startsAt: formatMinutes(start), endsAt: formatMinutes(end) })
+        }
+      }
     }
-    return end > start ? [{ startsAt: formatMinutes(start), endsAt: formatMinutes(end) }] : []
-  })
-}
-
-function toIso(date: string, time: string) {
-  return new Date(`${date}T${time}:00`).toISOString()
+    intersections = nextIntersections
+    if (!intersections.length) break
+  }
+  return intersections
 }
 
 function weekdayDatesBetween(startDate: string, endDate: string) {
   if (!startDate || !endDate || startDate > endDate) return []
   const dates: string[] = []
-  const date = new Date(`${startDate}T00:00:00`)
-  const end = new Date(`${endDate}T00:00:00`)
+  const date = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
   while (date <= end) {
-    if (date.getDay() !== 0 && date.getDay() !== 6) dates.push(localDateString(date))
-    date.setDate(date.getDate() + 1)
+    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) dates.push(date.toISOString().slice(0, 10))
+    date.setUTCDate(date.getUTCDate() + 1)
   }
   return dates
-}
-
-function timeString(value: string) {
-  const date = new Date(value)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function roleLabel(role: string, label?: string) {
@@ -171,13 +170,13 @@ export default function TicketProgrammingForm({
   const ticketOptions = [...new Map([...tickets, ...ticketSearchResults].map((ticket) => [ticket.id, ticket])).values()]
   const initialTicket = ticketOptions.find((ticket) => ticket.id === (editingAppointment?.ticket_id ?? initialTicketId))
   const [startDate, setStartDate] = useState(() =>
-    editingAppointment ? localDateString(new Date(editingAppointment.starts_at)) : initialDate ?? localDateString(new Date()),
+    editingAppointment ? programmingDateString(new Date(editingAppointment.starts_at)) : initialDate ?? programmingDateString(new Date()),
   )
   const [endDate, setEndDate] = useState(() =>
-    editingAppointment ? localDateString(new Date(editingAppointment.starts_at)) : initialDate ?? localDateString(new Date()),
+    editingAppointment ? programmingDateString(new Date(editingAppointment.starts_at)) : initialDate ?? programmingDateString(new Date()),
   )
-  const [startsAt, setStartsAt] = useState(() => editingAppointment ? timeString(editingAppointment.starts_at) : '09:00')
-  const [endsAt, setEndsAt] = useState(() => editingAppointment ? timeString(editingAppointment.ends_at) : '10:00')
+  const [startsAt, setStartsAt] = useState(() => editingAppointment ? programmingTimeString(new Date(editingAppointment.starts_at)) : '09:00')
+  const [endsAt, setEndsAt] = useState(() => editingAppointment ? programmingTimeString(new Date(editingAppointment.ends_at)) : '10:00')
   const [description, setDescription] = useState(editingAppointment?.activity_description ?? '')
   const [enterprise, setEnterprise] = useState(editingAppointment?.enterprise ?? initialTicket?.enterprise ?? initialLegalProcess?.enterprise_name ?? '')
   const [block, setBlock] = useState(editingAppointment?.block ?? initialTicket?.block ?? '')
@@ -193,12 +192,30 @@ export default function TicketProgrammingForm({
   const [legalProcessPickerOpen, setLegalProcessPickerOpen] = useState(false)
   const ticketPickerRef = useRef<HTMLDivElement>(null)
   const legalProcessPickerRef = useRef<HTMLDivElement>(null)
-  const [appointmentsByCollaborator, setAppointmentsByCollaborator] = useState<Record<string, AvailabilityEntry[]>>({})
+  const [availabilityState, setAvailabilityState] = useState<{
+    requestKey: string
+    appointments: Record<string, AvailabilityEntry[]>
+    error: string | null
+  }>({ requestKey: '', appointments: {}, error: null })
   const [loadingPeople, setLoadingPeople] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const selectedLegalProcess = legalProcesses.find((process) => process.id === legalProcessId) ??
     (initialLegalProcess?.id === legalProcessId ? initialLegalProcess : undefined)
+  const availabilityRequestKey = JSON.stringify([
+    collaboratorIds,
+    startDate,
+    endDate,
+    editingAppointment?.id ?? '',
+  ])
+  const hasValidAvailabilityRange = Boolean(
+    collaboratorIds.length && startDate && endDate && startDate <= endDate,
+  )
+  const currentAvailability = availabilityState.requestKey === availabilityRequestKey
+    ? availabilityState
+    : null
+  const appointmentsByCollaborator = currentAvailability?.appointments ?? {}
+  const availabilityLoading = hasValidAvailabilityRange && !currentAvailability
 
   useEffect(() => {
     if (allowMixedCollaborators) return
@@ -344,13 +361,22 @@ export default function TicketProgrammingForm({
       return [collaboratorId, result.appointments] as const
     }))
       .then((results) => {
-        if (!cancelled) setAppointmentsByCollaborator(Object.fromEntries(results))
+        if (!cancelled) {
+          setAvailabilityState({
+            requestKey: availabilityRequestKey,
+            appointments: Object.fromEntries(results),
+            error: null,
+          })
+        }
       })
       .catch((requestError: unknown) => {
-        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível consultar horários.')
+        if (cancelled) return
+        const message = requestError instanceof Error ? requestError.message : 'Não foi possível consultar horários.'
+        setAvailabilityState({ requestKey: availabilityRequestKey, appointments: {}, error: message })
+        setError(message)
       })
     return () => { cancelled = true }
-  }, [collaboratorIds, startDate, endDate, editingAppointment])
+  }, [availabilityRequestKey, collaboratorIds, startDate, endDate, editingAppointment])
 
   const scheduleDates = weekdayDatesBetween(startDate, endDate)
   const freeSlots = intersectSlots(scheduleDates.flatMap((date) =>
@@ -443,8 +469,8 @@ export default function TicketProgrammingForm({
             legalProcessId: activityType === 'legal_process' ? Number(legalProcessId) : null,
             collaboratorId: Number(collaboratorIds[0]),
             date: startDate,
-            startsAt: toIso(startDate, startsAt),
-            endsAt: toIso(startDate, endsAt),
+            startsAt: programmingDateTimeToIso(startDate, startsAt),
+            endsAt: programmingDateTimeToIso(startDate, endsAt),
             activityDescription: description,
             enterprise: activityType === 'standalone' ? 'Atividade avulsa' : activityType === 'legal_process' ? selectedLegalProcess?.enterprise_name ?? enterprise : enterprise,
             block,
@@ -469,8 +495,8 @@ export default function TicketProgrammingForm({
             endDate,
             occurrences: scheduleDates.map((date) => ({
               date,
-              startsAt: toIso(date, startsAt),
-              endsAt: toIso(date, endsAt),
+              startsAt: programmingDateTimeToIso(date, startsAt),
+              endsAt: programmingDateTimeToIso(date, endsAt),
             })),
             activityDescription: description,
             enterprise: activityType === 'standalone' ? 'Atividade avulsa' : activityType === 'legal_process' ? selectedLegalProcess?.enterprise_name ?? enterprise : enterprise,
@@ -777,6 +803,12 @@ export default function TicketProgrammingForm({
         <strong>Horários livres em comum ({collaboratorIds.length} colaboradores, {scheduleDates.length} dias úteis) · 08:00–18:00</strong>
         {!collaboratorIds.length ? (
           <span>Selecione um ou mais colaboradores para calcular a janela livre compartilhada.</span>
+        ) : !scheduleDates.length ? (
+          <span>O período selecionado não contém dias úteis para calcular a disponibilidade.</span>
+        ) : availabilityLoading ? (
+          <span>Consultando a disponibilidade dos colaboradores...</span>
+        ) : currentAvailability?.error ? (
+          <span role="alert">Não foi possível consultar a disponibilidade: {currentAvailability.error}</span>
         ) : freeSlots.length ? (
           <div className="availability-slots">
             {freeSlots.map((slot) => (
@@ -791,7 +823,7 @@ export default function TicketProgrammingForm({
             ))}
           </div>
         ) : (
-          <span>Sem horários em comum nesta janela para todos os colaboradores selecionados.</span>
+          <span role="status">Não há horários disponíveis em comum para os colaboradores selecionados nos dias úteis desse período (08:00–18:00).</span>
         )}
         <small>O horário escolhido precisa estar livre para todos os colaboradores em todos os dias úteis do intervalo.</small>
       </div>

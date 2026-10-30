@@ -5,6 +5,7 @@ import { pool } from '../db.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 
 const router = Router()
+const programmingTimeZone = 'America/Maceio'
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const datetimeSchema = z.string().datetime({ offset: true })
@@ -323,8 +324,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
        LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
        JOIN collaborators c ON c.id = p.collaborator_id
        JOIN collaborator_roles r ON r.role_key = c.role
-       WHERE p.starts_at < ($1::date + interval '1 day')
-         AND p.ends_at > $1::date
+       WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
+         AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
          AND p.programming_type = $2
          AND (($2 = 'foreman' AND c.role = 'encarregado')
            OR ($2 = 'general' AND c.role <> 'encarregado'))
@@ -374,8 +375,8 @@ router.get('/availability', async (req, res, next) => {
         `SELECT id, ticket_id, legal_process_id, starts_at, ends_at
        FROM ticket_programming
        WHERE collaborator_id = $1
-         AND starts_at < ($3::date + interval '1 day')
-         AND ends_at > $2::date
+         AND starts_at < (($3::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
+         AND ends_at > ($2::date AT TIME ZONE '${programmingTimeZone}')
          AND ($4::bigint IS NULL OR id <> $4)
        ORDER BY starts_at`,
       [collaboratorId.data, startDate.data, endDate.data, excludeId.data],
@@ -454,8 +455,13 @@ async function validateAvailability(
     [collaboratorId, startsAt, endsAt, excludeId ?? null],
   )
   if (conflict.rows[0]) {
-    const starts = conflict.rows[0].starts_at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    const ends = conflict.rows[0].ends_at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: programmingTimeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    const starts = timeFormatter.format(conflict.rows[0].starts_at)
+    const ends = timeFormatter.format(conflict.rows[0].ends_at)
     const activity = conflict.rows[0].protocol
       ? `o chamado ${conflict.rows[0].protocol}`
       : conflict.rows[0].legal_process_number

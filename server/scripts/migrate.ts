@@ -45,6 +45,9 @@ try {
     '038_inventory_management.sql',
     '039_inventory_locations_and_profile_signatures.sql',
     '040_enterprise_work_address.sql',
+    '041_legal_process_conclusions.sql',
+    '042_legal_process_conclusion_history.sql',
+    '043_legal_process_tags.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')

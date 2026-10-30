@@ -5,6 +5,11 @@ import { apiRequest } from '../api/client'
 import TicketProgrammingForm from './TicketProgrammingForm'
 import type { TicketSummary } from './types'
 import { getProgrammingRoleVisibility, saveProgrammingRoleVisibility } from './programming-role-visibility'
+import {
+  PROGRAMMING_TIME_ZONE,
+  programmingDateString,
+  programmingTimeString,
+} from './programming-time'
 
 interface Appointment {
   id: string
@@ -46,31 +51,30 @@ interface CollaboratorDay {
 }
 
 const dayNames = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
-function localDateString(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 function weekdayStrip(value: string) {
-  const selected = new Date(`${value}T12:00:00`)
+  const selected = new Date(`${value}T12:00:00Z`)
   const monday = new Date(selected)
-  monday.setDate(selected.getDate() - ((selected.getDay() + 6) % 7))
+  monday.setUTCDate(selected.getUTCDate() - ((selected.getUTCDay() + 6) % 7))
   return Array.from({ length: 7 }, (_, index) => {
     const date = new Date(monday)
-    date.setDate(monday.getDate() + index)
-    return { date: localDateString(date), number: date.getDate(), shortName: dayNames[index] }
+    date.setUTCDate(monday.getUTCDate() + index)
+    return { date: date.toISOString().slice(0, 10), number: date.getUTCDate(), shortName: dayNames[index] }
   })
 }
 
 function displayDate(value: string) {
-  const date = new Date(`${value}T12:00:00`)
-  return new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(date)
+  const date = new Date(`${value}T12:00:00Z`)
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: PROGRAMMING_TIME_ZONE,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date)
 }
 
 function displayTime(value: string) {
-  return new Date(value).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  return programmingTimeString(new Date(value))
 }
 
 function roleName(value: string, label?: string) {
@@ -276,7 +280,7 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
 
 export default function ProgrammingPage() {
   const programmingFormRef = useRef<HTMLElement>(null)
-  const [date, setDate] = useState(() => localDateString(new Date()))
+  const [date, setDate] = useState(() => programmingDateString(new Date()))
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
@@ -354,9 +358,9 @@ export default function ProgrammingPage() {
   }, [showForm, editingAppointment, ticketsLoaded, ticketsRetry])
 
   function shiftWeek(amount: number) {
-    const next = new Date(`${date}T12:00:00`)
-    next.setDate(next.getDate() + amount * 7)
-    setDate(localDateString(next))
+    const next = new Date(`${date}T12:00:00Z`)
+    next.setUTCDate(next.getUTCDate() + amount * 7)
+    setDate(programmingDateString(next))
   }
 
   async function deleteAppointment(appointment: Appointment) {
@@ -457,7 +461,7 @@ export default function ProgrammingPage() {
       {(showForm || editingAppointment) && <section ref={programmingFormRef} className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
-        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(localDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>
+        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>
         <div className="calendar-week-strip no-print">{week.map((day) => <button type="button" key={day.date} className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''}`} onClick={() => setDate(day.date)} aria-pressed={day.date === date}><span>{day.shortName}</span><strong>{day.number}</strong></button>)}</div>
         {programmingType === 'general' && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
           <strong>Funções na agenda</strong>

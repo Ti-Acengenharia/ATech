@@ -18,6 +18,17 @@ import {
 } from '../services/cvcrm.js'
 
 const router = Router()
+const apiValidationPaths = new Set([
+  '/integration',
+  '/integration/status',
+  '/integration/validate',
+  '/integration/toggle-auto-sync',
+  '/integration/test-protocol',
+  '/integration/import-all',
+  '/by-protocol',
+  '/import-csv',
+  '/sync',
+])
 
 function parseTextFilter(value: unknown, maxLength: number) {
   if (value === undefined) return []
@@ -69,7 +80,11 @@ const ticketTagAssignmentSchema = z.object({
   tagIds: z.array(z.coerce.number().int().positive()).max(50),
 })
 
-router.use(requireAuth, requirePageAccess('tickets'))
+router.use(requireAuth)
+router.use((req, res, next) => {
+  const pageKey = apiValidationPaths.has(req.path) ? 'api-validation' : 'tickets'
+  requirePageAccess(pageKey)(req, res, next)
+})
 
 router.get('/integration', async (_req, res, next) => {
   try {
@@ -161,7 +176,7 @@ router.post('/import-csv', requireAdmin, async (req, res) => {
   }
 })
 
-router.post('/sync', requireAdmin, async (_req, res, next) => {
+router.post('/sync', async (_req, res, next) => {
   try {
     res.json(await syncCvcrmTickets())
   } catch (error) {
