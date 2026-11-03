@@ -1,6 +1,6 @@
 import { pool } from '../db.js'
 import { env } from '../config.js'
-import { encryptPersonalData } from './personal-data.js'
+import { encryptPersonalData, fingerprintPhoneSearchTokens } from './personal-data.js'
 import { recordTicketActivity } from './ticket-activity.js'
 import { getTicketWarranty } from './warranties.js'
 
@@ -557,11 +557,11 @@ async function persistCvcrmTickets(
       await client.query(
         `INSERT INTO tickets (
           source_id, reference, protocol, source_status_id, source_status_name, source_active,
-          source_modified_at, opened_at, customer_name, customer_phone_ciphertext,
+          source_modified_at, opened_at, customer_name, customer_phone_ciphertext, customer_phone_tokens,
           subject, source_subject_id, subsubject, source_subsubject_id, description, source_creator_name,
           cv_responses, cv_attachments, enterprise, block, unit, priority, imported_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $23,
           $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19, $20, $21, $22, now(), now()
         )
         ON CONFLICT (source_id) DO UPDATE SET
@@ -574,6 +574,7 @@ async function persistCvcrmTickets(
           opened_at = EXCLUDED.opened_at,
           customer_name = EXCLUDED.customer_name,
           customer_phone_ciphertext = EXCLUDED.customer_phone_ciphertext,
+          customer_phone_tokens = EXCLUDED.customer_phone_tokens,
           subject = EXCLUDED.subject,
           source_subject_id = EXCLUDED.source_subject_id,
           subsubject = EXCLUDED.subsubject,
@@ -611,6 +612,7 @@ async function persistCvcrmTickets(
           toText(ticket.bloco),
           unit,
           toText(ticket.prioridade),
+          phone ? fingerprintPhoneSearchTokens(phone) : null,
         ],
       )
     }

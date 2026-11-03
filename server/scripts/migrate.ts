@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pool } from '../db.js'
-import { encryptPersonalData, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
+import { decryptPersonalData, encryptPersonalData, fingerprintPhoneSearchTokens, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 
 try {
   const migrations = [
@@ -48,6 +48,8 @@ try {
     '041_legal_process_conclusions.sql',
     '042_legal_process_conclusion_history.sql',
     '043_legal_process_tags.sql',
+    '044_process_number_inventory_access_and_phone_index.sql',
+    '045_allow_multiple_admins_and_collaborator_absences.sql',
   ]
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')
@@ -95,6 +97,22 @@ try {
     )
   }
   await pool.query('ALTER TABLE collaborator_children ALTER COLUMN gender_ciphertext SET NOT NULL')
+
+  if (isPersonalDataEncryptionConfigured()) {
+    const ticketsWithoutPhoneTokens = await pool.query<{ source_id: string; customer_phone_ciphertext: string }>(
+      `SELECT source_id::text, customer_phone_ciphertext
+       FROM tickets
+       WHERE customer_phone_ciphertext IS NOT NULL AND customer_phone_tokens IS NULL`,
+    )
+    for (const ticket of ticketsWithoutPhoneTokens.rows) {
+      const phone = decryptPersonalData(ticket.customer_phone_ciphertext, 'ticket-phone')
+      await pool.query(
+        `UPDATE tickets SET customer_phone_tokens = $1 WHERE source_id = $2`,
+        [fingerprintPhoneSearchTokens(phone), ticket.source_id],
+      )
+    }
+  }
+
   console.log('Migrações PostgreSQL aplicadas com sucesso.')
 } catch (error) {
   console.error('Não foi possível aplicar a migração:', error)

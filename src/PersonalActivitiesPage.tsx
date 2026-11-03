@@ -270,6 +270,20 @@ export default function PersonalActivitiesPage({
   }, [draft])
 
   useEffect(() => {
+    if (!draft) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      if (tagPickerOpen) {
+        setTagPickerOpen(false)
+        return
+      }
+      closeActivityEditor()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [draft, tagPickerOpen, closeActivityEditor])
+
+  useEffect(() => {
     if (!draft || !isOwnBoard || saving) return
     const session = draftSessionRef.current
     const snapshot = getDraftSnapshot(draft)

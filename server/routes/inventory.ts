@@ -97,7 +97,7 @@ class InventoryRequestError extends Error {
   }
 }
 
-router.use(requireAuth, requirePageAccess('collaborators'))
+router.use(requireAuth, requirePageAccess('inventory'))
 
 router.get('/', async (_req, res, next) => {
   const client = await pool.connect()

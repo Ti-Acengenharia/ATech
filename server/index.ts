@@ -54,6 +54,60 @@ const authLimiter = rateLimit({
   message: { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' },
 })
 
+const pinLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de validação de PIN. Aguarde alguns minutos e tente novamente.' },
+})
+
+const heavyMutationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitas operações pesadas em sequência. Aguarde alguns minutos e tente novamente.' },
+})
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 800,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.' },
+})
+
+const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+app.use('/api', (req, res, next) => {
+  if (!mutatingMethods.has(req.method.toUpperCase())) {
+    next()
+    return
+  }
+  const requestedWith = req.headers['x-requested-with']
+  const secFetchSite = req.headers['sec-fetch-site']
+  if (requestedWith || secFetchSite === 'same-origin') {
+    next()
+    return
+  }
+  const originHeader = req.headers.origin ?? req.headers.referer
+  const hostHeader = req.headers['x-forwarded-host'] ?? req.headers.host
+  if (typeof originHeader === 'string' && typeof hostHeader === 'string') {
+    try {
+      const originHost = new URL(originHeader).host.toLowerCase()
+      const targetHost = String(hostHeader).split(',')[0].trim().toLowerCase()
+      if (originHost === targetHost) {
+        next()
+        return
+      }
+    } catch {
+      // Invalid Origin/Referer URL falls through to 403
+    }
+  }
+  res.status(403).json({ error: 'Solicitação de origem não autorizada (proteção CSRF).' })
+})
+
 app.get('/api/health', async (_req, res) => {
   try {
     await pool.query('SELECT 1')
@@ -63,8 +117,16 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
+app.use('/api', apiLimiter)
 app.use('/api/auth/admin/login', authLimiter)
 app.use('/api/auth/google', authLimiter)
+app.use('/api/profile/signature', pinLimiter)
+app.use('/api/inventory/documents', pinLimiter)
+app.use('/api/tickets/import-csv', heavyMutationLimiter)
+app.use('/api/tickets/sync', heavyMutationLimiter)
+app.use('/api/tickets/integration/import-all', heavyMutationLimiter)
+app.use('/api/legal-processes/import-csv', heavyMutationLimiter)
+app.use('/api/warranties/sync', heavyMutationLimiter)
 app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/profile', profileRoutes)

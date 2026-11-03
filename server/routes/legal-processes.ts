@@ -21,6 +21,7 @@ const externalUrlSchema = z.string().trim().max(2000).refine((value) => {
 })
 const processSchema = z.object({
   title: z.string().trim().min(1).max(240),
+  processNumber: z.string().trim().max(100).default(''),
   statusId: z.number().int().positive(),
   enterpriseKey: z.string().trim().toLowerCase().max(240).nullable(),
   startDate: dateSchema,
@@ -510,7 +511,7 @@ router.delete('/statuses/:id', async (req, res, next) => {
 router.get('/', async (_req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT p.id::int AS id, p.title, p.status_id::int AS status_id, s.name AS status_name, s.color AS status_color,
+      `SELECT p.id::int AS id, p.title, p.process_number, p.status_id::int AS status_id, s.name AS status_name, s.color AS status_color,
               p.enterprise_key,
               COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS enterprise_name,
               p.start_date, p.end_date, p.description, p.case_value::text, p.claimant,
@@ -529,10 +530,18 @@ router.get('/', async (_req, res, next) => {
                 FROM legal_process_assignees a JOIN users u ON u.id = a.user_id
                 WHERE a.process_id = p.id
               ), '[]'::json) AS assignees,
+              COALESCE((
+                SELECT array_agg(c.process_number ORDER BY c.position, c.id)
+                FROM legal_process_children c
+                WHERE c.process_id = p.id AND btrim(c.process_number) <> ''
+              ), ARRAY[]::text[]) AS child_process_numbers,
               (SELECT count(*)::int FROM legal_process_children c WHERE c.process_id = p.id) AS children_count,
               (SELECT count(*)::int FROM legal_process_children c WHERE c.process_id = p.id AND c.is_done) AS completed_children_count,
+              (SELECT count(*)::int FROM legal_process_items it WHERE it.process_id = p.id) AS items_count,
+              (SELECT count(*)::int FROM legal_process_items it WHERE it.process_id = p.id AND it.is_done) AS completed_items_count,
               COALESCE((SELECT sum(pay.amount) FROM legal_process_payments pay
                         WHERE pay.process_id = p.id AND pay.is_paid), 0)::text AS paid_total,
+              COALESCE((SELECT sum(pay.amount) FROM legal_process_payments pay WHERE pay.process_id = p.id AND NOT pay.is_paid), 0)::text AS pending_payment_total,
               (SELECT count(*)::int FROM legal_process_payments pay WHERE pay.process_id = p.id) AS payment_count
        FROM legal_processes p
        JOIN legal_process_statuses s ON s.id = p.status_id
@@ -570,9 +579,9 @@ router.post('/demo', async (req, res, next) => {
     }
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO legal_processes
-         (title, status_id, start_date, end_date, description, case_value, claimant,
+         (title, process_number, status_id, start_date, end_date, description, case_value, claimant,
           drive_url, notebook_url, distribution_date, is_demo, created_by)
-       VALUES ('DEMONSTRAÇÃO — Processo cível', $1, CURRENT_DATE, CURRENT_DATE + 30,
+       VALUES ('DEMONSTRAÇÃO — Processo cível', '0001234-56.2026.8.02.0001', $1, CURRENT_DATE, CURRENT_DATE + 30,
           'Registro fictício para conhecer a tela. Exclua este processo após a demonstração.',
           25000, 'Parte requerente fictícia', '', '', CURRENT_DATE, TRUE, $2)
        ON CONFLICT (is_demo) WHERE is_demo DO NOTHING
@@ -615,7 +624,7 @@ router.get('/:id', async (req, res, next) => {
   }
   try {
     const process = await pool.query(
-      `SELECT p.id::int AS id, p.title, p.status_id::int AS "statusId",
+      `SELECT p.id::int AS id, p.title, p.process_number AS "processNumber", p.status_id::int AS "statusId",
               p.enterprise_key AS "enterpriseKey",
               COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS "enterpriseName",
               p.start_date AS "startDate",
@@ -679,7 +688,8 @@ router.get('/:id', async (req, res, next) => {
               ) ORDER BY pay.due_date NULLS LAST, pay.id)
                 FROM legal_process_payments pay WHERE pay.process_id = p.id), '[]'::json) AS payments,
               COALESCE((SELECT sum(amount) FROM legal_process_payments
-                        WHERE process_id = p.id AND is_paid), 0)::text AS "paidTotal"
+                        WHERE process_id = p.id AND is_paid), 0)::text AS "paidTotal",
+              COALESCE((SELECT sum(amount) FROM legal_process_payments WHERE process_id = p.id AND NOT is_paid), 0)::text AS "pendingPaymentTotal"
        FROM legal_processes p
        LEFT JOIN LATERAL (
          SELECT min(source.enterprise_name) AS enterprise_name
@@ -754,10 +764,10 @@ router.post('/', async (req, res, next) => {
     const values = parsed.data
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO legal_processes
-        (title, status_id, enterprise_key, start_date, end_date, description, case_value, claimant,
+        (title, process_number, status_id, enterprise_key, start_date, end_date, description, case_value, claimant,
          drive_url, notebook_url, distribution_date, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id::int AS id`,
-      [values.title, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id::int AS id`,
+      [values.title, values.processNumber, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
         values.caseValue, values.claimant, values.driveUrl, values.notebookUrl,
         values.distributionDate, req.session.user!.id],
     )
@@ -849,11 +859,11 @@ router.put('/:id', async (req, res, next) => {
     }
     const values = parsed.data
     const updated = await client.query(
-      `UPDATE legal_processes SET title = $1, status_id = $2, enterprise_key = $3,
-         start_date = $4, end_date = $5, description = $6, case_value = $7, claimant = $8,
-         drive_url = $9, notebook_url = $10, distribution_date = $11, updated_at = now()
-       WHERE id = $12 RETURNING id`,
-      [values.title, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
+      `UPDATE legal_processes SET title = $1, process_number = $2, status_id = $3, enterprise_key = $4,
+         start_date = $5, end_date = $6, description = $7, case_value = $8, claimant = $9,
+         drive_url = $10, notebook_url = $11, distribution_date = $12, updated_at = now()
+       WHERE id = $13 RETURNING id`,
+      [values.title, values.processNumber, values.statusId, values.enterpriseKey, values.startDate, values.endDate, values.description,
         values.caseValue, values.claimant, values.driveUrl, values.notebookUrl, values.distributionDate, processId.data],
     )
     if (!updated.rowCount) {

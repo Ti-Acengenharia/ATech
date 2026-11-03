@@ -405,6 +405,281 @@ router.get('/birthdays', async (_req, res, next) => {
   }
 })
 
+
+async function findCollaboratorProgrammingConflicts(
+  clientOrPool: { query: typeof pool.query },
+  collaboratorId: number,
+  startDateStr: string,
+  endDateStr: string,
+) {
+  const result = await clientOrPool.query<{
+    id: number
+    ticket_id: number | null
+    legal_process_id: number | null
+    activity_description: string
+    starts_at: Date
+    ends_at: Date
+    enterprise: string | null
+    protocol: string | null
+    completed: boolean
+  }>(
+    `SELECT p.id, p.ticket_id, p.legal_process_id, p.activity_description,
+            p.starts_at, p.ends_at, p.enterprise, p.completed,
+            t.protocol
+     FROM ticket_programming p
+     LEFT JOIN tickets t ON t.source_id = p.ticket_id
+     WHERE p.collaborator_id = $1
+       AND p.starts_at < (($3::date + interval '1 day') AT TIME ZONE 'America/Sao_Paulo')
+       AND p.ends_at > ($2::date AT TIME ZONE 'America/Sao_Paulo')
+     ORDER BY p.starts_at ASC`,
+    [collaboratorId, startDateStr, endDateStr],
+  )
+  return result.rows.map((row) => {
+    const dateFormatted = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(row.starts_at)
+    return {
+      id: row.id,
+      ticketId: row.ticket_id,
+      legalProcessId: row.legal_process_id,
+      activityDescription: row.activity_description,
+      date: dateFormatted,
+      startsAt: row.starts_at.toISOString(),
+      endsAt: row.ends_at.toISOString(),
+      enterprise: row.enterprise ?? '',
+      protocol: row.protocol ?? '',
+      completed: row.completed,
+    }
+  })
+}
+
+router.get('/absences', async (req, res, next) => {
+  try {
+    const startDate = dateSchema.optional().nullable().safeParse(req.query.startDate ? String(req.query.startDate) : undefined)
+    const endDate = dateSchema.optional().nullable().safeParse(req.query.endDate ? String(req.query.endDate) : undefined)
+    const collaboratorId = req.query.collaboratorId ? z.coerce.number().int().positive().safeParse(req.query.collaboratorId) : null
+    const typeFilter = req.query.type ? z.enum(['atestado', 'falta_injustificada']).safeParse(req.query.type) : null
+
+    const conditions: string[] = []
+    const values: (string | number)[] = []
+
+    if (startDate?.success && startDate.data) {
+      values.push(startDate.data)
+      conditions.push('a.end_date >= $' + values.length + '::date')
+    }
+    if (endDate?.success && endDate.data) {
+      values.push(endDate.data)
+      conditions.push('a.start_date <= $' + values.length + '::date')
+    }
+    if (collaboratorId?.success && collaboratorId.data) {
+      values.push(collaboratorId.data)
+      conditions.push('a.collaborator_id = $' + values.length)
+    }
+    if (typeFilter?.success && typeFilter.data) {
+      values.push(typeFilter.data)
+      conditions.push('a.type = $' + values.length)
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const result = await pool.query<{
+      id: string
+      collaborator_id: string
+      collaborator_name: string
+      collaborator_role: string
+      collaborator_role_label: string
+      registration_number: string | null
+      has_photo: boolean
+      type: 'atestado' | 'falta_injustificada'
+      start_date: string
+      days_count: number
+      end_date: string
+      cid: string | null
+      notes: string | null
+      created_by_name: string
+      created_at: Date
+    }>(
+      `SELECT a.id, a.collaborator_id, c.name AS collaborator_name,
+              c.role AS collaborator_role, COALESCE(r.label, c.role) AS collaborator_role_label,
+              c.registration_number, (c.photo_content IS NOT NULL) AS has_photo,
+              a.type, a.start_date::text, a.days_count, a.end_date::text,
+              a.cid, a.notes, u.display_name AS created_by_name, a.created_at
+       FROM collaborator_absences a
+       JOIN collaborators c ON c.id = a.collaborator_id
+       LEFT JOIN collaborator_roles r ON r.role_key = c.role
+       JOIN users u ON u.id = a.created_by
+       ${whereClause}
+       ORDER BY a.start_date DESC, a.id DESC`,
+      values,
+    )
+
+    let totalDays = 0
+    let certificatesCount = 0
+    let unjustifiedCount = 0
+
+    const absences = result.rows.map((row) => {
+      totalDays += row.days_count
+      if (row.type === 'atestado') certificatesCount += 1
+      else unjustifiedCount += 1
+
+      return {
+        id: row.id,
+        collaboratorId: row.collaborator_id,
+        collaboratorName: row.collaborator_name,
+        collaboratorRole: row.collaborator_role,
+        collaboratorRoleLabel: row.collaborator_role_label,
+        registrationNumber: row.registration_number ?? '',
+        photoUrl: row.has_photo ? `/api/collaborators/${row.collaborator_id}/photo` : null,
+        type: row.type,
+        startDate: row.start_date,
+        daysCount: row.days_count,
+        endDate: row.end_date,
+        cid: row.cid ?? '',
+        notes: row.notes ?? '',
+        createdByName: row.created_by_name,
+        createdAt: row.created_at.toISOString(),
+      }
+    })
+
+    res.json({
+      absences,
+      summary: {
+        totalCount: absences.length,
+        totalDays,
+        certificatesCount,
+        unjustifiedCount,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/:id/programming-conflicts', async (req, res, next) => {
+  const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const startDate = dateSchema.safeParse(req.query.startDate)
+  const daysCount = z.coerce.number().int().min(1).max(365).safeParse(req.query.daysCount ?? 1)
+  if (!collaboratorId.success || !startDate.success || !daysCount.success) {
+    res.status(400).json({ error: 'Parâmetros de data ou colaborador inválidos.' })
+    return
+  }
+
+  try {
+    const endCalc = await pool.query<{ end_date: string }>(
+      "SELECT ($1::date + (($2::int - 1) * interval '1 day'))::text AS end_date",
+      [startDate.data, daysCount.data],
+    )
+    const endDateStr = endCalc.rows[0].end_date
+    const conflicts = await findCollaboratorProgrammingConflicts(pool, collaboratorId.data, startDate.data, endDateStr)
+    res.json({ conflicts, startDate: startDate.data, endDate: endDateStr, daysCount: daysCount.data })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/absences', async (req, res, next) => {
+  const schema = z.object({
+    collaboratorId: z.coerce.number().int().positive(),
+    type: z.enum(['atestado', 'falta_injustificada']),
+    startDate: dateSchema,
+    daysCount: z.coerce.number().int().min(1).max(365),
+    cid: z.string().trim().max(20).optional().nullable(),
+    notes: z.string().trim().max(2000).optional().nullable(),
+  })
+  const parsed = schema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados de falta ou atestado inválidos. Verifique as informações.' })
+    return
+  }
+
+  const { collaboratorId, type, startDate, daysCount } = parsed.data
+  const cid = parsed.data.cid ? parsed.data.cid.trim() : null
+  const notes = parsed.data.notes ? parsed.data.notes.trim() : null
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    const collaboratorCheck = await client.query<{ name: string }>(
+      'SELECT name FROM collaborators WHERE id = $1',
+      [collaboratorId],
+    )
+    if (collaboratorCheck.rowCount === 0) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Colaborador não encontrado.' })
+      return
+    }
+
+    const endCalc = await client.query<{ end_date: string }>(
+      "SELECT ($1::date + (($2::int - 1) * interval '1 day'))::text AS end_date",
+      [startDate, daysCount],
+    )
+    const endDate = endCalc.rows[0].end_date
+
+    const insertResult = await client.query<{
+      id: string
+      created_at: Date
+    }>(
+      `INSERT INTO collaborator_absences (
+        collaborator_id, type, start_date, days_count, end_date, cid, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id, created_at`,
+      [collaboratorId, type, startDate, daysCount, endDate, cid, notes, req.session.user!.id],
+    )
+
+    const conflicts = await findCollaboratorProgrammingConflicts(client, collaboratorId, startDate, endDate)
+
+    await client.query('COMMIT')
+
+    res.status(201).json({
+      absence: {
+        id: insertResult.rows[0].id,
+        collaboratorId,
+        collaboratorName: collaboratorCheck.rows[0].name,
+        type,
+        startDate,
+        daysCount,
+        endDate,
+        cid: cid ?? '',
+        notes: notes ?? '',
+        createdAt: insertResult.rows[0].created_at.toISOString(),
+      },
+      conflicts,
+      hasConflicts: conflicts.length > 0,
+      conflictMessage: conflicts.length > 0
+        ? `Atenção: O colaborador ${collaboratorCheck.rows[0].name} possui ${conflicts.length} atividade(s) agendada(s) durante este período. Você precisa rever a programação prevista na aba de Programação.`
+        : null,
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.delete('/absences/:id', async (req, res, next) => {
+  const absenceId = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!absenceId.success) {
+    res.status(400).json({ error: 'Identificador de ausência inválido.' })
+    return
+  }
+
+  try {
+    const result = await pool.query('DELETE FROM collaborator_absences WHERE id = $1 RETURNING id', [absenceId.data])
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'Registro de ausência não encontrado.' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
 router.get('/:id/photo', async (req, res, next) => {
   const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
   if (!collaboratorId.success) {
@@ -1153,6 +1428,26 @@ router.get('/:id/report', async (req, res, next) => {
        ORDER BY document.transaction_date DESC, document.id DESC, line.id`,
       [collaboratorId.data],
     )
+    const absencesResult = await client.query<{
+      id: string
+      type: 'atestado' | 'falta_injustificada'
+      start_date: string
+      days_count: number
+      end_date: string
+      cid: string | null
+      notes: string | null
+      created_by_name: string
+      created_at: Date
+    }>(
+      `SELECT a.id, a.type, a.start_date::text, a.days_count, a.end_date::text,
+              a.cid, a.notes, u.display_name AS created_by_name, a.created_at
+       FROM collaborator_absences a
+       JOIN users u ON u.id = a.created_by
+       WHERE a.collaborator_id = $1
+       ORDER BY a.start_date DESC, a.id DESC`,
+      [collaboratorId.data],
+    )
+
     await client.query(
       `INSERT INTO collaborator_sensitive_data_access (collaborator_id, accessed_by)
        VALUES ($1, $2)`,
@@ -1248,6 +1543,17 @@ router.get('/:id/report', async (req, res, next) => {
           recipientSignatureBase64: decryptPersonalData(delivery.recipient_signature_ciphertext, 'uniform-delivery-signature'),
         })),
         inventoryDeliveries: [...inventoryDeliveries.values()],
+        absences: absencesResult.rows.map((row) => ({
+          id: row.id,
+          type: row.type,
+          startDate: row.start_date,
+          daysCount: row.days_count,
+          endDate: row.end_date,
+          cid: row.cid ?? '',
+          notes: row.notes ?? '',
+          createdByName: row.created_by_name,
+          createdAt: row.created_at.toISOString(),
+        })),
       },
     })
   } catch (error) {

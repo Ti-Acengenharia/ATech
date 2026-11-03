@@ -51,6 +51,16 @@ export default function UserProfileModal({
   }, [])
 
   useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !savingProfile && !savingSignature) {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [savingProfile, savingSignature, onClose])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     const context = canvas?.getContext('2d')
     if (!canvas || !context) return

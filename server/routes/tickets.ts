@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
-import { decryptPersonalData, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
+import { decryptPersonalData, fingerprintPhoneQuery, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 import { evaluateTicketWarranty } from '../services/warranties.js'
 import {
@@ -844,6 +844,7 @@ router.get('/', async (req, res, next) => {
   }
   const term = search ? `%${search.toLowerCase()}%` : ''
   const customerTerm = customerName ? `%${customerName.toLowerCase()}%` : ''
+  const phoneToken = phoneLookup ? fingerprintPhoneQuery(phoneDigits) : ''
 
   try {
     const result = await pool.query<{
@@ -916,7 +917,8 @@ router.get('/', async (req, res, next) => {
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
            OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1
            OR t.source_id::text LIKE $1
-           OR $10::boolean)
+           OR ($10::boolean AND (t.customer_phone_tokens @> ARRAY[$14::text]
+             OR (t.customer_phone_tokens IS NULL AND t.customer_phone_ciphertext IS NOT NULL))))
          AND ($13 <> 'id' OR t.source_id::text LIKE $1 OR lower(t.protocol) LIKE $1)
          AND (cardinality($11::text[]) = 0 OR
            CASE
@@ -935,7 +937,7 @@ router.get('/', async (req, res, next) => {
          AND ($8::bigint IS NULL OR t.source_id = $8)
        ORDER BY CASE WHEN $12 <> '' AND t.source_id::text = $12 THEN 0 ELSE 1 END,
                 t.opened_at ASC NULLS LAST, t.protocol
-       LIMIT CASE WHEN $10::boolean THEN 2147483647 ELSE 1000 END`,
+       LIMIT 1000`,
       [
         term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
@@ -944,6 +946,7 @@ router.get('/', async (req, res, next) => {
         ticketTypes,
         search,
         idSearch ? 'id' : '',
+        phoneToken,
       ],
     )
 

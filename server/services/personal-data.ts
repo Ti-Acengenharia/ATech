@@ -56,3 +56,20 @@ export function decryptPersonalData(value: string, field: PersonalDataField) {
 export function fingerprintCpf(cpf: string) {
   return createHmac('sha256', encryptionKey()).update(cpf).digest('hex')
 }
+
+export function fingerprintPhoneQuery(phoneDigits: string) {
+  const digits = phoneDigits.replace(/\D/g, '').slice(0, 20)
+  return createHmac('sha256', encryptionKey()).update(`phone-token:${digits}`).digest('hex').slice(0, 16)
+}
+
+export function fingerprintPhoneSearchTokens(phone: string) {
+  const digits = phone.replace(/\D/g, '').slice(0, 20)
+  if (digits.length < 3) return []
+  const substrings = new Set<string>()
+  for (let start = 0; start <= digits.length - 3; start += 1) {
+    for (let end = start + 3; end <= digits.length; end += 1) {
+      substrings.add(digits.slice(start, end))
+    }
+  }
+  return [...substrings].map((sub) => fingerprintPhoneQuery(sub))
+}

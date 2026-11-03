@@ -117,6 +117,24 @@ const UserProfileModal = lazy(() => import('./UserProfileModal'))
 const LegalProcessesPage = lazy(() => import('./LegalProcessesPage'))
 const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 
+const allAdminPages: AdminPage[] = [
+  'home', 'tickets', 'letter-filling', 'schedule', 'collaborators', 'inventory',
+  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities',
+]
+
+function readPageFromLocation(): AdminPage {
+  if (typeof window === 'undefined') return 'home'
+  const queryPage = new URLSearchParams(window.location.search).get('page')
+  if (queryPage && allAdminPages.includes(queryPage as AdminPage)) {
+    return queryPage as AdminPage
+  }
+  const pathSegment = window.location.pathname.replace(/^\/+|\/+$/g, '')
+  if (pathSegment && allAdminPages.includes(pathSegment as AdminPage)) {
+    return pathSegment as AdminPage
+  }
+  return 'home'
+}
+
 function formatDate(value: string | null) {
   if (!value) return 'Ainda não acessou'
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
@@ -129,6 +147,7 @@ export default function ATechApp() {
   const [apiAvailable, setApiAvailable] = useState(true)
   const [pageAccess, setPageAccess] = useState<AdminPage[]>([])
   const [canViewOtherPersonalActivities, setCanViewOtherPersonalActivities] = useState(false)
+  const [sessionNotice, setSessionNotice] = useState('')
 
   useEffect(() => {
     apiRequest<SessionResponse>('/api/auth/session')
@@ -142,15 +161,29 @@ export default function ATechApp() {
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    function handleSessionExpired(event: Event) {
+      const detail = (event as CustomEvent<{ message?: string }>).detail
+      setUser(null)
+      setSessionNotice(detail?.message || 'Sua sessão expirou. Faça login novamente para continuar.')
+    }
+    window.addEventListener('atech:session-expired', handleSessionExpired)
+    return () => window.removeEventListener('atech:session-expired', handleSessionExpired)
+  }, [])
+
   async function signOut() {
     try { await apiRequest('/api/auth/logout', { method: 'POST' }) }
-    finally { setUser(null) }
+    finally {
+      setSessionNotice('')
+      setUser(null)
+    }
   }
 
   if (loading) return <main className="boot-screen"><span className="brand-mark"><Wrench size={19} /></span></main>
 
   if (!user) {
-    const login = <LoginScreen domain={domain} apiAvailable={apiAvailable} onAuthenticated={(session) => {
+    const login = <LoginScreen domain={domain} apiAvailable={apiAvailable} sessionNotice={sessionNotice} onAuthenticated={(session) => {
+      setSessionNotice('')
       setUser(session.user)
       setPageAccess(session.pageAccess)
       setCanViewOtherPersonalActivities(session.canViewOtherPersonalActivities)
@@ -161,9 +194,10 @@ export default function ATechApp() {
   return <AdminScreen user={user} domain={domain} pageAccess={pageAccess} canViewOtherPersonalActivities={canViewOtherPersonalActivities} onSignOut={signOut} onUserUpdated={(displayName) => setUser((current) => current ? { ...current, displayName } : current)} />
 }
 
-function LoginScreen({ domain, apiAvailable, onAuthenticated }: {
+function LoginScreen({ domain, apiAvailable, sessionNotice, onAuthenticated }: {
   domain: string
   apiAvailable: boolean
+  sessionNotice?: string
   onAuthenticated: (session: SessionResponse) => void
 }) {
   const [adminMode, setAdminMode] = useState(false)
@@ -222,6 +256,7 @@ function LoginScreen({ domain, apiAvailable, onAuthenticated }: {
         <div className="login-content">
           <div className="login-heading"><span className="eyebrow">BEM-VINDO À ATECH</span><h2>{adminMode ? 'Acesso administrativo' : 'Entre na sua conta'}</h2><p>{adminMode ? 'Use as credenciais de primeiro acesso.' : 'Acesse com seu e-mail corporativo convidado.'}</p></div>
           {!apiAvailable && <div className="notice notice-warning"><CircleAlert size={17} /> API indisponível. Inicie o servidor e o banco para autenticar.</div>}
+          {sessionNotice && <div className="notice notice-warning" role="alert"><CircleAlert size={17} /> {sessionNotice}</div>}
 
           {adminMode ? (
             <form className="admin-form" onSubmit={handleAdminSubmit}>
@@ -255,7 +290,7 @@ function Brand() {
 }
 
 function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; canViewOtherPersonalActivities: boolean; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
-  const [page, setPage] = useState<AdminPage>('home')
+  const [pageState, setPageState] = useState<AdminPage>(readPageFromLocation)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('atech.sidebar-collapsed') === 'true')
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [search, setSearch] = useState('')
@@ -273,20 +308,65 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'tickets', label: 'Chamados' },
     { key: 'schedule', label: 'Programação' },
     { key: 'collaborators', label: 'Colaboradores' },
+    { key: 'inventory', label: 'Estoque' },
     { key: 'information', label: 'Informações' },
     { key: 'api-validation', label: 'Validação da API' },
     { key: 'warranties', label: 'Prazos de garantia' },
     { key: 'legal-processes', label: 'Processos Jurídicos' },
     { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
-  const canAccessPage = (key: AdminPage) => key === 'inventory'
-    ? user.role === 'admin' || pageAccess.includes('collaborators')
-    : key === 'letter-filling'
-      ? user.role === 'admin' || pageAccess.includes('tickets')
-      : user.role === 'admin' || pageAccess.includes(key)
+  const canAccessPage = useCallback((key: AdminPage) => key === 'letter-filling'
+    ? user.role === 'admin' || pageAccess.includes('tickets')
+    : key === 'accesses'
+      ? user.role === 'admin'
+      : user.role === 'admin' || pageAccess.includes(key), [pageAccess, user.role])
+  const page: AdminPage = canAccessPage(pageState) ? pageState : 'home'
+  const setPage = useCallback((nextPage: AdminPage) => {
+    if (!canAccessPage(nextPage)) return
+    setPageState(nextPage)
+    const url = new URL(window.location.href)
+    if (nextPage === 'home') {
+      url.searchParams.delete('page')
+    } else {
+      url.searchParams.set('page', nextPage)
+    }
+    const target = `${url.pathname}${url.search}${url.hash}`
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) {
+      window.history.pushState({ page: nextPage }, '', target)
+    }
+  }, [canAccessPage])
   const openPage = (key: AdminPage) => {
-    if (canAccessPage(key)) setPage(key)
+    setPage(key)
   }
+
+  useEffect(() => {
+    function handlePopState() {
+      const next = readPageFromLocation()
+      if (canAccessPage(next)) {
+        setPageState(next)
+      } else {
+        setPageState('home')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [canAccessPage])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      if (showNotifications) {
+        setShowNotifications(false)
+        return
+      }
+      const openAccessMenus = document.querySelectorAll<HTMLDetailsElement>('.user-page-access[open]')
+      if (openAccessMenus.length > 0) {
+        openAccessMenus.forEach((menu) => { menu.open = false })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showNotifications])
 
   const loadNotifications = useCallback(async () => {
     if (user.role !== 'admin' && !pageAccess.includes('tickets')) return
@@ -400,6 +480,33 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
       setNotice({ kind: 'success', text: `Acesso à página ${enabled ? 'liberado' : 'removido'} para ${member.displayName}.` })
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar o acesso à página.' })
+    }
+  }
+
+  async function changeRole(member: ManagedUser, nextRole: UserRole) {
+    if (member.role === nextRole) return
+    const actionLabel = nextRole === 'admin'
+      ? `conceder permissão de ADMINISTRADOR para ${member.displayName} (${member.email})?\nO usuário terá acesso irrestrito a todas as áreas do sistema.`
+      : `alterar a permissão de ${member.displayName} (${member.email}) para EQUIPE TÉCNICA?`
+    if (!window.confirm(`Deseja realmente ${actionLabel}`)) {
+      return
+    }
+    setNotice(null)
+    try {
+      await apiRequest(`/api/users/${member.id}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: nextRole }),
+      })
+      await loadUsers()
+      setNotice({
+        kind: 'success',
+        text: `Permissão de ${member.displayName} alterada para ${nextRole === 'admin' ? 'Administrador' : 'Equipe técnica'}.`,
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Não foi possível atualizar a permissão do usuário.',
+      })
     }
   }
 
@@ -518,7 +625,25 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               {loading ? <tr><td colSpan={6} className="table-message">Carregando usuários...</td></tr> : filteredUsers.length === 0 ? <tr><td colSpan={6} className="table-message">{users.length ? 'Nenhum resultado para esta busca.' : 'Ainda não há usuários cadastrados.'}</td></tr> : filteredUsers.map((member) => (
                 <tr key={member.id}>
                   <td><div className="user-cell"><span className={`user-avatar ${member.role === 'admin' ? 'user-avatar-admin' : ''}`}>{member.displayName.slice(0, 1).toUpperCase()}</span><span className="user-identity"><strong>{member.displayName}{member.id === user.id && <span className="you-tag">VOCÊ</span>}</strong><small>{member.email}</small></span></div></td>
-                  <td><span className={`role-label ${member.role === 'admin' ? 'role-admin' : ''}`}>{member.role === 'admin' ? 'Administrador' : 'Equipe técnica'}</span></td>
+                  <td>
+                    {member.id === user.id ? (
+                      <span className={`role-label ${member.role === 'admin' ? 'role-admin' : ''}`}>
+                        {member.role === 'admin' ? 'Administrador' : 'Equipe técnica'}
+                      </span>
+                    ) : (
+                      <select
+                        className={`role-select ${member.role === 'admin' ? 'role-select-admin' : ''}`}
+                        value={member.role}
+                        disabled={member.status === 'suspended'}
+                        onChange={(event) => void changeRole(member, event.target.value as UserRole)}
+                        title="Alterar permissão do usuário"
+                        aria-label={`Permissão de ${member.displayName}`}
+                      >
+                        <option value="member">Equipe técnica</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                    )}
+                  </td>
                   <td>{member.role === 'admin' ? <span className="role-label role-admin">Acesso total</span> : (
                     <details className="user-page-access">
                       <summary>{member.pageAccess.length} de {availablePages.length} páginas</summary>
@@ -532,13 +657,26 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                   )}</td>
                   <td><span className={`status-pill status-${member.status}`}><i />{member.status === 'active' ? 'Ativo' : member.status === 'invited' ? 'Convite enviado' : 'Suspenso'}</span></td>
                   <td className="last-seen">{member.role === 'admin' ? 'Conta principal' : formatDate(member.lastLoginAt)}</td>
-                  <td className="action-cell">{member.role === 'member' && <button className="row-action" type="button" onClick={() => void changeStatus(member)} title={member.status === 'suspended' ? 'Reativar acesso' : 'Suspender acesso'} aria-label={member.status === 'suspended' ? `Reativar ${member.email}` : `Suspender ${member.email}`}><span className="sr-only">{member.status === 'suspended' ? 'Reativar' : 'Suspender'}</span>{member.status === 'suspended' ? <Check size={16} /> : <Ban size={16} />}</button>}</td>
+                  <td className="action-cell">
+                    {member.id !== user.id && (
+                      <button
+                        className="row-action"
+                        type="button"
+                        onClick={() => void changeStatus(member)}
+                        title={member.status === 'suspended' ? 'Reativar acesso' : 'Suspender acesso'}
+                        aria-label={member.status === 'suspended' ? `Reativar ${member.email}` : `Suspender ${member.email}`}
+                      >
+                        <span className="sr-only">{member.status === 'suspended' ? 'Reativar' : 'Suspender'}</span>
+                        {member.status === 'suspended' ? <Check size={16} /> : <Ban size={16} />}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody></table></div>
             <div className="table-footer"><span><ShieldCheck size={14} /> A autenticação da equipe exige Google Workspace e convite ativo.</span><button className="refresh-button" type="button" onClick={() => void loadUsers()}>Atualizar lista <ArrowUpRight size={14} /></button></div>
           </section>
-          <footer className="workspace-footer"><span>ATech · Gestão de acesso</span><span>Administrador único <i /> Domínio verificado</span></footer>
+          <footer className="workspace-footer"><span>ATech · Gestão de acesso</span><span>Controle de administradores <i /> Domínio verificado</span></footer>
             </>
           ) : (
             <FutureModulePage page={page} />
@@ -636,7 +774,7 @@ function HomeDashboard({ user, users, loading, pageAccess, onOpenCollaborators, 
       <div className="dashboard-section-title modules-title"><div><span className="eyebrow">PLATAFORMA</span><h2>Áreas de trabalho</h2></div></div>
       <section className="module-grid" aria-label="Áreas da plataforma">
         {canAccessCollaborators && <button className="module-item module-item-live" type="button" onClick={onOpenCollaborators}><span className="module-icon"><ContactRound size={18} /></span><span className="module-copy"><strong>Colaboradores</strong><small>Acessos, convites e permissões</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccessCollaborators && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('inventory')}><span className="module-icon"><Package size={18} /></span><span className="module-copy"><strong>Estoque</strong><small>Insumos, EPI e ferramentas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
+        {canAccess('inventory') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('inventory')}><span className="module-icon"><Package size={18} /></span><span className="module-copy"><strong>Estoque</strong><small>Insumos, EPI e ferramentas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('tickets') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('tickets')}><span className="module-icon"><ClipboardList size={17} /></span><span className="module-copy"><strong>Chamados</strong><small>Quadro Kanban e atendimentos</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('schedule') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('schedule')}><span className="module-icon"><CalendarDays size={17} /></span><span className="module-copy"><strong>Programação</strong><small>Agenda e atividades técnicas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
         {canAccess('api-validation') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('api-validation')}><span className="module-icon"><Zap size={17} /></span><span className="module-copy"><strong>Validação API</strong><small>Integração CVCRM e carga CSV</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}

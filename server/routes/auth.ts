@@ -161,7 +161,7 @@ router.post('/google', async (req, res, next) => {
              ELSE COALESCE(NULLIF($2, ''), display_name)
            END,
            last_login_at = now(), updated_at = now()
-       WHERE lower(email) = lower($1) AND role = 'member' AND status IN ('invited', 'active')
+       WHERE lower(email) = lower($1) AND status IN ('invited', 'active')
        RETURNING id, email, display_name, role, status`,
       [email, identity.name ?? ''],
     )

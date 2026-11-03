@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, ArrowLeft, BarChart3, CircleCheck, CircleX, Clock3, RefreshCw, Search, Ticket } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, CheckCheck, CircleCheck, CircleX, Clock3, RefreshCw, Search, Ticket, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import SearchableMultiSelect from '../SearchableMultiSelect'
 import './TicketDashboardPage.css'
@@ -86,20 +86,63 @@ function buildDashboardQuery(filters: {
   return params.toString()
 }
 
+const TICKET_DASHBOARD_STORAGE_KEY = 'atech_ticket_dashboard_filters'
+
+interface SavedTicketDashboardFilters {
+  enterprises?: string[]
+  blocks?: string[]
+  units?: string[]
+  subjects?: string[]
+  subsubjects?: string[]
+  types?: string[]
+  customerQuery?: string
+  fromYear?: number | null
+}
+
+function loadSavedTicketDashboardFilters(): SavedTicketDashboardFilters {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(TICKET_DASHBOARD_STORAGE_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as SavedTicketDashboardFilters
+  } catch {
+    return {}
+  }
+}
+
 export default function TicketDashboardPage({ onBack }: { onBack: () => void }) {
   const [options, setOptions] = useState<DashboardOptions>({
     enterprises: [], blocks: [], units: [], subjects: [], subsubjects: [], years: [], dashboardSubjects: [],
   })
   const [data, setData] = useState<TicketDashboardData | null>(null)
-  const [enterprises, setEnterprises] = useState<string[]>([])
-  const [blocks, setBlocks] = useState<string[]>([])
-  const [units, setUnits] = useState<string[]>([])
-  const [subjects, setSubjects] = useState<string[]>([])
-  const [subsubjects, setSubsubjects] = useState<string[]>([])
-  const [types, setTypes] = useState<string[]>(['client', 'condominium'])
-  const [customer, setCustomer] = useState('')
-  const [customerQuery, setCustomerQuery] = useState('')
-  const [fromYear, setFromYear] = useState<number | null>(null)
+  const [initialFilters] = useState(() => loadSavedTicketDashboardFilters())
+  const [enterprises, setEnterprises] = useState<string[]>(() => initialFilters.enterprises ?? [])
+  const [blocks, setBlocks] = useState<string[]>(() => initialFilters.blocks ?? [])
+  const [units, setUnits] = useState<string[]>(() => initialFilters.units ?? [])
+  const [subjects, setSubjects] = useState<string[]>(() => initialFilters.subjects ?? [])
+  const [subsubjects, setSubsubjects] = useState<string[]>(() => initialFilters.subsubjects ?? [])
+  const [types, setTypes] = useState<string[]>(() => initialFilters.types ?? ['client', 'condominium'])
+  const [customer, setCustomer] = useState(() => initialFilters.customerQuery ?? '')
+  const [customerQuery, setCustomerQuery] = useState(() => initialFilters.customerQuery ?? '')
+  const [fromYear, setFromYear] = useState<number | null>(() => initialFilters.fromYear ?? null)
+
+  useEffect(() => {
+    try {
+      const stateToSave: SavedTicketDashboardFilters = {
+        enterprises,
+        blocks,
+        units,
+        subjects,
+        subsubjects,
+        types,
+        customerQuery,
+        fromYear,
+      }
+      localStorage.setItem(TICKET_DASHBOARD_STORAGE_KEY, JSON.stringify(stateToSave))
+    } catch {
+      // ignore storage access issues
+    }
+  }, [enterprises, blocks, units, subjects, subsubjects, types, customerQuery, fromYear])
   const [refreshKey, setRefreshKey] = useState(0)
   const [loadedQuery, setLoadedQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -207,8 +250,20 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
     setTypes(['client', 'condominium'])
     setCustomerQuery('')
     setCustomer('')
-    setFromYear(options.years[0] ?? new Date().getFullYear())
+    const defaultYear = options.years[0] ?? new Date().getFullYear()
+    setFromYear(defaultYear)
+    try {
+      localStorage.removeItem(TICKET_DASHBOARD_STORAGE_KEY)
+    } catch {
+      // ignore
+    }
   }
+
+  const hasActiveFilters = Boolean(
+    enterprises.length || blocks.length || units.length || subjects.length || subsubjects.length ||
+    customerQuery.trim() || types.length !== 2 || (options.years.length && fromYear !== options.years[0]),
+  )
+  const closedThisMonthTotal = (data?.completed_this_month ?? 0) + (data?.canceled_this_month ?? 0)
 
   return <section className="ticket-dashboard-page">
     <header className="ticket-dashboard-heading">
@@ -222,19 +277,27 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
 
     {!isFetching && (error || optionsError) && <div className="notice notice-error" role="alert">{error || optionsError}</div>}
 
-    <section className="ticket-dashboard-filters" aria-label="Filtros do dashboard">
-      <label className="ticket-dashboard-year-filter"><span>Considerar chamados a partir de</span><select value={fromYear ?? ''} onChange={(event) => setFromYear(Number(event.target.value))} disabled={!options.years.length}><option value="" disabled>Selecione o ano</option>{options.years.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-      <SearchableMultiSelect label="Empreendimentos" options={options.enterprises} value={enterprises} onChange={setEnterprises} />
-      <SearchableMultiSelect label="Blocos" options={options.blocks} value={blocks} onChange={setBlocks} />
-      <SearchableMultiSelect label="Unidades" options={options.units} value={units} onChange={setUnits} />
-      <label className="ticket-dashboard-customer"><span>Cliente</span><div><Search size={15} /><input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Buscar por nome" /></div></label>
-      <SearchableMultiSelect label="Assuntos" options={options.dashboardSubjects} value={subjects} onChange={setSubjects} />
-      <SearchableMultiSelect label="Subassuntos" options={options.subsubjects} value={subsubjects} onChange={setSubsubjects} />
-      <fieldset className="ticket-dashboard-type-filter"><legend>Tipo de chamado</legend>
-        <label><input type="checkbox" checked={types.includes('client')} onChange={() => toggleType('client')} /> Cliente</label>
-        <label><input type="checkbox" checked={types.includes('condominium')} onChange={() => toggleType('condominium')} /> Condomínio</label>
-      </fieldset>
-      <button type="button" className="text-action-btn" onClick={clearFilters}>Limpar filtros</button>
+    <section className="ticket-dashboard-filters-panel" aria-label="Filtros do dashboard">
+      <div className="ticket-dashboard-filters-header">
+        <strong>Filtros do período e empreendimento</strong>
+        <button type="button" className="filter-clear-button" disabled={!hasActiveFilters} onClick={clearFilters}><X size={14} /> Limpar filtros</button>
+      </div>
+      <div className="ticket-dashboard-filters">
+        <label className="ticket-dashboard-year-filter"><span>Considerar chamados a partir de</span><select value={fromYear ?? ''} onChange={(event) => setFromYear(Number(event.target.value))} disabled={!options.years.length}><option value="" disabled>Selecione o ano</option>{options.years.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <SearchableMultiSelect label="Empreendimentos" options={options.enterprises} value={enterprises} onChange={setEnterprises} />
+        <SearchableMultiSelect label="Blocos" options={options.blocks} value={blocks} onChange={setBlocks} />
+        <SearchableMultiSelect label="Unidades" options={options.units} value={units} onChange={setUnits} />
+        <label className="ticket-dashboard-customer"><span>Cliente</span><div><Search size={15} /><input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Buscar por nome" /></div></label>
+        <SearchableMultiSelect label="Assuntos" options={options.dashboardSubjects} value={subjects} onChange={setSubjects} />
+        <SearchableMultiSelect label="Subassuntos" options={options.subsubjects} value={subsubjects} onChange={setSubsubjects} />
+        <div className="ticket-dashboard-type-filter" role="group" aria-label="Tipo de chamado">
+          <span>Tipo de chamado</span>
+          <div className="ticket-dashboard-type-options">
+            <label><input type="checkbox" checked={types.includes('client')} onChange={() => toggleType('client')} /> Cliente</label>
+            <label><input type="checkbox" checked={types.includes('condominium')} onChange={() => toggleType('condominium')} /> Condomínio</label>
+          </div>
+        </div>
+      </div>
     </section>
 
     {isFetching
@@ -244,14 +307,25 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
         <span>Os indicadores serão exibidos assim que a consulta dos filtros terminar.</span>
       </div>
       : <>
-    <div className="ticket-dashboard-section-heading"><div><span className="eyebrow">RESUMO DO PERÍODO</span><h2>Indicadores do mês atual</h2></div></div>
+    <div className="ticket-dashboard-section-heading">
+      <div className="ticket-dashboard-section-title-group">
+        <span className="eyebrow">RESUMO DO PERÍODO</span>
+        <div className="ticket-dashboard-title-row">
+          <h2>Indicadores do mês atual</h2>
+          <span className="ticket-dashboard-avg-days">
+            <Clock3 size={14} />
+            Prazo médio de finalização: <strong>{data?.average_days == null ? '—' : `${decimalFormat.format(data.average_days)} dias`}</strong>
+          </span>
+        </div>
+      </div>
+    </div>
     <section className="ticket-dashboard-metrics" aria-label="Indicadores do mês atual">
       <article className="ticket-dashboard-metric metric-active"><span><Ticket size={16} />Chamados ativos</span><strong>{countFormat.format(data?.active_total ?? 0)}</strong><small>Ativos no CVCRM</small></article>
       <article className="ticket-dashboard-metric"><span><BarChart3 size={16} />Criados no mês</span><strong>{countFormat.format(data?.created_this_month ?? 0)}</strong><small>Por data de abertura</small></article>
       <article className="ticket-dashboard-metric"><span><CircleCheck size={16} />Finalizados no mês</span><strong>{countFormat.format(data?.completed_this_month ?? 0)}</strong><small>Registrados no histórico do CVCRM</small></article>
       <article className="ticket-dashboard-metric"><span><CircleX size={16} />Cancelados no mês</span><strong>{countFormat.format(data?.canceled_this_month ?? 0)}</strong><small>Registrados no histórico do CVCRM</small></article>
+      <article className="ticket-dashboard-metric"><span><CheckCheck size={16} />Finalizados + cancelados no mês</span><strong>{countFormat.format(closedThisMonthTotal)}</strong><small>Soma de finalizados e cancelados no mês</small></article>
       <article className="ticket-dashboard-metric"><span><Activity size={16} />Saldo do mês</span><strong>{countFormat.format(data?.balance_this_month ?? 0)}</strong><small>Criados − finalizados − cancelados</small></article>
-      <article className="ticket-dashboard-metric"><span><Clock3 size={16} />Prazo médio de finalização</span><strong>{data?.average_days == null ? '—' : `${decimalFormat.format(data.average_days)} dias`}</strong><small>Da abertura à finalização</small></article>
     </section>
 
     <section className="ticket-dashboard-panel">

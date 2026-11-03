@@ -232,7 +232,7 @@ router.put('/role-visibility', async (req, res, next) => {
 router.get('/legal-processes', async (_req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT p.id::text AS id, p.title,
+      `SELECT p.id::text AS id, p.title, p.process_number,
               COALESCE(enterprise.enterprise_name, p.enterprise_key, '') AS enterprise_name,
               p.claimant,
               COALESCE((
@@ -272,11 +272,26 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       role_label: string
       has_photo: boolean
       is_on_leave: boolean
+      absence_id: string | null
+      absence_type: 'atestado' | 'falta_injustificada' | null
+      absence_start_date: string | null
+      absence_end_date: string | null
+      absence_cid: string | null
+      absence_notes: string | null
     }>(
       `SELECT c.id, c.name, c.nickname, c.role, r.label AS role_label,
-              (c.photo_content IS NOT NULL) AS has_photo, c.is_on_leave
+              (c.photo_content IS NOT NULL) AS has_photo,
+              (c.is_on_leave OR abs.id IS NOT NULL) AS is_on_leave,
+              abs.id AS absence_id,
+              abs.type AS absence_type,
+              abs.start_date::text AS absence_start_date,
+              abs.end_date::text AS absence_end_date,
+              abs.cid AS absence_cid,
+              abs.notes AS absence_notes
        FROM collaborators c
        JOIN collaborator_roles r ON r.role_key = c.role
+       LEFT JOIN collaborator_absences abs ON abs.collaborator_id = c.id
+         AND abs.start_date <= $1::date AND abs.end_date >= $1::date
        WHERE (c.termination_date IS NULL OR c.termination_date > $1::date)
          AND (($2 = 'foreman' AND c.role = 'encarregado')
            OR ($2 = 'general' AND c.role <> 'encarregado'))
@@ -337,8 +352,21 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
   return {
     date,
     collaborators: collaborators.rows.map((collaborator) => ({
-      ...collaborator,
+      id: collaborator.id,
+      name: collaborator.name,
+      nickname: collaborator.nickname,
+      role: collaborator.role,
+      role_label: collaborator.role_label,
+      is_on_leave: collaborator.is_on_leave,
       photo_url: collaborator.has_photo ? `/api/collaborators/${collaborator.id}/photo` : null,
+      absence: collaborator.absence_id ? {
+        id: collaborator.absence_id,
+        type: collaborator.absence_type,
+        startDate: collaborator.absence_start_date,
+        endDate: collaborator.absence_end_date,
+        cid: collaborator.absence_cid,
+        notes: collaborator.absence_notes,
+      } : null,
       appointments: appointments.rows.filter((appointment) => appointment.collaborator_id === collaborator.id),
     })),
   }
@@ -371,17 +399,73 @@ router.get('/availability', async (req, res, next) => {
     return
   }
   try {
-    const result = await pool.query(
+    const [appointmentsResult, absencesResult] = await Promise.all([
+      pool.query<{
+        id: string
+        ticket_id: string | null
+        legal_process_id: string | null
+        starts_at: Date
+        ends_at: Date
+      }>(
         `SELECT id, ticket_id, legal_process_id, starts_at, ends_at
-       FROM ticket_programming
-       WHERE collaborator_id = $1
-         AND starts_at < (($3::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
-         AND ends_at > ($2::date AT TIME ZONE '${programmingTimeZone}')
-         AND ($4::bigint IS NULL OR id <> $4)
-       ORDER BY starts_at`,
-      [collaboratorId.data, startDate.data, endDate.data, excludeId.data],
-    )
-    res.json({ appointments: result.rows })
+         FROM ticket_programming
+         WHERE collaborator_id = $1
+           AND starts_at < (($3::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
+           AND ends_at > ($2::date AT TIME ZONE '${programmingTimeZone}')
+           AND ($4::bigint IS NULL OR id <> $4)
+         ORDER BY starts_at`,
+        [collaboratorId.data, startDate.data, endDate.data, excludeId.data],
+      ),
+      pool.query<{
+        id: string
+        type: 'atestado' | 'falta_injustificada'
+        start_date: string
+        end_date: string
+        cid: string | null
+      }>(
+        `SELECT id, type, start_date::text, end_date::text, cid
+         FROM collaborator_absences
+         WHERE collaborator_id = $1
+           AND start_date <= $3::date AND end_date >= $2::date
+         ORDER BY start_date`,
+        [collaboratorId.data, startDate.data, endDate.data],
+      ),
+    ])
+
+    const appointments: Array<{
+      id: string
+      ticket_id: string | null
+      legal_process_id: string | null
+      starts_at: string | Date
+      ends_at: string | Date
+    }> = [...appointmentsResult.rows]
+
+    for (const absence of absencesResult.rows) {
+      const cur = new Date(`${absence.start_date < startDate.data ? startDate.data : absence.start_date}T12:00:00Z`)
+      const maxDate = new Date(`${absence.end_date > endDate.data ? endDate.data : absence.end_date}T12:00:00Z`)
+      while (cur <= maxDate) {
+        const dayIso = cur.toISOString().slice(0, 10)
+        appointments.push({
+          id: `absence-${absence.id}-${dayIso}`,
+          ticket_id: null,
+          legal_process_id: null,
+          starts_at: `${dayIso}T08:00:00-03:00`,
+          ends_at: `${dayIso}T18:00:00-03:00`,
+        })
+        cur.setUTCDate(cur.getUTCDate() + 1)
+      }
+    }
+
+    res.json({
+      appointments,
+      absences: absencesResult.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        cid: row.cid,
+      })),
+    })
   } catch (error) {
     next(error)
   }
@@ -418,8 +502,8 @@ async function validateAvailability(
   endsAt: Date,
   excludeId?: number,
 ) {
-  const collaborator = await client.query<{ is_on_leave: boolean; role: string }>(
-    `SELECT is_on_leave, role FROM collaborators
+  const collaborator = await client.query<{ name: string; is_on_leave: boolean; role: string }>(
+    `SELECT name, is_on_leave, role FROM collaborators
      WHERE id = $1 AND (termination_date IS NULL OR termination_date > CURRENT_DATE)
      FOR UPDATE`,
     [collaboratorId],
@@ -428,6 +512,30 @@ async function validateAvailability(
   if (collaborator.rows[0].is_on_leave) throw new Error('Este colaborador está afastado e não pode receber programação.')
   if ((programmingType === 'foreman') !== (collaborator.rows[0].role === 'encarregado')) {
     throw new Error('A programação selecionada não corresponde ao cargo do colaborador.')
+  }
+
+  const absenceOverlap = await client.query<{
+    type: 'atestado' | 'falta_injustificada'
+    start_date: string
+    end_date: string
+    cid: string | null
+  }>(
+    `SELECT type, start_date::text, end_date::text, cid
+     FROM collaborator_absences
+     WHERE collaborator_id = $1
+       AND start_date <= ($3::timestamptz AT TIME ZONE '${programmingTimeZone}')::date
+       AND end_date >= ($2::timestamptz AT TIME ZONE '${programmingTimeZone}')::date
+     LIMIT 1`,
+    [collaboratorId, startsAt, endsAt],
+  )
+  if (absenceOverlap.rows[0]) {
+    const abs = absenceOverlap.rows[0]
+    const typeLabel = abs.type === 'atestado' ? 'atestado médico' : 'falta injustificada'
+    const cidStr = abs.cid ? ` (CID ${abs.cid})` : ''
+    const [sY, sM, sD] = abs.start_date.split('-')
+    const [eY, eM, eD] = abs.end_date.split('-')
+    const periodStr = abs.start_date === abs.end_date ? `${sD}/${sM}/${sY}` : `${sD}/${sM}/${sY} a ${eD}/${eM}/${eY}`
+    throw new Error(`Agenda bloqueada: o colaborador ${collaborator.rows[0].name} possui ${typeLabel}${cidStr} registrado no período (${periodStr}).`)
   }
 
   if (ticketId !== null) {

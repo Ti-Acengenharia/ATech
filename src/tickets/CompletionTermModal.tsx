@@ -122,6 +122,16 @@ export default function CompletionTermModal({
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !busy) {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [busy, onClose])
+
   function saveSignature(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!profileLoaded || !profile) {

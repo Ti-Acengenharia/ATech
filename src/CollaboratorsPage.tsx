@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from 'react'
 import {
+  AlertTriangle,
   ArrowLeft,
   CalendarDays,
+  CalendarX2,
   Check,
   CircleAlert,
+  Download,
+  ExternalLink,
   FileText,
   Pencil,
   Plus,
   Search,
   ShieldAlert,
+  Stethoscope,
   Trash2,
   UserPlus,
   UsersRound,
@@ -126,12 +131,68 @@ interface CollaboratorReport {
     recipientSignatureBase64: string
     items: { name: string; quantity: number; unitName: string }[]
   }[]
+  absences?: {
+    id: string
+    type: 'atestado' | 'falta_injustificada'
+    startDate: string
+    daysCount: number
+    endDate: string
+    cid: string
+    notes: string
+    createdByName: string
+    createdAt: string
+  }[]
 }
 
 interface UniformOptions {
   shirtSizes: { id: number; name: string }[]
   pantsSizes: number[]
   bootSizes: number[]
+}
+
+interface CollaboratorAbsence {
+  id: string
+  collaboratorId: string
+  collaboratorName: string
+  collaboratorRole: string
+  collaboratorRoleLabel: string
+  registrationNumber: string
+  photoUrl: string | null
+  type: 'atestado' | 'falta_injustificada'
+  startDate: string
+  daysCount: number
+  endDate: string
+  cid: string
+  notes: string
+  createdByName: string
+  createdAt: string
+}
+
+interface AbsenceSummary {
+  totalCount: number
+  totalDays: number
+  certificatesCount: number
+  unjustifiedCount: number
+}
+
+interface ProgrammingConflict {
+  id: number
+  ticketId: number | null
+  legalProcessId: number | null
+  activityDescription: string
+  date?: string
+  startsAt: string
+  endsAt: string
+  enterprise: string
+  protocol: string
+  completed: boolean
+}
+
+function calculateEndDate(startDate: string, daysCount: number) {
+  if (!startDate || daysCount <= 1) return startDate
+  const parts = startDate.split('-').map(Number)
+  const d = new Date(parts[0], parts[1] - 1, parts[2] + (daysCount - 1))
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 interface UniformDeliveryForm {
@@ -268,7 +329,7 @@ export default function CollaboratorsPage() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const [form, setForm] = useState<CollaboratorForm>(() => emptyForm())
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
@@ -276,7 +337,7 @@ export default function CollaboratorsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [reportPickerOpen, setReportPickerOpen] = useState(false)
-  const [selectedReportType, setSelectedReportType] = useState<'list' | 'uniforms' | 'report' | null>(null)
+  const [selectedReportType, setSelectedReportType] = useState<'list' | 'uniforms' | 'report' | 'absences' | null>(null)
   const [selectedReportCollaborator, setSelectedReportCollaborator] = useState('')
   const [reportCollaborators, setReportCollaborators] = useState<Collaborator[]>([])
   const [report, setReport] = useState<CollaboratorReport | null>(null)
@@ -298,6 +359,42 @@ export default function CollaboratorsPage() {
   const [recipientSignature, setRecipientSignature] = useState<string | null>(null)
   const [deliverySubmitting, setDeliverySubmitting] = useState(false)
   const [deliveryError, setDeliveryError] = useState('')
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false)
+  const [absenceForm, setAbsenceForm] = useState<{
+    collaboratorId: string
+    type: 'atestado' | 'falta_injustificada'
+    startDate: string
+    daysCount: number
+    cid: string
+    notes: string
+  }>(() => ({
+    collaboratorId: '',
+    type: 'atestado',
+    startDate: localDateString(new Date()),
+    daysCount: 1,
+    cid: '',
+    notes: '',
+  }))
+  const [absenceSubmitting, setAbsenceSubmitting] = useState(false)
+  const [absenceConflicts, setAbsenceConflicts] = useState<ProgrammingConflict[]>([])
+  const [savedConflicts, setSavedConflicts] = useState<{
+    collaboratorName: string
+    type: 'atestado' | 'falta_injustificada'
+    startDate: string
+    endDate: string
+    conflicts: ProgrammingConflict[]
+  } | null>(null)
+  const [checkingConflicts, setCheckingConflicts] = useState(false)
+  const [absenceReportModalOpen, setAbsenceReportModalOpen] = useState(false)
+  const [absenceReportStartDate, setAbsenceReportStartDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+  })
+  const [absenceReportEndDate, setAbsenceReportEndDate] = useState(() => localDateString(new Date()))
+  const [absenceReportCollaborator, setAbsenceReportCollaborator] = useState('')
+  const [absenceReportType, setAbsenceReportType] = useState('')
+  const [absenceReportData, setAbsenceReportData] = useState<{ absences: CollaboratorAbsence[]; summary: AbsenceSummary } | null>(null)
+  const [absenceReportLoading, setAbsenceReportLoading] = useState(false)
 
   const collaboratorGroups = Array.from(
     collaborators.reduce((groups, person) => {
@@ -334,7 +431,7 @@ export default function CollaboratorsPage() {
         <td><span className="collaborator-role">{roleLabel(person.role, roleOptions, person.role_label)}</span></td>
         <td><span className="collaborator-age">{formatAge(person)}</span></td>
         <td><div className="collaborator-status-stack"><span className={`collaborator-status ${person.is_active ? 'is-active' : 'is-terminated'}`}><i />{person.is_active ? 'Ativo' : 'Desligado'} · {formatElapsed(person)}</span>{person.is_on_leave && <span className="collaborator-leave-status">Afastado</span>}</div></td>
-        <td className="collaborator-actions"><button className="icon-button" type="button" title="Registrar entrega de fardamento" aria-label={`Registrar entrega para ${person.name}`} onClick={() => startDelivery(person)}><Plus size={16} /></button><button className="icon-button" type="button" title="Relatório com dados pessoais" aria-label={`Abrir relatório de ${person.name}`} onClick={() => void openReport(person.id)}><FileText size={16} /></button><button className="icon-button" type="button" title="Editar cadastro" aria-label={`Editar ${person.name}`} onClick={() => void openReport(person.id)}><Pencil size={16} /></button><button className="icon-button collaborator-delete-button" type="button" title="Excluir cadastro" aria-label={`Excluir ${person.name}`} disabled={deletingId === person.id} onClick={() => void deleteCollaborator(person.id, person.name)}><Trash2 size={16} /></button></td>
+        <td className="collaborator-actions"><button className="icon-button" type="button" title="Lançar falta ou atestado" aria-label={`Lançar falta ou atestado para ${person.name}`} onClick={() => openAbsenceModal(person.id)}><CalendarX2 size={16} /></button><button className="icon-button" type="button" title="Registrar entrega de fardamento" aria-label={`Registrar entrega para ${person.name}`} onClick={() => startDelivery(person)}><Plus size={16} /></button><button className="icon-button" type="button" title="Relatório com dados pessoais" aria-label={`Abrir relatório de ${person.name}`} onClick={() => void openReport(person.id)}><FileText size={16} /></button><button className="icon-button" type="button" title="Editar cadastro" aria-label={`Editar ${person.name}`} onClick={() => void openReport(person.id)}><Pencil size={16} /></button><button className="icon-button collaborator-delete-button" type="button" title="Excluir cadastro" aria-label={`Excluir ${person.name}`} disabled={deletingId === person.id} onClick={() => void deleteCollaborator(person.id, person.name)}><Trash2 size={16} /></button></td>
       </tr>
     )) : []),
   ])
@@ -385,6 +482,30 @@ export default function CollaboratorsPage() {
     if (deliveryCollaborator) deliveryPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [deliveryCollaborator])
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      if (reportPickerOpen) {
+        setReportPickerOpen(false)
+        return
+      }
+      if (reportOpen) {
+        closeReport()
+        return
+      }
+      if (deliveryCollaborator && !deliverySubmitting) {
+        setDeliveryCollaborator(null)
+        return
+      }
+      if (formOpen && !submitting) {
+        setFormOpen(false)
+        setEditingId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [reportPickerOpen, reportOpen, deliveryCollaborator, deliverySubmitting, formOpen, submitting])
+
   function startCreate() {
     setEditingId(null)
     setForm(emptyForm())
@@ -395,6 +516,297 @@ export default function CollaboratorsPage() {
     setFormOpen(true)
   }
 
+  async function checkScheduleConflicts(collaboratorId: string, startDate: string, daysCount: number) {
+    if (!collaboratorId || !startDate) {
+      setAbsenceConflicts([])
+      return
+    }
+    setCheckingConflicts(true)
+    try {
+      const res = await apiRequest<{ conflicts: ProgrammingConflict[] }>(
+        `/api/collaborators/${collaboratorId}/programming-conflicts?startDate=${startDate}&daysCount=${daysCount || 1}`
+      )
+      setAbsenceConflicts(res.conflicts || [])
+    } catch {
+      setAbsenceConflicts([])
+    } finally {
+      setCheckingConflicts(false)
+    }
+  }
+
+  function openAbsenceModal(collaboratorId?: string) {
+    const targetCollabId = collaboratorId ?? (collaborators[0]?.id || '')
+    const defaultStart = localDateString(new Date())
+    setAbsenceForm({
+      collaboratorId: targetCollabId,
+      type: 'atestado',
+      startDate: defaultStart,
+      daysCount: 1,
+      cid: '',
+      notes: '',
+    })
+    setAbsenceConflicts([])
+    setAbsenceModalOpen(true)
+    if (targetCollabId) {
+      void checkScheduleConflicts(targetCollabId, defaultStart, 1)
+    }
+  }
+
+  function updateAbsenceField<K extends keyof typeof absenceForm>(key: K, value: typeof absenceForm[K]) {
+    setAbsenceForm((curr) => {
+      const next = { ...curr, [key]: value }
+      if (key === 'collaboratorId' || key === 'startDate' || key === 'daysCount') {
+        void checkScheduleConflicts(next.collaboratorId, next.startDate, next.daysCount)
+      }
+      return next
+    })
+  }
+
+  async function saveAbsence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!absenceForm.collaboratorId) {
+      setNotice({ kind: 'error', text: 'Selecione o colaborador.' })
+      return
+    }
+    setAbsenceSubmitting(true)
+    try {
+      const result = await apiRequest<{
+        absence: CollaboratorAbsence
+        conflicts: ProgrammingConflict[]
+        hasConflicts: boolean
+        conflictMessage: string | null
+      }>('/api/collaborators/absences', {
+        method: 'POST',
+        body: JSON.stringify({
+          collaboratorId: Number(absenceForm.collaboratorId),
+          type: absenceForm.type,
+          startDate: absenceForm.startDate,
+          daysCount: Number(absenceForm.daysCount),
+          cid: absenceForm.cid.trim() || null,
+          notes: absenceForm.notes.trim() || null,
+        }),
+      })
+
+      setAbsenceModalOpen(false)
+      if (result.hasConflicts) {
+        setSavedConflicts({
+          collaboratorName: result.absence.collaboratorName,
+          type: result.absence.type,
+          startDate: result.absence.startDate,
+          endDate: result.absence.endDate,
+          conflicts: result.conflicts,
+        })
+        setNotice({
+          kind: 'warning',
+          text: `Atestado/falta cadastrado com sucesso! ATENÇÃO: O colaborador possui ${result.conflicts.length} atividade(s) agendada(s) no período de ausência. Você precisa rever a programação prevista na aba de Programação.`,
+        })
+      } else {
+        setNotice({
+          kind: 'success',
+          text: `${absenceForm.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'} cadastrado com sucesso.`,
+        })
+      }
+
+      if (reportOpen && report && String(report.id) === String(absenceForm.collaboratorId)) {
+        await revealReport(report.id)
+      }
+      if (absenceReportModalOpen) {
+        await fetchAbsenceReport()
+      }
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Não foi possível cadastrar a ausência.',
+      })
+    } finally {
+      setAbsenceSubmitting(false)
+    }
+  }
+
+  async function deleteAbsence(absenceId: string, collaboratorId?: string) {
+    if (!window.confirm('Deseja realmente remover este registro de atestado/falta?')) return
+    try {
+      await apiRequest(`/api/collaborators/absences/${absenceId}`, { method: 'DELETE' })
+      setNotice({ kind: 'success', text: 'Registro de ausência removido.' })
+      if (reportOpen && report && String(report.id) === String(collaboratorId)) {
+        await revealReport(report.id)
+      }
+      if (absenceReportModalOpen) {
+        await fetchAbsenceReport()
+      }
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível remover o registro.' })
+    }
+  }
+
+  async function fetchAbsenceReport() {
+    setAbsenceReportLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (absenceReportStartDate) params.set('startDate', absenceReportStartDate)
+      if (absenceReportEndDate) params.set('endDate', absenceReportEndDate)
+      if (absenceReportCollaborator) params.set('collaboratorId', absenceReportCollaborator)
+      if (absenceReportType) params.set('type', absenceReportType)
+
+      const result = await apiRequest<{ absences: CollaboratorAbsence[]; summary: AbsenceSummary }>(
+        `/api/collaborators/absences?${params.toString()}`
+      )
+      setAbsenceReportData(result)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar o relatório de faltas.' })
+    } finally {
+      setAbsenceReportLoading(false)
+    }
+  }
+
+  async function openAbsenceReportViewer() {
+    setReportPickerOpen(false)
+    setAbsenceReportModalOpen(true)
+    await fetchAbsenceReport()
+  }
+
+  async function downloadAbsencesPdf(absences: CollaboratorAbsence[], summary: AbsenceSummary, startDate: string, endDate: string) {
+    try {
+      const { jsPDF } = await import('jspdf')
+      const document = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      const pageWidth = document.internal.pageSize.getWidth()
+      const pageHeight = document.internal.pageSize.getHeight()
+      const margin = 14
+      const contentWidth = pageWidth - margin * 2
+
+      let y = 0
+      const drawHeader = () => {
+        document.setFillColor(22, 62, 96)
+        document.rect(0, 0, pageWidth, 27, 'F')
+        document.setFillColor(79, 158, 211)
+        document.rect(0, 27, pageWidth, 1.4, 'F')
+        document.setTextColor(255, 255, 255)
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(13)
+        document.text('ATECH  /  RELATÓRIOS DA EQUIPE', margin, 11)
+        document.setFontSize(10)
+        document.text(`RELATÓRIO DE FALTAS E ATESTADOS (${formatDate(startDate)} a ${formatDate(endDate)})`, margin, 20)
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(8)
+        document.setTextColor(218, 232, 244)
+        document.text(`Emitido em ${formatDate(localDateString(new Date()))}`, pageWidth - margin, 19, { align: 'right' })
+        document.setTextColor(42, 61, 78)
+        y = 36
+      }
+
+      const addPage = () => {
+        document.addPage()
+        drawHeader()
+      }
+
+      const ensureSpace = (height = 10) => {
+        if (y + height > pageHeight - 17) addPage()
+      }
+
+      drawHeader()
+
+      // KPI Summary cards
+      const kpis = [
+        ['TOTAL DE OCORRÊNCIAS', String(summary.totalCount)],
+        ['TOTAL DE DIAS AFASTADOS', `${summary.totalDays} dia(s)`],
+        ['ATESTADOS MÉDICOS', String(summary.certificatesCount)],
+        ['FALTAS INJUSTIFICADAS', String(summary.unjustifiedCount)],
+      ]
+      const cardGap = 4
+      const cardWidth = (contentWidth - cardGap * 3) / 4
+      kpis.forEach(([label, val], idx) => {
+        const x = margin + idx * (cardWidth + cardGap)
+        document.setFillColor(247, 250, 253)
+        document.setDrawColor(220, 230, 239)
+        document.roundedRect(x, y, cardWidth, 14, 1.5, 1.5, 'FD')
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(7)
+        document.setTextColor(100, 116, 139)
+        document.text(label, x + 3, y + 5)
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(11)
+        document.setTextColor(30, 41, 59)
+        document.text(val, x + 3, y + 11)
+      })
+      y += 20
+
+      // Table header
+      const headers: [string, number][] = [
+        ['COLABORADOR', 14],
+        ['FUNÇÃO', 75],
+        ['TIPO', 120],
+        ['PERÍODO', 160],
+        ['DIAS', 205],
+        ['CID', 220],
+        ['REGISTRADO POR', 242],
+      ]
+      document.setFillColor(238, 243, 248)
+      document.roundedRect(margin, y, contentWidth, 8, 1.5, 1.5, 'F')
+      document.setFont('helvetica', 'bold')
+      document.setFontSize(7)
+      document.setTextColor(82, 103, 122)
+      for (const [label, x] of headers) document.text(label, margin + (x - 14), y + 5.3)
+      y += 11
+
+      // Table rows
+      for (const item of absences) {
+        ensureSpace(14)
+        if (Math.floor(y) % 2 === 0) {
+          document.setFillColor(250, 252, 254)
+          document.roundedRect(margin, y - 3, contentWidth, 12, 1, 1, 'F')
+        }
+        document.setFont('helvetica', 'bold')
+        document.setFontSize(8)
+        document.setTextColor(40, 63, 84)
+        document.text(document.splitTextToSize(item.collaboratorName, 55).slice(0, 1), margin, y + 3)
+
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(7)
+        document.setTextColor(71, 85, 105)
+        document.text(document.splitTextToSize(item.collaboratorRoleLabel || item.collaboratorRole, 40).slice(0, 1), margin + 61, y + 3)
+
+        if (item.type === 'atestado') {
+          document.setTextColor(26, 92, 146)
+          document.text('Atestado médico', margin + 106, y + 3)
+        } else {
+          document.setTextColor(156, 39, 39)
+          document.text('Falta injustificada', margin + 106, y + 3)
+        }
+
+        document.setTextColor(51, 65, 85)
+        document.text(`${formatDate(item.startDate)} a ${formatDate(item.endDate)}`, margin + 146, y + 3)
+        document.text(`${item.daysCount} d`, margin + 191, y + 3)
+        document.text(item.cid || '—', margin + 206, y + 3)
+        document.text(document.splitTextToSize(item.createdByName, 36).slice(0, 1), margin + 228, y + 3)
+
+        if (item.notes) {
+          y += 5
+          document.setFontSize(6.5)
+          document.setTextColor(100, 116, 139)
+          document.text(`Obs: ${document.splitTextToSize(item.notes, contentWidth - 8).slice(0, 1)}`, margin + 4, y + 2)
+          y += 7
+        } else {
+          y += 10
+        }
+      }
+
+      for (let page = 1; page <= document.getNumberOfPages(); page += 1) {
+        document.setPage(page)
+        document.setDrawColor(222, 231, 238)
+        document.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12)
+        document.setFont('helvetica', 'normal')
+        document.setFontSize(7)
+        document.setTextColor(120, 136, 150)
+        document.text('Documento interno · ATech', margin, pageHeight - 7)
+        document.text(`Página ${page} de ${document.getNumberOfPages()}`, pageWidth - margin, pageHeight - 7, { align: 'right' })
+      }
+
+      document.save(`relatorio-faltas-atestados-${startDate}-a-${endDate}.pdf`)
+    } catch (error) {
+      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível gerar o PDF do relatório de faltas.' })
+    }
+  }
+
   async function openReport(id: string) {
     setReport(null)
     setReportOpen(true)
@@ -402,8 +814,9 @@ export default function CollaboratorsPage() {
     setEditingId(id)
   }
 
-  async function revealReport() {
-    if (!editingId) return
+  async function revealReport(targetId?: string) {
+    const id = targetId ?? editingId
+    if (!id) return
     setReportLoading(true)
     setNotice(null)
     try {
@@ -472,6 +885,10 @@ export default function CollaboratorsPage() {
 
   function confirmReportSelection() {
     if (!selectedReportType) return
+    if (selectedReportType === 'absences') {
+      void openAbsenceReportViewer()
+      return
+    }
     setReportPickerOpen(false)
     if (selectedReportType === 'report') {
       if (!selectedReportCollaborator) {
@@ -729,6 +1146,31 @@ export default function CollaboratorsPage() {
           wrapped.forEach((line, index) => document.text(line, margin + 4, y + index * 4))
           y += wrapped.length * 4 + 7
         }
+        drawSection('Histórico de atestados e faltas')
+        if (!report.absences?.length) {
+          document.setFont('helvetica', 'normal')
+          document.setFontSize(8)
+          document.setTextColor(112, 132, 151)
+          document.text('Nenhum atestado ou falta registrado.', margin + 2, y)
+          y += 7
+        } else {
+          for (const abs of report.absences) {
+            const kindText = abs.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'
+            const text = `${kindText}: ${formatDate(abs.startDate)} a ${formatDate(abs.endDate)} (${abs.daysCount} d)${abs.cid ? ` · CID: ${abs.cid}` : ''} · Reg. por ${abs.createdByName}${abs.notes ? ` · Obs: ${abs.notes}` : ''}`
+            const wrapped = document.splitTextToSize(text, contentWidth - 12) as string[]
+            ensureSpace(wrapped.length * 4 + 8)
+            document.setFillColor(250, 252, 254)
+            document.roundedRect(margin, y - 3, contentWidth, wrapped.length * 4 + 6, 1.5, 1.5, 'F')
+            document.setFillColor(abs.type === 'atestado' ? 43 : 180, abs.type === 'atestado' ? 114 : 50, abs.type === 'atestado' ? 186 : 50)
+            document.rect(margin, y - 3, 1.4, wrapped.length * 4 + 6, 'F')
+            document.setFont('helvetica', 'normal')
+            document.setFontSize(8)
+            document.setTextColor(54, 73, 91)
+            wrapped.forEach((line, index) => document.text(line, margin + 4, y + index * 4))
+            y += wrapped.length * 4 + 7
+          }
+        }
+
         drawSection('Histórico de entregas de fardamento')
         if (!report.uniformDeliveries.length) {
           document.setFont('helvetica', 'normal')
@@ -982,6 +1424,7 @@ export default function CollaboratorsPage() {
           <p>Cadastro e situação da equipe própria e terceirizada.</p>
         </div>
         <div className="collaborator-heading-actions">
+          <button className="secondary-button" type="button" onClick={() => openAbsenceModal()}><CalendarX2 size={16} /> Cadastrar faltas</button>
           <button className="secondary-button" type="button" onClick={beginReportSelection}><FileText size={16} /> Emitir relatório</button>
           <button className="primary-button collaborator-add" type="button" onClick={startCreate}><Plus size={17} /> Novo colaborador</button>
         </div>
@@ -1017,7 +1460,16 @@ export default function CollaboratorsPage() {
               <button className={`collaborator-report-picker-option ${selectedReportType === 'list' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'list'} onClick={() => setSelectedReportType('list')}><UsersRound size={20} /><span><strong>Lista de colaboradores e funções</strong><small>Equipe, funções, matrícula, situação e foto disponível.</small></span></button>
               <button className={`collaborator-report-picker-option ${selectedReportType === 'uniforms' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'uniforms'} onClick={() => setSelectedReportType('uniforms')}><FileText size={20} /><span><strong>Fardamentos e tamanhos</strong><small>Tamanhos cadastrados e quantidade de camisas por tipo.</small></span></button>
               <button className={`collaborator-report-picker-option ${selectedReportType === 'report' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'report'} onClick={() => setSelectedReportType('report')}><ShieldAlert size={20} /><span><strong>Ficha individual</strong><small>Dados pessoais, histórico e assinaturas; o acesso fica auditado.</small></span></button>
+              <button className={`collaborator-report-picker-option ${selectedReportType === 'absences' ? 'is-selected' : ''}`} type="button" aria-pressed={selectedReportType === 'absences'} onClick={() => setSelectedReportType('absences')}><CalendarX2 size={20} /><span><strong>Relatório de faltas e atestados</strong><small>Consolidado por período de afastamentos médicos e faltas da equipe.</small></span></button>
             </div>
+            {selectedReportType === 'absences' && (
+              <div className="absence-report-picker-filters" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '12px' }}>
+                <label className="form-field"><span>Data inicial *</span><input type="date" value={absenceReportStartDate} onChange={(e) => setAbsenceReportStartDate(e.target.value)} required /></label>
+                <label className="form-field"><span>Data final *</span><input type="date" value={absenceReportEndDate} onChange={(e) => setAbsenceReportEndDate(e.target.value)} required /></label>
+                <label className="form-field" style={{ gridColumn: '1 / -1' }}><span>Colaborador</span><select value={absenceReportCollaborator} onChange={(e) => setAbsenceReportCollaborator(e.target.value)}><option value="">Todos os colaboradores</option>{reportCollaborators.map((p) => <option key={p.id} value={p.id}>{p.name} · {roleLabel(p.role, roleOptions, p.role_label)}</option>)}</select></label>
+                <label className="form-field" style={{ gridColumn: '1 / -1' }}><span>Tipo de ocorrência</span><select value={absenceReportType} onChange={(e) => setAbsenceReportType(e.target.value)}><option value="">Todos os tipos</option><option value="atestado">Somente atestados médicos</option><option value="falta_injustificada">Somente faltas injustificadas</option></select></label>
+              </div>
+            )}
             {selectedReportType === 'report' && <label className="form-field"><span>Colaborador *</span><select value={selectedReportCollaborator} onChange={(event) => setSelectedReportCollaborator(event.target.value)}><option value="">Selecione</option>{reportCollaborators.map((person) => <option key={person.id} value={person.id}>{person.name} · {roleLabel(person.role, roleOptions, person.role_label)}</option>)}</select></label>}
             <footer className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setReportPickerOpen(false)}>Cancelar</button><button className="primary-button" type="button" disabled={!selectedReportType || (selectedReportType === 'report' && !selectedReportCollaborator)} onClick={confirmReportSelection}>Continuar</button></footer>
           </section>
@@ -1048,6 +1500,32 @@ export default function CollaboratorsPage() {
                   <div className="report-children"><dt>Filhos</dt><dd>{report.hasChildren ? report.children.map((child, index) => <span className="report-child" key={`${child.name}-${index}`}>{child.name} · {formatDate(child.birthDate)} · {genderOptions.find((gender) => gender.value === child.gender)?.label ?? 'Não informado'}</span>) : 'Não'}</dd></div>
                 </dl>
                 <section className="collaborator-history-section"><h3>Histórico de afastamentos</h3>{report.leaveHistory.length ? report.leaveHistory.map((leave) => <p key={leave.id}>{formatDate(leave.startDate)} a {formatDate(leave.expectedReturnDate)} · {leave.current ? 'Atual' : `Encerrado em ${formatDate(leave.endedAt)}`} · {leave.reason}</p>) : <p>Nenhum afastamento registrado.</p>}</section>
+                <section className="collaborator-history-section">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <h3>Histórico de atestados e faltas</h3>
+                    <button className="secondary-button" type="button" style={{ padding: '4px 10px', fontSize: '10px' }} onClick={() => openAbsenceModal(report.id)}><CalendarX2 size={13} /> Lançar falta / atestado</button>
+                  </div>
+                  {report.absences && report.absences.length > 0 ? (
+                    <div className="absence-table-wrap">
+                      <table className="absence-table">
+                        <thead><tr><th>TIPO</th><th>PERÍODO</th><th>DURAÇÃO</th><th>CID</th><th>OBSERVAÇÕES</th><th>REGISTRADO POR</th><th><span className="sr-only">Ações</span></th></tr></thead>
+                        <tbody>
+                          {report.absences.map((abs) => (
+                            <tr key={abs.id}>
+                              <td><span className={`absence-badge ${abs.type === 'atestado' ? 'absence-badge-atestado' : 'absence-badge-falta'}`}>{abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}</span></td>
+                              <td>{formatDate(abs.startDate)} a {formatDate(abs.endDate)}</td>
+                              <td>{abs.daysCount} {abs.daysCount === 1 ? 'dia' : 'dias'}</td>
+                              <td>{abs.cid || '—'}</td>
+                              <td>{abs.notes || '—'}</td>
+                              <td><small>{abs.createdByName}<br />{formatDate(abs.createdAt)}</small></td>
+                              <td><button className="icon-button danger-button" type="button" title="Remover registro de ausência" onClick={() => void deleteAbsence(abs.id, report.id)}><Trash2 size={14} /></button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <p>Nenhum atestado ou falta registrado para este colaborador.</p>}
+                </section>
                 <section className="collaborator-history-section"><h3>Entregas de fardamento</h3>{report.uniformDeliveries.length ? report.uniformDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={delivery.id}><p>{formatDate(delivery.deliveryDate)} · Camisa {delivery.shirtSize ?? '—'} (curta {delivery.shirtShortSleeveQty}, longa {delivery.shirtLongSleeveQty}) · Calça {delivery.pantsSize ?? '—'} ({delivery.pantsQty}) · Bota {delivery.bootSize ?? '—'} ({delivery.bootQty}) · Entregue por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
                 <section className="collaborator-history-section"><h3>Histórico de EPI e ferramentas</h3>{report.inventoryDeliveries.length ? report.inventoryDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={`inventory-${delivery.id}`}><p>{formatDate(delivery.deliveryDate)} · {delivery.type === 'epi_delivery' ? 'Entrega de EPI' : delivery.type === 'tool_delivery' ? 'Entrega de ferramentas' : 'Devolução de ferramentas'} · {delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega de EPI ou ferramenta registrada.</p>}</section>
                 <footer className="dialog-footer"><button className="secondary-button danger-button" type="button" disabled={deletingId === report.id} onClick={() => void deleteCollaborator(report.id, report.name)}><Trash2 size={15} />{deletingId === report.id ? 'Excluindo...' : 'Excluir colaborador'}</button><button className="secondary-button" type="button" onClick={() => void downloadPdf('report')}>Ficha do colaborador (PDF)</button><button className="secondary-button" type="button" onClick={editReport}><Pencil size={15} /> Editar cadastro</button><button className="primary-button" type="button" onClick={closeReport}>Concluir</button></footer>
@@ -1161,6 +1639,392 @@ export default function CollaboratorsPage() {
         </form>
       </section>
     )}
+
+      {absenceModalOpen && (
+        <div className="collaborator-report-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAbsenceModalOpen(false) }}>
+          <section className="collaborator-report-picker" style={{ width: 'min(100%, 620px)' }} role="dialog" aria-modal="true" aria-labelledby="absence-modal-title">
+            <header>
+              <div>
+                <span className="eyebrow">REGISTRO DE AUSÊNCIA</span>
+                <h2 id="absence-modal-title">Cadastrar falta ou atestado</h2>
+                <p>Lance afastamentos médicos ou faltas injustificadas da equipe.</p>
+              </div>
+              <button className="icon-button" type="button" aria-label="Fechar" onClick={() => setAbsenceModalOpen(false)}><X size={18} /></button>
+            </header>
+            <form onSubmit={saveAbsence}>
+              <div style={{ display: 'grid', gap: '14px' }}>
+                <label className="form-field">
+                  <span>Colaborador *</span>
+                  <select
+                    value={absenceForm.collaboratorId}
+                    onChange={(e) => updateAbsenceField('collaboratorId', e.target.value)}
+                    required
+                  >
+                    <option value="">Selecione um colaborador</option>
+                    {collaborators.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} · {roleLabel(p.role, roleOptions, p.role_label)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="form-field">
+                  <span>Tipo de ocorrência *</span>
+                  <div className="absence-type-selector">
+                    <button
+                      type="button"
+                      className={`absence-type-option ${absenceForm.type === 'atestado' ? 'is-selected-atestado' : ''}`}
+                      onClick={() => updateAbsenceField('type', 'atestado')}
+                    >
+                      <Stethoscope size={16} /> Atestado médico
+                    </button>
+                    <button
+                      type="button"
+                      className={`absence-type-option ${absenceForm.type === 'falta_injustificada' ? 'is-selected-falta' : ''}`}
+                      onClick={() => updateAbsenceField('type', 'falta_injustificada')}
+                    >
+                      <AlertTriangle size={16} /> Falta injustificada
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <label className="form-field">
+                    <span>Data de início *</span>
+                    <input
+                      type="date"
+                      value={absenceForm.startDate}
+                      onChange={(e) => updateAbsenceField('startDate', e.target.value)}
+                      required
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Quantidade de dias *</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={absenceForm.daysCount}
+                      onChange={(e) => updateAbsenceField('daysCount', Math.max(1, Number(e.target.value) || 1))}
+                      required
+                    />
+                  </label>
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#475569', background: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  <strong>Período calculado:</strong> {formatDate(absenceForm.startDate)} até {formatDate(calculateEndDate(absenceForm.startDate, absenceForm.daysCount))} ({absenceForm.daysCount} {absenceForm.daysCount === 1 ? 'dia' : 'dias'})
+                </div>
+
+                {absenceForm.type === 'atestado' && (
+                  <label className="form-field">
+                    <span>CID (Classificação Internacional de Doenças)</span>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={absenceForm.cid}
+                      onChange={(e) => updateAbsenceField('cid', e.target.value)}
+                      placeholder="Ex.: M54.5, J06, etc."
+                    />
+                  </label>
+                )}
+
+                <label className="form-field">
+                  <span>Observações / Justificativa</span>
+                  <textarea
+                    rows={2}
+                    maxLength={1000}
+                    value={absenceForm.notes}
+                    onChange={(e) => updateAbsenceField('notes', e.target.value)}
+                    placeholder="Detalhes relevantes sobre o atestado ou falta..."
+                  />
+                </label>
+
+                {checkingConflicts ? (
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>Verificando agenda de programação do colaborador...</div>
+                ) : absenceConflicts.length > 0 ? (
+                  <div className="collaborator-conflict-warning">
+                    <div className="collaborator-conflict-warning-title">
+                      <AlertTriangle size={17} />
+                      <span>ATENÇÃO: Conflito com a Programação Prevista!</span>
+                    </div>
+                    <p>
+                      Este colaborador possui <strong>{absenceConflicts.length} atividade(s)</strong> já agendada(s) no período de afastamento ({formatDate(absenceForm.startDate)} a {formatDate(calculateEndDate(absenceForm.startDate, absenceForm.daysCount))}).
+                      <strong> Quem está lançando este registro precisa rever e reprogramar essas atividades.</strong>
+                    </p>
+                    <div style={{ margin: '8px 0 10px' }}>
+                      <a
+                        href={`/?page=schedule&date=${absenceForm.startDate}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="conflict-schedule-btn conflict-schedule-btn-all"
+                      >
+                        <ExternalLink size={13} />
+                        <span>Abrir Programação da data inicial ({formatDate(absenceForm.startDate)}) em nova aba</span>
+                      </a>
+                    </div>
+                    <ul className="collaborator-conflict-list">
+                      {absenceConflicts.map((c) => {
+                        const conflictDay = c.date || c.startsAt.slice(0, 10)
+                        return (
+                          <li key={c.id} className="collaborator-conflict-item">
+                            <div className="collaborator-conflict-item-info">
+                              <strong>{c.enterprise || 'Sem condomínio associado'}{c.protocol ? ` (#${c.protocol})` : ''}:</strong>{' '}
+                              <span>{c.activityDescription}</span>{' '}
+                              <small className="conflict-time-badge">
+                                {formatDate(conflictDay)} das {new Date(c.startsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} às {new Date(c.endsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </small>
+                            </div>
+                            <a
+                              href={`/?page=schedule&date=${conflictDay}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="conflict-schedule-btn"
+                              title={`Abrir Programação do dia ${formatDate(conflictDay)} em nova aba`}
+                            >
+                              <ExternalLink size={12} />
+                              <span>Abrir dia {formatDate(conflictDay)} em nova aba</span>
+                            </a>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+
+              <footer className="dialog-footer" style={{ marginTop: '16px' }}>
+                <button className="secondary-button" type="button" onClick={() => setAbsenceModalOpen(false)}>Cancelar</button>
+                <button className="primary-button" type="submit" disabled={absenceSubmitting || !absenceForm.collaboratorId}>
+                  {absenceSubmitting ? 'Salvando...' : 'Salvar registro'}
+                </button>
+              </footer>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {absenceReportModalOpen && (
+        <div className="collaborator-report-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAbsenceReportModalOpen(false) }}>
+          <section className="collaborator-report-picker" style={{ width: 'min(100%, 920px)', maxHeight: '92vh', overflowY: 'auto' }} role="dialog" aria-modal="true" aria-labelledby="absence-report-title">
+            <header>
+              <div>
+                <span className="eyebrow">RELATÓRIO CONSOLIDADO</span>
+                <h2 id="absence-report-title">Relatório de Faltas e Atestados</h2>
+                <p>Período de {formatDate(absenceReportStartDate)} a {formatDate(absenceReportEndDate)}</p>
+              </div>
+              <button className="icon-button" type="button" aria-label="Fechar" onClick={() => setAbsenceReportModalOpen(false)}><X size={18} /></button>
+            </header>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '14px' }}>
+              <label style={{ fontSize: '10px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <span>Início:</span>
+                <input type="date" style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }} value={absenceReportStartDate} onChange={(e) => setAbsenceReportStartDate(e.target.value)} />
+              </label>
+              <label style={{ fontSize: '10px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <span>Fim:</span>
+                <input type="date" style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }} value={absenceReportEndDate} onChange={(e) => setAbsenceReportEndDate(e.target.value)} />
+              </label>
+              <label style={{ fontSize: '10px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '3px', flex: '1', minWidth: '160px' }}>
+                <span>Colaborador:</span>
+                <select style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }} value={absenceReportCollaborator} onChange={(e) => setAbsenceReportCollaborator(e.target.value)}>
+                  <option value="">Todos os colaboradores</option>
+                  {collaborators.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '10px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <span>Tipo:</span>
+                <select style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }} value={absenceReportType} onChange={(e) => setAbsenceReportType(e.target.value)}>
+                  <option value="">Todos</option>
+                  <option value="atestado">Atestados médicos</option>
+                  <option value="falta_injustificada">Faltas injustificadas</option>
+                </select>
+              </label>
+              <button className="primary-button" style={{ height: '31px', padding: '0 12px', fontSize: '11px' }} type="button" onClick={() => void fetchAbsenceReport()}>
+                Filtrar
+              </button>
+            </div>
+
+            {absenceReportData && (
+              <div className="absence-summary-cards">
+                <article className="absence-summary-card">
+                  <span className="absence-summary-card-label">Total de ocorrências</span>
+                  <strong className="absence-summary-card-value">{absenceReportData.summary.totalCount}</strong>
+                  <small className="absence-summary-card-sub">registros no período</small>
+                </article>
+                <article className="absence-summary-card">
+                  <span className="absence-summary-card-label">Dias afastados</span>
+                  <strong className="absence-summary-card-value">{absenceReportData.summary.totalDays}</strong>
+                  <small className="absence-summary-card-sub">soma total de dias</small>
+                </article>
+                <article className="absence-summary-card" style={{ borderColor: '#bfdbfe' }}>
+                  <span className="absence-summary-card-label" style={{ color: '#1d4ed8' }}>Atestados médicos</span>
+                  <strong className="absence-summary-card-value" style={{ color: '#1d4ed8' }}>{absenceReportData.summary.certificatesCount}</strong>
+                  <small className="absence-summary-card-sub">com ou sem CID</small>
+                </article>
+                <article className="absence-summary-card" style={{ borderColor: '#fecaca' }}>
+                  <span className="absence-summary-card-label" style={{ color: '#b91c1c' }}>Faltas injustificadas</span>
+                  <strong className="absence-summary-card-value" style={{ color: '#b91c1c' }}>{absenceReportData.summary.unjustifiedCount}</strong>
+                  <small className="absence-summary-card-sub">sem comprovação médica</small>
+                </article>
+              </div>
+            )}
+
+            {absenceReportLoading ? (
+              <div style={{ padding: '30px', textAlign: 'center', color: '#64748b' }}>Carregando dados do relatório...</div>
+            ) : !absenceReportData || absenceReportData.absences.length === 0 ? (
+              <div style={{ padding: '30px', textAlign: 'center', color: '#64748b' }}>Nenhum atestado ou falta encontrado para o período e filtros selecionados.</div>
+            ) : (
+              <div className="absence-table-wrap">
+                <table className="absence-table">
+                  <thead>
+                    <tr>
+                      <th>COLABORADOR</th>
+                      <th>FUNÇÃO</th>
+                      <th>TIPO</th>
+                      <th>PERÍODO</th>
+                      <th>DURAÇÃO</th>
+                      <th>CID</th>
+                      <th>OBSERVAÇÕES</th>
+                      <th>REGISTRADO POR</th>
+                      <th><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {absenceReportData.absences.map((item) => (
+                      <tr key={item.id}>
+                        <td><strong>{item.collaboratorName}</strong>{item.registrationNumber ? <small style={{ display: 'block', color: '#64748b' }}>Matrícula {item.registrationNumber}</small> : null}</td>
+                        <td>{item.collaboratorRoleLabel || item.collaboratorRole}</td>
+                        <td>
+                          <span className={`absence-badge ${item.type === 'atestado' ? 'absence-badge-atestado' : 'absence-badge-falta'}`}>
+                            {item.type === 'atestado' ? 'Atestado' : 'Falta'}
+                          </span>
+                        </td>
+                        <td>{formatDate(item.startDate)} a {formatDate(item.endDate)}</td>
+                        <td><strong>{item.daysCount}</strong> {item.daysCount === 1 ? 'dia' : 'dias'}</td>
+                        <td>{item.cid || '—'}</td>
+                        <td>{item.notes || '—'}</td>
+                        <td><small>{item.createdByName}<br />{formatDate(item.createdAt)}</small></td>
+                        <td>
+                          <button
+                            className="icon-button danger-button"
+                            type="button"
+                            title="Remover ausência"
+                            onClick={() => void deleteAbsence(item.id, item.collaboratorId)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <footer className="dialog-footer" style={{ marginTop: '16px' }}>
+              <button className="secondary-button" type="button" onClick={() => setAbsenceReportModalOpen(false)}>Fechar</button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!absenceReportData || absenceReportData.absences.length === 0}
+                onClick={() => {
+                  if (absenceReportData) {
+                    void downloadAbsencesPdf(
+                      absenceReportData.absences,
+                      absenceReportData.summary,
+                      absenceReportStartDate,
+                      absenceReportEndDate,
+                    )
+                  }
+                }}
+              >
+                <Download size={15} /> Exportar relatório em PDF
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {savedConflicts && (
+        <div className="collaborator-report-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSavedConflicts(null) }}>
+          <section className="collaborator-report-picker" style={{ width: 'min(100%, 720px)', maxHeight: '90vh', overflowY: 'auto' }} role="dialog" aria-modal="true" aria-labelledby="conflict-resolution-title">
+            <header>
+              <div>
+                <span className="eyebrow" style={{ color: '#b91c1c' }}>ATENÇÃO · REPROGRAMAÇÃO NECESSÁRIA</span>
+                <h2 id="conflict-resolution-title" style={{ color: '#991b1b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={20} color="#dc2626" />
+                  Conflito com Programações Existentes
+                </h2>
+                <p>
+                  O registro de <strong>{savedConflicts.type === 'atestado' ? 'atestado médico' : 'falta injustificada'}</strong> de <strong>{savedConflicts.collaboratorName}</strong> foi salvo com sucesso.
+                </p>
+              </div>
+              <button className="icon-button" type="button" aria-label="Fechar" onClick={() => setSavedConflicts(null)}><X size={18} /></button>
+            </header>
+
+            <div style={{ padding: '0 4px', display: 'grid', gap: '14px' }}>
+              <div className="collaborator-conflict-warning" style={{ margin: 0 }}>
+                <p style={{ margin: 0 }}>
+                  Foram identificadas <strong>{savedConflicts.conflicts.length} atividade(s)</strong> no período de <strong>{formatDate(savedConflicts.startDate)} a {formatDate(savedConflicts.endDate)}</strong>.
+                  Utilize os botões abaixo para abrir cada dia na tela de Programação em uma nova aba e realizar as reprogramações necessárias.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <a
+                  href={`/?page=schedule&date=${savedConflicts.startDate}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="primary-button"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '0 16px', minHeight: '38px', textDecoration: 'none' }}
+                >
+                  <ExternalLink size={15} />
+                  Abrir dia inicial ({formatDate(savedConflicts.startDate)}) na Programação (nova aba)
+                </a>
+              </div>
+
+              <div style={{ display: 'grid', gap: '10px' }}>
+                <strong style={{ fontSize: '12px', color: '#334155' }}>Dias com atividades pendentes de reprogramação:</strong>
+                {Array.from(new Set(savedConflicts.conflicts.map((c) => c.date || c.startsAt.slice(0, 10)))).sort().map((dayKey) => {
+                  const dayItems = savedConflicts.conflicts.filter((c) => (c.date || c.startsAt.slice(0, 10)) === dayKey)
+                  return (
+                    <div key={dayKey} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', background: '#f8fafc' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                        <strong style={{ fontSize: '13px', color: '#1e293b' }}>
+                          Dia {formatDate(dayKey)} <span style={{ fontSize: '11px', fontWeight: 'normal', color: '#64748b' }}>({dayItems.length} atividade{dayItems.length > 1 ? 's' : ''})</span>
+                        </strong>
+                        <a
+                          href={`/?page=schedule&date=${dayKey}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="secondary-button"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', padding: '4px 10px', minHeight: '30px', textDecoration: 'none' }}
+                        >
+                          <ExternalLink size={13} />
+                          Abrir dia {formatDate(dayKey)} em nova aba
+                        </a>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '11px', color: '#475569', display: 'grid', gap: '4px' }}>
+                        {dayItems.map((item) => (
+                          <li key={item.id}>
+                            <strong>{item.enterprise || 'Sem condomínio'}{item.protocol ? ` (#${item.protocol})` : ''}:</strong> {item.activityDescription} ({new Date(item.startsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} às {new Date(item.endsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <footer className="dialog-footer" style={{ marginTop: '16px' }}>
+              <button className="primary-button" type="button" onClick={() => setSavedConflicts(null)}>
+                Entendi / Fechar
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
     </section>
   )
 }

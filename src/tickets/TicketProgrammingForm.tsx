@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import type { LegalProcessOption, TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
@@ -195,8 +195,9 @@ export default function TicketProgrammingForm({
   const [availabilityState, setAvailabilityState] = useState<{
     requestKey: string
     appointments: Record<string, AvailabilityEntry[]>
+    absences: Record<string, Array<{ id: string; type: string; startDate: string; endDate: string; cid: string | null }>>
     error: string | null
-  }>({ requestKey: '', appointments: {}, error: null })
+  }>({ requestKey: '', appointments: {}, absences: {}, error: null })
   const [loadingPeople, setLoadingPeople] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -357,14 +358,18 @@ export default function TicketProgrammingForm({
     Promise.all(collaboratorIds.map(async (collaboratorId) => {
       const params = new URLSearchParams({ collaboratorId, startDate, endDate })
       if (editingAppointment) params.set('excludeId', editingAppointment.id)
-      const result = await apiRequest<{ appointments: AvailabilityEntry[] }>(`/api/programming/availability?${params}`)
-      return [collaboratorId, result.appointments] as const
+      const result = await apiRequest<{
+        appointments: AvailabilityEntry[]
+        absences?: Array<{ id: string; type: string; startDate: string; endDate: string; cid: string | null }>
+      }>(`/api/programming/availability?${params}`)
+      return [collaboratorId, result.appointments, result.absences || []] as const
     }))
       .then((results) => {
         if (!cancelled) {
           setAvailabilityState({
             requestKey: availabilityRequestKey,
-            appointments: Object.fromEntries(results),
+            appointments: Object.fromEntries(results.map(([id, appts]) => [id, appts])),
+            absences: Object.fromEntries(results.map(([id, , abs]) => [id, abs])),
             error: null,
           })
         }
@@ -372,7 +377,7 @@ export default function TicketProgrammingForm({
       .catch((requestError: unknown) => {
         if (cancelled) return
         const message = requestError instanceof Error ? requestError.message : 'Não foi possível consultar horários.'
-        setAvailabilityState({ requestKey: availabilityRequestKey, appointments: {}, error: message })
+        setAvailabilityState({ requestKey: availabilityRequestKey, appointments: {}, absences: {}, error: message })
         setError(message)
       })
     return () => { cancelled = true }
@@ -801,6 +806,24 @@ export default function TicketProgrammingForm({
 
       <div className="availability-panel">
         <strong>Horários livres em comum ({collaboratorIds.length} colaboradores, {scheduleDates.length} dias úteis) · 08:00–18:00</strong>
+        {currentAvailability?.absences && Object.entries(currentAvailability.absences).some(([, absList]) => absList.length > 0) && (
+          <div className="collaborator-conflict-warning" style={{ margin: '8px 0', borderLeft: '4px solid #dc2626' }}>
+            <div className="collaborator-conflict-warning-title" style={{ color: '#b91c1c' }}>
+              <AlertTriangle size={15} />
+              <span>Colaborador com afastamento/bloqueio no período!</span>
+            </div>
+            <ul style={{ margin: '4px 0 0', paddingLeft: '18px', fontSize: '11px', color: '#991b1b' }}>
+              {Object.entries(currentAvailability.absences).flatMap(([collabId, absList]) => {
+                const person = collaborators.find((c) => c.id === collabId)
+                return absList.map((abs) => (
+                  <li key={abs.id}>
+                    <strong>{person?.name || 'Colaborador'}:</strong> {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}{abs.cid ? ` (CID ${abs.cid})` : ''} · {abs.startDate.split('-').reverse().join('/')} a {abs.endDate.split('-').reverse().join('/')} (Agenda bloqueada)
+                  </li>
+                ))
+              })}
+            </ul>
+          </div>
+        )}
         {!collaboratorIds.length ? (
           <span>Selecione um ou mais colaboradores para calcular a janela livre compartilhada.</span>
         ) : !scheduleDates.length ? (

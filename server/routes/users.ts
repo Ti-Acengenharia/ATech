@@ -14,6 +14,11 @@ const invitationSchema = z.object({
 const statusSchema = z.object({
   status: z.enum(['active', 'suspended']),
 })
+
+const roleSchema = z.object({
+  role: z.enum(['admin', 'member']),
+})
+
 const pageAccessSchema = z.object({
   pages: z.array(z.enum(pageAccessKeys)).max(pageAccessKeys.length),
 })
@@ -109,7 +114,7 @@ router.post('/invitations', async (req, res, next) => {
     await pool.query(
       `INSERT INTO user_page_access (user_id, page_key, granted_by)
        SELECT $1, page_key, $2
-       FROM (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('information'), ('personal-activities')) AS defaults(page_key)
+       FROM (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('inventory'), ('information'), ('personal-activities')) AS defaults(page_key)
        ON CONFLICT (user_id, page_key) DO NOTHING`,
       [user.id, req.session.user!.id],
     )
@@ -125,7 +130,6 @@ router.post('/invitations', async (req, res, next) => {
         lastLoginAt: user.last_login_at?.toISOString() ?? null,
       },
     })
-
   } catch (error) {
     next(error)
   }
@@ -139,21 +143,43 @@ router.patch('/:id/status', async (req, res, next) => {
     return
   }
 
+  if (parsed.data.status === 'suspended' && userId.data === req.session.user!.id) {
+    res.status(400).json({ error: 'Você não pode suspender seu próprio acesso.' })
+    return
+  }
+
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const result = await client.query(
-      `UPDATE users SET status = $1, updated_at = now()
-       WHERE id = $2 AND role = 'member'
-       RETURNING id`,
-      [parsed.data.status, userId.data],
+
+    const existing = await client.query<{ id: number; role: string; status: string }>(
+      'SELECT id, role, status FROM users WHERE id = $1',
+      [userId.data],
     )
 
-    if (result.rowCount === 0) {
+    if (existing.rowCount === 0) {
       await client.query('ROLLBACK')
-      res.status(404).json({ error: 'Usuário não encontrado ou protegido.' })
+      res.status(404).json({ error: 'Usuário não encontrado.' })
       return
     }
+
+    if (parsed.data.status === 'suspended' && existing.rows[0].role === 'admin') {
+      const otherAdmins = await client.query<{ count: string }>(
+        "SELECT count(*)::int AS count FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1",
+        [userId.data],
+      )
+      if (Number(otherAdmins.rows[0]?.count ?? 0) < 1) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'Não é possível suspender o único administrador ativo do sistema.' })
+        return
+      }
+    }
+
+    await client.query(
+      `UPDATE users SET status = $1, updated_at = now()
+       WHERE id = $2`,
+      [parsed.data.status, userId.data],
+    )
 
     if (parsed.data.status === 'suspended') {
       await client.query(
@@ -172,6 +198,101 @@ router.patch('/:id/status', async (req, res, next) => {
   }
 })
 
+router.patch('/:id/role', async (req, res, next) => {
+  const userId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = roleSchema.safeParse(req.body)
+  if (!userId.success || !parsed.success) {
+    res.status(400).json({ error: 'Permissão ou identificador de usuário inválido.' })
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    const targetUser = await client.query<{ id: number; email: string; role: string; status: string }>(
+      'SELECT id, email, role, status FROM users WHERE id = $1',
+      [userId.data],
+    )
+
+    if (targetUser.rowCount === 0) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Usuário não encontrado.' })
+      return
+    }
+
+    const currentRole = targetUser.rows[0].role
+    const newRole = parsed.data.role
+
+    if (currentRole === newRole) {
+      await client.query('ROLLBACK')
+      res.json({ ok: true, role: newRole })
+      return
+    }
+
+    if (currentRole === 'admin' && newRole === 'member') {
+      if (userId.data === req.session.user!.id) {
+        const otherAdmins = await client.query<{ count: string }>(
+          "SELECT count(*)::int AS count FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1",
+          [userId.data],
+        )
+        if (Number(otherAdmins.rows[0]?.count ?? 0) < 1) {
+          await client.query('ROLLBACK')
+          res.status(400).json({ error: 'Você não pode remover seu próprio perfil de administrador sem outro administrador ativo.' })
+          return
+        }
+      } else {
+        const otherAdmins = await client.query<{ count: string }>(
+          "SELECT count(*)::int AS count FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1",
+          [userId.data],
+        )
+        if (Number(otherAdmins.rows[0]?.count ?? 0) < 1) {
+          await client.query('ROLLBACK')
+          res.status(400).json({ error: 'Não é possível remover a permissão do único administrador ativo do sistema.' })
+          return
+        }
+      }
+    }
+
+    if (newRole === 'admin') {
+      if (targetUser.rows[0].status === 'suspended') {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'Reative o usuário antes de promovê-lo a administrador.' })
+        return
+      }
+
+      await client.query(
+        `INSERT INTO user_page_access (user_id, page_key, granted_by)
+         SELECT $1, page_key, $2
+         FROM (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('inventory'), ('information'), ('personal-activities'), ('legal-processes')) AS defaults(page_key)
+         ON CONFLICT (user_id, page_key) DO NOTHING`,
+        [userId.data, req.session.user!.id],
+      )
+    }
+
+    await client.query(
+      'UPDATE users SET role = $1, updated_at = now() WHERE id = $2',
+      [newRole, userId.data],
+    )
+
+    // Atualiza a sessão ativa do usuário se ele estiver conectado
+    await client.query(
+      `UPDATE user_sessions
+       SET sess = jsonb_set(sess::jsonb, '{user,role}', to_jsonb($1::text))
+       WHERE sess->'user'->>'id' = $2`,
+      [newRole, String(userId.data)],
+    )
+
+    await client.query('COMMIT')
+    res.json({ ok: true, role: newRole })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
 router.patch('/:id/legal-processes-access', async (req, res, next) => {
   const userId = z.coerce.number().int().positive().safeParse(req.params.id)
   const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body)
@@ -181,7 +302,7 @@ router.patch('/:id/legal-processes-access', async (req, res, next) => {
   }
   try {
     const member = await pool.query(
-      `SELECT id FROM users WHERE id = $1 AND role = 'member' AND status = 'active'`,
+      `SELECT id FROM users WHERE id = $1 AND status = 'active'`,
       [userId.data],
     )
     if (!member.rowCount) {
@@ -223,12 +344,12 @@ router.patch('/:id/page-access', async (req, res, next) => {
   try {
     await client.query('BEGIN')
     const member = await client.query(
-      `SELECT id FROM users WHERE id = $1 AND role = 'member'`,
+      `SELECT id FROM users WHERE id = $1`,
       [userId.data],
     )
     if (!member.rowCount) {
       await client.query('ROLLBACK')
-      res.status(404).json({ error: 'Usuário da equipe não encontrado.' })
+      res.status(404).json({ error: 'Usuário não encontrado.' })
       return
     }
     await client.query('DELETE FROM user_page_access WHERE user_id = $1', [userId.data])
@@ -267,11 +388,11 @@ router.patch('/:id/personal-activities-view-access', async (req, res, next) => {
   }
   try {
     const member = await pool.query(
-      `SELECT id FROM users WHERE id = $1 AND role = 'member'`,
+      `SELECT id FROM users WHERE id = $1`,
       [userId.data],
     )
     if (!member.rowCount) {
-      res.status(404).json({ error: 'Usuário da equipe não encontrado.' })
+      res.status(404).json({ error: 'Usuário não encontrado.' })
       return
     }
     await pool.query(

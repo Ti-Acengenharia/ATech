@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, CalendarDays, CircleAlert, Pencil, Plus, Printer, RefreshCw, Trash2, UsersRound } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, CircleAlert, Pencil, Plus, Printer, RefreshCw, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { Clock3 } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import TicketProgrammingForm from './TicketProgrammingForm'
@@ -39,6 +39,15 @@ interface Appointment {
   collaborator_photo_url: string | null
 }
 
+interface CollaboratorAbsenceInfo {
+  id: string
+  type: 'atestado' | 'falta_injustificada'
+  startDate: string
+  endDate: string
+  cid?: string | null
+  notes?: string | null
+}
+
 interface CollaboratorDay {
   id: string
   name: string
@@ -47,6 +56,7 @@ interface CollaboratorDay {
   role_label: string
   photo_url: string | null
   is_on_leave: boolean
+  absence?: CollaboratorAbsenceInfo | null
   appointments: Appointment[]
 }
 
@@ -278,9 +288,34 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
   document.save(`programacao-${programmingType === 'general' ? 'geral' : 'encarregados'}-${date}.pdf`)
 }
 
+function formatDatePt(value: string) {
+  if (!value) return ''
+  const [year, month, day] = value.slice(0, 10).split('-')
+  return `${day}/${month}/${year}`
+}
+
 export default function ProgrammingPage() {
   const programmingFormRef = useRef<HTMLElement>(null)
-  const [date, setDate] = useState(() => programmingDateString(new Date()))
+  const [date, setDate] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('date')
+      if (urlParam && /^\d{4}-\d{2}-\d{2}$/.test(urlParam)) {
+        return urlParam
+      }
+    }
+    return programmingDateString(new Date())
+  })
+
+  useEffect(() => {
+    const checkUrlDate = () => {
+      const urlParam = new URLSearchParams(window.location.search).get('date')
+      if (urlParam && /^\d{4}-\d{2}-\d{2}$/.test(urlParam) && urlParam !== date) {
+        setDate(urlParam)
+      }
+    }
+    window.addEventListener('popstate', checkUrlDate)
+    return () => window.removeEventListener('popstate', checkUrlDate)
+  }, [date])
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
@@ -487,13 +522,48 @@ export default function ProgrammingPage() {
               <h3>{group.title}</h3>
               <div className="schedule-staff-cards">
                 {group.people.map((collaborator) => (
-                  <article className={`schedule-staff-card ${collaborator.is_on_leave ? 'schedule-staff-away' : ''} ${collaborator.appointments.length ? '' : 'schedule-staff-unscheduled'}`} key={collaborator.id}>
+                  <article className={`schedule-staff-card ${collaborator.is_on_leave ? 'schedule-staff-away' : ''} ${collaborator.absence ? 'schedule-staff-has-absence' : ''} ${collaborator.appointments.length ? '' : 'schedule-staff-unscheduled'}`} key={collaborator.id}>
                     <header className="schedule-person">
                       {collaborator.photo_url
                         ? <img className="collaborator-avatar schedule-avatar" src={collaborator.photo_url} alt={`Foto de ${collaborator.name}`} />
                         : <span className="collaborator-avatar schedule-avatar">{collaborator.name.slice(0, 1).toUpperCase()}</span>}
-                      <span><strong>{collaborator.name}</strong><small>{roleName(collaborator.role, collaborator.role_label)}{collaborator.is_on_leave ? ' · Afastado' : ''}</small></span>
+                      <span>
+                        <strong>{collaborator.name}</strong>
+                        <small>
+                          {roleName(collaborator.role, collaborator.role_label)}
+                          {collaborator.absence ? (
+                            <span className="schedule-absence-header-badge">
+                              {` · Bloqueado (${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'})`}
+                            </span>
+                          ) : collaborator.is_on_leave ? ' · Afastado' : ''}
+                        </small>
+                      </span>
                     </header>
+
+                    {collaborator.absence && (
+                      <div className={`schedule-card-absence-banner ${collaborator.appointments.length ? 'has-conflict' : 'is-blocked'}`}>
+                        <div className="schedule-card-absence-banner-title">
+                          {collaborator.appointments.length ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+                          <strong>
+                            {collaborator.appointments.length
+                              ? '⚠️ ATENÇÃO: Ausência com atividades pendentes de reprogramação!'
+                              : `AGENDA BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
+                          </strong>
+                        </div>
+                        <p>
+                          {collaborator.absence.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}
+                          {collaborator.absence.cid ? ` (CID ${collaborator.absence.cid})` : ''} · Período de{' '}
+                          {formatDatePt(collaborator.absence.startDate)} a {formatDatePt(collaborator.absence.endDate)}.
+                        </p>
+                        {collaborator.absence.notes && <small className="schedule-absence-notes">Obs: {collaborator.absence.notes}</small>}
+                        {collaborator.appointments.length > 0 && (
+                          <p className="schedule-card-absence-action-hint">
+                            Existem <strong>{collaborator.appointments.length} atividade(s)</strong> agendada(s) hoje que precisam ser reprogramadas ou excluídas.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {collaborator.appointments.length ? collaborator.appointments.map((appointment) => (
                       <div className="schedule-appointment-summary" key={appointment.id}>
                         <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.protocol ? `Protocolo #${appointment.protocol}` : appointment.legal_process_number ? `Processo jurídico ${appointment.legal_process_number}` : 'Atividade avulsa'}</strong>
@@ -513,7 +583,11 @@ export default function ProgrammingPage() {
                         ))}
                         <div className="schedule-appointment-actions no-print"><label className={`schedule-completion-check ${appointment.completed ? 'is-complete' : ''}`}><input type="checkbox" checked={appointment.completed} disabled={updatingAppointments.has(appointment.id)} onChange={(event) => void updateAppointmentCompletion(appointment, event.target.checked)} /><span>{appointment.completed ? 'Realizada' : 'Marcar como realizada'}</span></label><button type="button" className="text-action-btn" onClick={() => { setShowForm(false); setEditingAppointment(appointment) }}><Pencil size={13} /> Editar</button><button type="button" className="text-action-btn danger-action" onClick={() => void deleteAppointment(appointment)}><Trash2 size={13} /> Excluir</button></div>
                       </div>
-                    )) : <p className="schedule-free-label">Sem atividades programadas</p>}
+                    )) : (
+                      <p className="schedule-free-label">
+                        {collaborator.absence ? 'Agenda bloqueada por ausência/atestado' : 'Sem atividades programadas'}
+                      </p>
+                    )}
                   </article>
                 ))}
               </div>

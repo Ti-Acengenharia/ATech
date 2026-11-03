@@ -207,6 +207,22 @@ export default function InventoryPage() {
     return () => window.clearTimeout(initialLoad)
   }, [])
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || busy) return
+      if (itemForm) {
+        setItemForm(null)
+        setEditingItemId(null)
+        return
+      }
+      if (documentType) {
+        setDocumentType(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [busy, itemForm, documentType])
+
   const activeItems = data.items.filter((item) => item.isActive)
   const lowStockItems = activeItems.filter((item) => item.minimumStock > 0 && item.stockQuantity <= item.minimumStock)
   const filteredItems = useMemo(() => data.items.filter((item) => [

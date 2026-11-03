@@ -6,6 +6,7 @@ export const pageAccessKeys = [
   'tickets',
   'schedule',
   'collaborators',
+  'inventory',
   'information',
   'api-validation',
   'warranties',
@@ -18,7 +19,7 @@ export type PageAccessKey = typeof pageAccessKeys[number]
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = req.session.user
   if (!user) {
-    res.status(401).json({ error: 'Autenticação necessária.' })
+    res.status(401).json({ error: 'Autenticação necessária.', code: 'SESSION_REQUIRED' })
     return
   }
 
@@ -37,7 +38,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
         return
       }
       res.clearCookie('atech.sid')
-      res.status(401).json({ error: 'Esta conta não está ativa. Entre em contato com a administração.' })
+      res.status(401).json({ error: 'Esta conta não está ativa. Entre em contato com a administração.', code: 'ACCOUNT_INACTIVE' })
     })
   }).catch(next)
 }
