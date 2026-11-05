@@ -45,3 +45,4 @@ if (!parsedEnv.success) {
 }
 
 export const env = parsedEnv.data
+export const APP_TIMEZONE = 'America/Maceio'

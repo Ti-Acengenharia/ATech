@@ -1,11 +1,13 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../auth.js'
+import { requireAdmin, requireAuth } from '../auth.js'
+import { APP_TIMEZONE } from '../config.js'
 import { pool } from '../db.js'
+import { recordAuditLog } from '../services/audit-log.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 
 const router = Router()
-const programmingTimeZone = 'America/Maceio'
+const programmingTimeZone = APP_TIMEZONE
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const datetimeSchema = z.string().datetime({ offset: true })
@@ -64,6 +66,8 @@ const programmingSchema = z.object({
   occurrences: z.array(occurrenceSchema).min(1).max(65),
   activityDescription: z.string().trim().min(1).max(3000),
   standaloneLocation: z.string().trim().max(500).default(''),
+  isFinalization: z.boolean().default(false),
+  completionTermDelivered: z.boolean().default(false),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
   if (entry.activityType === 'ticket' &&
     (!entry.ticketId || entry.legalProcessId || !entry.enterprise ||
@@ -99,6 +103,8 @@ const singleProgrammingSchema = z.object({
   endsAt: datetimeSchema,
   activityDescription: z.string().trim().min(1).max(3000),
   standaloneLocation: z.string().trim().max(500).default(''),
+  isFinalization: z.boolean().default(false),
+  completionTermDelivered: z.boolean().default(false),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
   if (!isValidDate(entry.date) || datesInRange(entry.date, entry.date).length !== 1 || new Date(entry.endsAt) <= new Date(entry.startsAt)) {
     context.addIssue({ code: 'custom', path: ['endsAt'], message: 'Informe um dia útil e um horário final posterior ao inicial.' })
@@ -192,7 +198,7 @@ router.get('/role-visibility', async (_req, res, next) => {
   }
 })
 
-router.put('/role-visibility', async (req, res, next) => {
+router.put('/role-visibility', requireAdmin, async (req, res, next) => {
   const parsed = z.object({
     hiddenRoleKeys: z.array(z.string().min(1).max(80)).max(100),
   }).safeParse(req.body)
@@ -220,6 +226,15 @@ router.put('/role-visibility', async (req, res, next) => {
        RETURNING setting_value, updated_at`,
       [JSON.stringify(parsed.data.hiddenRoleKeys), req.session.user!.id],
     )
+    await recordAuditLog({
+      actorUserId: req.session.user!.id,
+      actorName: req.session.user!.displayName,
+      action: 'programming_role_visibility_updated',
+      resourceType: 'application_setting',
+      resourceId: 'programming_hidden_roles',
+      summary: `Visibilidade global de cargos da programação atualizada (${parsed.data.hiddenRoleKeys.length} ocultos)`,
+      metadata: { hiddenRoleKeys: parsed.data.hiddenRoleKeys },
+    })
     res.json({
       hiddenRoleKeys: result.rows[0].setting_value,
       updatedAt: result.rows[0].updated_at,
@@ -319,6 +334,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       equipment: string[]
       tools: string[]
       completed: boolean
+      is_finalization: boolean
+      completion_term_delivered: boolean
       programming_type: 'general' | 'foreman'
       collaborator_name: string
       collaborator_role: string
@@ -330,7 +347,10 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
               lp.title AS legal_process_number, lp.claimant AS legal_process_claimant,
               p.standalone_location, p.enterprise,
               p.block, p.unit, p.common_area_location,
-              p.materials, p.equipment, p.tools, p.completed, p.programming_type,
+              p.materials, p.equipment, p.tools, p.completed,
+              COALESCE(p.is_finalization, FALSE) AS is_finalization,
+              COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              p.programming_type,
               c.name AS collaborator_name,
               c.role AS collaborator_role, r.label AS collaborator_role_label,
               CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS collaborator_photo_url
@@ -481,8 +501,10 @@ router.get('/ticket/:ticketId', async (req, res, next) => {
     const result = await pool.query(
       `SELECT p.id, p.ticket_id, p.collaborator_id, p.activity_description,
               p.enterprise, p.block, p.unit, p.common_area_location, p.materials, p.equipment, p.tools,
-             p.starts_at, p.ends_at, p.completed, p.programming_type,
-             c.name AS collaborator_name, c.nickname AS collaborator_nickname
+              p.starts_at, p.ends_at, p.completed, p.programming_type,
+              COALESCE(p.is_finalization, FALSE) AS is_finalization,
+              COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              c.name AS collaborator_name, c.nickname AS collaborator_nickname
        FROM ticket_programming p JOIN collaborators c ON c.id = p.collaborator_id
        WHERE p.ticket_id = $1 ORDER BY p.starts_at, c.id`,
       [ticketId.data],
@@ -636,14 +658,16 @@ router.post('/', async (req, res, next) => {
           `INSERT INTO ticket_programming
               (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
                enterprise, block, unit, common_area_location, materials, equipment, tools,
-               standalone_location, programming_type, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+               standalone_location, programming_type, created_by, is_finalization, completion_term_delivered)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
             [
               data.ticketId ?? null, data.legalProcessId ?? null, collaboratorId, data.activityDescription, occurrence.startsAt, occurrence.endsAt,
               data.enterprise, data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools,
               data.standaloneLocation,
               collaboratorProgrammingType,
               req.session.user!.id,
+              Boolean(data.isFinalization),
+              Boolean(data.completionTermDelivered),
             ],
         )
         ids.push(result.rows[0].id)
@@ -740,12 +764,13 @@ router.put('/:id', async (req, res, next) => {
       `UPDATE ticket_programming SET ticket_id = $1, legal_process_id = $2, collaborator_id = $3,
          activity_description = $4, starts_at = $5, ends_at = $6, enterprise = $7, block = $8,
          unit = $9, common_area_location = $10, materials = $11, equipment = $12, tools = $13,
-         standalone_location = $14, programming_type = $15, updated_at = now()
-       WHERE id = $16 RETURNING ticket_id, legal_process_id`,
+         standalone_location = $14, programming_type = $15, is_finalization = $16, completion_term_delivered = $17,
+         updated_at = now()
+       WHERE id = $18 RETURNING ticket_id, legal_process_id`,
       [
         data.ticketId ?? null, data.legalProcessId ?? null, data.collaboratorId, data.activityDescription, data.startsAt, data.endsAt, data.enterprise,
         data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools, data.standaloneLocation,
-        data.programmingType, programmingId.data,
+        data.programmingType, Boolean(data.isFinalization), Boolean(data.completionTermDelivered), programmingId.data,
       ],
     )
     if (!result.rowCount) {
@@ -782,15 +807,63 @@ router.put('/:id', async (req, res, next) => {
 
 router.patch('/:id/completion', async (req, res, next) => {
   const programmingId = z.coerce.number().int().positive().safeParse(req.params.id)
-  const parsed = z.object({ completed: z.boolean() }).safeParse(req.body)
+  const parsed = z.object({
+    completed: z.boolean().optional(),
+    completionTermDelivered: z.boolean().optional(),
+  }).safeParse(req.body)
   if (!programmingId.success || !parsed.success) {
     res.status(400).json({ error: 'Identificador ou status de conclusão inválido.' })
     return
   }
   try {
+    const updates: string[] = []
+    const values: (boolean | number)[] = []
+    let idx = 1
+    if (parsed.data.completed !== undefined) {
+      updates.push(`completed = $${idx++}`)
+      values.push(parsed.data.completed)
+    }
+    if (parsed.data.completionTermDelivered !== undefined) {
+      updates.push(`completion_term_delivered = $${idx++}`)
+      values.push(parsed.data.completionTermDelivered)
+    }
+    if (!updates.length) {
+      res.status(400).json({ error: 'Nenhum campo para atualizar.' })
+      return
+    }
+    updates.push('updated_at = now()')
+    values.push(programmingId.data)
     const result = await pool.query(
-      'UPDATE ticket_programming SET completed = $1, updated_at = now() WHERE id = $2',
-      [parsed.data.completed, programmingId.data],
+      `UPDATE ticket_programming SET ${updates.join(', ')} WHERE id = $${idx}`,
+      values,
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Programação não encontrada.' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.patch('/:id/term-delivery', async (req, res, next) => {
+  const programmingId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = z.object({
+    delivered: z.boolean().optional(),
+    completionTermDelivered: z.boolean().optional(),
+  }).refine((entry) => entry.delivered !== undefined || entry.completionTermDelivered !== undefined, {
+    message: 'Informe o status de entrega do termo.',
+  }).safeParse(req.body)
+  if (!programmingId.success || !parsed.success) {
+    res.status(400).json({ error: 'Identificador ou status de entrega inválido.' })
+    return
+  }
+  const isDelivered = parsed.data.delivered ?? parsed.data.completionTermDelivered ?? false
+  try {
+    const result = await pool.query(
+      'UPDATE ticket_programming SET completion_term_delivered = $1, updated_at = now() WHERE id = $2',
+      [isDelivered, programmingId.data],
     )
     if (!result.rowCount) {
       res.status(404).json({ error: 'Programação não encontrada.' })

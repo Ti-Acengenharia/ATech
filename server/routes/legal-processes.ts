@@ -3,6 +3,8 @@ import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
+import { recordAuditLog } from '../services/audit-log.js'
+import { validateBinaryFileSignature } from '../services/file-validation.js'
 
 const router = Router()
 const idSchema = z.coerce.number().int().positive()
@@ -1097,11 +1099,24 @@ router.delete('/:id', async (req, res, next) => {
     return
   }
   try {
-    const result = await pool.query('DELETE FROM legal_processes WHERE id = $1 RETURNING id', [processId.data])
+    const result = await pool.query<{ id: string; title: string; process_number: string }>(
+      'DELETE FROM legal_processes WHERE id = $1 RETURNING id::text, title, process_number',
+      [processId.data],
+    )
     if (!result.rowCount) {
       res.status(404).json({ error: 'Processo não encontrado.' })
       return
     }
+    const deleted = result.rows[0]
+    await recordAuditLog({
+      actorUserId: req.session.user!.id,
+      actorName: req.session.user!.displayName,
+      action: 'legal_process_deleted',
+      resourceType: 'legal_process',
+      resourceId: deleted.id,
+      summary: `Processo jurídico excluído: ${deleted.process_number || deleted.title}`,
+      metadata: { title: deleted.title, processNumber: deleted.process_number },
+    })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -1336,10 +1351,11 @@ router.post('/:id/payments/:paymentId/attachments', async (req, res, next) => {
   const safeName = parsed.data.fileName.replace(/[^\p{L}\p{N}._ ()-]/gu, '_')
   const contentType = parsed.data.contentType.toLowerCase()
   const content = Buffer.from(parsed.data.contentBase64, 'base64')
-  const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
-  if (!safeName || !allowedTypes.has(contentType) || !content.length || content.length > 5 * 1024 * 1024 ||
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] as const
+  const signatureCheck = validateBinaryFileSignature(content, contentType, allowedTypes)
+  if (!safeName || !signatureCheck.valid || !content.length || content.length > 5 * 1024 * 1024 ||
       content.toString('base64') !== parsed.data.contentBase64) {
-    res.status(400).json({ error: 'Anexe PDF ou imagem JPEG, PNG ou WebP de até 5 MiB.' })
+    res.status(400).json({ error: 'Anexe PDF ou imagem JPEG, PNG ou WebP válida de até 5 MiB.' })
     return
   }
   try {

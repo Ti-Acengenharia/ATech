@@ -1,10 +1,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
+import { APP_TIMEZONE } from '../config.js'
 import { pool } from '../db.js'
 import { decryptPersonalData, fingerprintPhoneQuery, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 import { evaluateTicketWarranty } from '../services/warranties.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
 import {
   fetchAndImportCvcrmTicketByProtocol,
   fetchCvcrmTicketByProtocol,
@@ -170,6 +172,7 @@ router.post('/import-csv', requireAdmin, async (req, res) => {
   }
   try {
     const result = await importCvcrmProtocols(parsed.data.protocols)
+    invalidateFilterOptionsCache()
     res.json(result)
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Falha ao importar protocolos do CSV.' })
@@ -178,7 +181,9 @@ router.post('/import-csv', requireAdmin, async (req, res) => {
 
 router.post('/sync', async (_req, res, next) => {
   try {
-    res.json(await syncCvcrmTickets())
+    const result = await syncCvcrmTickets()
+    invalidateFilterOptionsCache()
+    res.json(result)
   } catch (error) {
     if (error instanceof Error && /CVCRM não configurado|sincronização CVCRM em andamento|Valide a API/.test(error.message)) {
       res.status(409).json({ error: error.message })
@@ -190,7 +195,9 @@ router.post('/sync', async (_req, res, next) => {
 
 router.post('/integration/import-all', requireAdmin, async (_req, res, next) => {
   try {
-    res.json(await importAllCvcrmTickets())
+    const result = await importAllCvcrmTickets()
+    invalidateFilterOptionsCache()
+    res.json(result)
   } catch (error) {
     if (error instanceof Error && /CVCRM não configurado|Valide a paginação|sincronização CVCRM em andamento/.test(error.message)) {
       res.status(409).json({ error: error.message })
@@ -365,6 +372,7 @@ router.put('/letters/enterprise-address', async (req, res, next) => {
       res.status(404).json({ error: 'O empreendimento não foi encontrado nos chamados.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -419,6 +427,7 @@ router.delete('/tags/:tagId', requireAdmin, async (req, res, next) => {
       res.status(404).json({ error: 'Tag não encontrada.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -462,6 +471,7 @@ router.put('/:id/tags', async (req, res, next) => {
       )
     }
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -496,6 +506,37 @@ router.get('/:id/cv-conversation', async (req, res, next) => {
   }
 })
 
+interface FilterOptionsCacheEntry {
+  expiresAt: number
+  data: {
+    enterprises: string[]
+    blocks: string[]
+    units: string[]
+    subjects: string[]
+    subsubjects: string[]
+    years: number[]
+    dashboardSubjects: { value: string; label: string }[]
+  }
+}
+
+const filterOptionsCache = new Map<string, FilterOptionsCacheEntry>()
+
+interface DashboardCacheEntry {
+  expiresAt: number
+  data: unknown
+}
+
+const dashboardCache = new Map<string, DashboardCacheEntry>()
+
+export function invalidateDashboardCache() {
+  dashboardCache.clear()
+}
+
+export function invalidateFilterOptionsCache() {
+  filterOptionsCache.clear()
+  dashboardCache.clear()
+}
+
 router.get('/filter-options', async (_req, res, next) => {
   const includeInactive = z.boolean().catch(false).parse(_req.query.includeInactive === 'true')
   const dashboardFromYear = _req.query.fromYear === undefined
@@ -505,6 +546,19 @@ router.get('/filter-options', async (_req, res, next) => {
   const selectedBlocks = parseRepeatedTextFilter(_req.originalUrl, 'block', 120)
   if (selectedEnterprises === null || selectedBlocks === null || dashboardFromYear?.success === false) {
     res.status(400).json({ error: 'Um ou mais filtros de chamados são inválidos.' })
+    return
+  }
+
+  const cacheKey = [
+    includeInactive ? '1' : '0',
+    dashboardFromYear?.success ? dashboardFromYear.data : '',
+    (selectedEnterprises ?? []).slice().sort().join(','),
+    (selectedBlocks ?? []).slice().sort().join(','),
+  ].join('|')
+
+  const cached = filterOptionsCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.data)
     return
   }
   try {
@@ -596,7 +650,7 @@ router.get('/filter-options', async (_req, res, next) => {
         )
         : Promise.resolve({ rows: [] as { value: string; label: string }[] }),
     ])
-    res.json({
+    const responsePayload = {
       enterprises: enterprises.rows.map((row) => row.value),
       blocks: blocks.rows.map((row) => row.value),
       units: units.rows.map((row) => row.value),
@@ -604,7 +658,12 @@ router.get('/filter-options', async (_req, res, next) => {
       subsubjects: subsubjects.rows.map((row) => row.value),
       years: years.rows.map((row) => row.value),
       dashboardSubjects: dashboardSubjects.rows,
+    }
+    filterOptionsCache.set(cacheKey, {
+      expiresAt: Date.now() + 5 * 60 * 1000,
+      data: responsePayload,
     })
+    res.json(responsePayload)
   } catch (error) {
     next(error)
   }
@@ -619,8 +678,14 @@ router.get('/dashboard', async (req, res, next) => {
   const ticketTypes = parseRepeatedTextFilter(req.originalUrl, 'type', 20)
   const customer = z.string().trim().max(240).safeParse(req.query.customer ?? '')
   const fromYear = z.coerce.number().int().min(2000).max(2200).safeParse(req.query.fromYear ?? 2000)
+  const referenceMonth = z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}$/)
+    .optional()
+    .safeParse(typeof req.query.referenceMonth === 'string' && req.query.referenceMonth ? req.query.referenceMonth : undefined)
   if ([enterprises, blocks, units, subjects, subsubjects, ticketTypes].some((filter) => filter === null) ||
-      !customer.success || !fromYear.success ||
+      !customer.success || !fromYear.success || !referenceMonth.success ||
       (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium')) {
     res.status(400).json({ error: 'Um ou mais filtros do dashboard são inválidos.' })
     return
@@ -631,6 +696,31 @@ router.get('/dashboard', async (req, res, next) => {
   const selectedSubjects = subjects ?? []
   const selectedSubsubjects = subsubjects ?? []
   const selectedTicketTypes = ticketTypes ?? []
+  const targetMonth = referenceMonth.data ?? null
+  const isFresh = req.query.fresh === 'true' || req.headers['cache-control'] === 'no-cache'
+
+  const cacheKey = [
+    selectedEnterprises.slice().sort().join(','),
+    selectedBlocks.slice().sort().join(','),
+    selectedUnits.slice().sort().join(','),
+    customer.data,
+    selectedSubjects.slice().sort().join(','),
+    selectedSubsubjects.slice().sort().join(','),
+    selectedTicketTypes.slice().sort().join(','),
+    fromYear.data,
+    targetMonth ?? '',
+  ].join('|')
+
+  if (!isFresh) {
+    const cached = dashboardCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Server-Timing', 'db;dur=0;desc="cache hit"')
+      res.json({ dashboard: cached.data })
+      return
+    }
+  }
+
+  const queryStart = Date.now()
 
   try {
     const result = await pool.query<{
@@ -679,40 +769,37 @@ router.get('/dashboard', async (req, res, next) => {
          WHERE ticket_type IS NOT NULL
            AND (cardinality($7::text[]) = 0 OR ticket_type = ANY($7::text[]))
        ),
-       status_events AS (
+       terminal_events AS (
          SELECT h.ticket_id,
-                h.created_at AT TIME ZONE 'America/Sao_Paulo' AS event_at,
-                lower(COALESCE(h.details->>'from', '')) ~ '(finalizad[oa]|cancelad[oa])' AS was_terminal,
-                lower(COALESCE(h.details->>'to', '')) ~ '(finalizad[oa]|cancelad[oa])' AS is_terminal,
+                h.created_at AT TIME ZONE '${APP_TIMEZONE}' AS event_at,
                 lower(COALESCE(h.details->>'to', '')) ~ 'finalizad[oa]'
                   AND lower(COALESCE(h.details->>'to', '')) !~ 'cancelad[oa]' AS is_completed,
-                lower(COALESCE(h.details->>'to', '')) ~ 'cancelad[oa]' AS is_canceled
+                lower(COALESCE(h.details->>'to', '')) ~ 'cancelad[oa]' AS is_canceled,
+                t.opened_at
          FROM ticket_activity_history h
          JOIN selected_tickets t ON t.source_id = h.ticket_id
          WHERE h.event_type = 'stage_changed'
            AND h.created_at >= make_date($8::int, 1, 1)
+           AND lower(COALESCE(h.details->>'to', '')) ~ '(finalizad[oa]|cancelad[oa])'
+           AND lower(COALESCE(h.details->>'from', '')) !~ '(finalizad[oa]|cancelad[oa])'
        ),
        snapshot_closures AS (
          SELECT t.source_id AS ticket_id,
                 t.source_modified_at AS event_at,
-                FALSE AS was_terminal,
-                TRUE AS is_terminal,
                 lower(t.source_status_name) ~ 'finalizad[oa]'
                   AND lower(t.source_status_name) !~ 'cancelad[oa]' AS is_completed,
-                lower(t.source_status_name) ~ 'cancelad[oa]' AS is_canceled
+                lower(t.source_status_name) ~ 'cancelad[oa]' AS is_canceled,
+                t.opened_at
          FROM selected_tickets t
          WHERE NOT t.source_active
            AND t.source_modified_at IS NOT NULL
            AND lower(t.source_status_name) ~ '(finalizad[oa]|cancelad[oa])'
-           AND NOT EXISTS (
-             SELECT 1 FROM status_events e
-             WHERE e.ticket_id = t.source_id AND e.is_terminal AND NOT e.was_terminal
-           )
+           AND t.source_id NOT IN (SELECT te.ticket_id FROM terminal_events te WHERE te.ticket_id IS NOT NULL)
        ),
        closures AS (
-         SELECT * FROM status_events WHERE is_terminal AND NOT was_terminal
+         SELECT ticket_id, event_at, is_completed, is_canceled, opened_at FROM terminal_events
          UNION ALL
-         SELECT * FROM snapshot_closures
+         SELECT ticket_id, event_at, is_completed, is_canceled, opened_at FROM snapshot_closures
        ),
        active_enterprises AS (
          SELECT COALESCE(NULLIF(btrim(enterprise), ''), 'Sem empreendimento') AS enterprise,
@@ -767,25 +854,44 @@ router.get('/dashboard', async (req, res, next) => {
          LEFT JOIN monthly_totals f USING (month_start)
        ),
        current_month AS (
-         SELECT date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') AS month_start
+         SELECT date_trunc('month', CASE
+           WHEN $9::text IS NOT NULL AND $9::text <> '' THEN ($9::text || '-01')::date
+           ELSE (now() AT TIME ZONE 'America/Sao_Paulo')::date
+         END)::date AS month_start
+       ),
+       month_aggregates AS (
+         SELECT
+           count(*) FILTER (WHERE t.source_active)::int AS active_total,
+           count(*) FILTER (WHERE t.opened_at >= c.month_start AND t.opened_at < c.month_start + interval '1 month')::int AS created_this_month
+         FROM current_month c
+         CROSS JOIN selected_tickets t
+         GROUP BY c.month_start
+       ),
+       closures_aggregates AS (
+         SELECT
+           count(*) FILTER (WHERE e.is_completed AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month')::int AS completed_this_month,
+           count(*) FILTER (WHERE e.is_canceled AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month')::int AS canceled_this_month,
+           avg(extract(epoch FROM (e.event_at - e.opened_at)) / 86400) FILTER (
+             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at
+               AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month'
+           )::float AS average_days_this_month,
+           avg(extract(epoch FROM (e.event_at - e.opened_at)) / 86400) FILTER (
+             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at
+           )::float AS average_days
+         FROM current_month c
+         CROSS JOIN closures e
+         GROUP BY c.month_start
        )
        SELECT
-         (SELECT count(*)::int FROM selected_tickets WHERE source_active) AS active_total,
-         (SELECT count(*)::int FROM selected_tickets
-          WHERE opened_at >= c.month_start AND opened_at < c.month_start + interval '1 month') AS created_this_month,
-         (SELECT count(*)::int FROM closures
-          WHERE is_completed AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') AS completed_this_month,
-         (SELECT count(*)::int FROM closures
-          WHERE is_canceled AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') AS canceled_this_month,
-         ((SELECT count(*) FROM selected_tickets
-           WHERE opened_at >= c.month_start AND opened_at < c.month_start + interval '1 month') -
-          (SELECT count(*) FROM closures
-           WHERE is_completed AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month') -
-          (SELECT count(*) FROM closures
-           WHERE is_canceled AND event_at >= c.month_start AND event_at < c.month_start + interval '1 month'))::int AS balance_this_month,
-         (SELECT avg(extract(epoch FROM (event_at - t.opened_at)) / 86400)::float
-          FROM closures e JOIN selected_tickets t ON t.source_id = e.ticket_id
-          WHERE e.is_completed AND t.opened_at IS NOT NULL AND e.event_at >= t.opened_at) AS average_days,
+         COALESCE(ma.active_total, 0)::int AS active_total,
+         COALESCE(ma.created_this_month, 0)::int AS created_this_month,
+         COALESCE(ca.completed_this_month, 0)::int AS completed_this_month,
+         COALESCE(ca.canceled_this_month, 0)::int AS canceled_this_month,
+         (COALESCE(ma.created_this_month, 0) - COALESCE(ca.completed_this_month, 0) - COALESCE(ca.canceled_this_month, 0))::int AS balance_this_month,
+         ca.average_days_this_month,
+         ca.average_days,
+         to_char(c.month_start, 'YYYY-MM') AS selected_month_key,
+         to_char(c.month_start, 'MM/YYYY') AS selected_month_label,
          (SELECT last_finished_at FROM ticket_sync_state WHERE id = 1) AS last_updated,
          COALESCE((SELECT json_agg(row_to_json(a) ORDER BY a.enterprise) FROM active_enterprises a), '[]'::json) AS active_by_enterprise,
          COALESCE((SELECT json_agg(row_to_json(s) ORDER BY s.enterprise, s.status) FROM status_counts s), '[]'::json) AS status_summary,
@@ -794,13 +900,28 @@ router.get('/dashboard', async (req, res, next) => {
              'year', extract(year FROM month_start)::int,
              'created', created, 'completed', completed, 'canceled', canceled, 'balance', balance
            ) ORDER BY month_start) FROM monthly_rows), '[]'::json) AS months
-       FROM current_month c`,
+       FROM current_month c
+       LEFT JOIN month_aggregates ma ON TRUE
+       LEFT JOIN closures_aggregates ca ON TRUE`,
       [
         selectedEnterprises, selectedBlocks, selectedUnits, customer.data, selectedSubjects, selectedSubsubjects,
-        selectedTicketTypes, fromYear.data,
+        selectedTicketTypes, fromYear.data, targetMonth,
       ],
     )
-    res.json({ dashboard: result.rows[0] })
+    const queryDuration = Date.now() - queryStart
+    console.log(`[dashboard] /api/tickets/dashboard executado em ${queryDuration}ms`)
+    res.setHeader('Server-Timing', `db;dur=${queryDuration}`)
+    const payload = {
+      ...result.rows[0],
+      query_ms: queryDuration,
+    }
+    dashboardCache.set(cacheKey, {
+      expiresAt: Date.now() + 2 * 60 * 1000,
+      data: payload,
+    })
+    res.json({
+      dashboard: payload,
+    })
   } catch (error) {
     next(error)
   }
@@ -916,6 +1037,7 @@ router.get('/', async (req, res, next) => {
        WHERE ($9::boolean OR t.source_active = TRUE)
          AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
            OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1
+           OR lower(t.description) LIKE $1
            OR t.source_id::text LIKE $1
            OR ($10::boolean AND (t.customer_phone_tokens @> ARRAY[$14::text]
              OR (t.customer_phone_tokens IS NULL AND t.customer_phone_ciphertext IS NOT NULL))))
@@ -937,7 +1059,7 @@ router.get('/', async (req, res, next) => {
          AND ($8::bigint IS NULL OR t.source_id = $8)
        ORDER BY CASE WHEN $12 <> '' AND t.source_id::text = $12 THEN 0 ELSE 1 END,
                 t.opened_at ASC NULLS LAST, t.protocol
-       LIMIT 1000`,
+       LIMIT 3500`,
       [
         term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
@@ -1049,6 +1171,7 @@ router.patch('/:id/management', async (req, res, next) => {
       res.status(404).json({ error: 'Chamado ativo não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -1286,6 +1409,7 @@ router.post('/:id/completion-terms', async (req, res, next) => {
       fileSize: content.length,
     })
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'completion-term', entityId: ticketId.data })
     res.status(201).json({ id: inserted.rows[0].id, fileName })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1334,6 +1458,7 @@ router.delete('/:id/completion-terms/:attachmentId', async (req, res, next) => {
     })
     await client.query('DELETE FROM ticket_attachments WHERE id = $1', [attachmentId.data])
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1487,6 +1612,7 @@ router.patch('/:id/comments/:commentId', async (req, res, next) => {
       commentId: commentId.data,
     })
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1525,6 +1651,7 @@ router.delete('/:id/comments/:commentId', async (req, res, next) => {
     })
     await client.query('DELETE FROM ticket_comments WHERE id = $1', [commentId.data])
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1620,6 +1747,7 @@ router.patch('/:id/subtasks/:subtaskId', async (req, res, next) => {
       { subtaskId: subtaskId.data, isDone: result.rows[0].is_done },
     )
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')

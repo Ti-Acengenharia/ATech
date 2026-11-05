@@ -1,3 +1,5 @@
+import { getCompanyLogoBytes } from '../utils/companyLogo'
+
 export interface LetterTicket {
   id: string
   protocol: string
@@ -134,7 +136,16 @@ function drawReceiptCopy(
   font: import('pdf-lib').PDFFont,
   bold: import('pdf-lib').PDFFont,
   color: (value: typeof ink) => import('pdf-lib').Color,
+  logoImage: import('pdf-lib').PDFImage | null,
 ) {
+  if (logoImage) {
+    page.drawImage(logoImage, {
+      x: margin,
+      y: top - 14,
+      width: 28,
+      height: 28,
+    })
+  }
   const title = 'TERMO DE ENTREGA E RECEBIMENTO'
   const titleWidth = bold.widthOfTextAtSize(title, 10)
   page.drawText(title, { x: (pageWidth - titleWidth) / 2, y: top, size: 10, font: bold, color: color(ink) })
@@ -180,6 +191,8 @@ export async function createTicketLettersPdf(tickets: LetterTicket[], startDate:
 
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
   const document = await PDFDocument.create()
+  const logoBytes = await getCompanyLogoBytes()
+  const logoImage = logoBytes ? await document.embedPng(logoBytes).catch(() => null) : null
   const font = await document.embedFont(StandardFonts.TimesRoman)
   const bold = await document.embedFont(StandardFonts.TimesRomanBold)
   const color = (value: typeof ink) => rgb(value.r, value.g, value.b)
@@ -189,6 +202,14 @@ export async function createTicketLettersPdf(tickets: LetterTicket[], startDate:
   const subsubjects = uniqueValues(tickets.map((ticket) => ticket.subsubject.trim() || ticket.subject.trim()))
 
   const notification = document.addPage([pageWidth, pageHeight])
+  if (logoImage) {
+    notification.drawImage(logoImage, {
+      x: pageWidth - margin - 44,
+      y: pageHeight - 76,
+      width: 44,
+      height: 44,
+    })
+  }
   let y = pageHeight - 72
   y = drawWrapped(notification, `A(O) SENHOR(A) ${customerName}`, margin, y, contentWidth, font, 11, color, 15) - 10
   y = drawWrapped(notification, 'Prezado(a),', margin, y, contentWidth, font, 10, color, 14) - 8
@@ -235,14 +256,14 @@ export async function createTicketLettersPdf(tickets: LetterTicket[], startDate:
     site.units.size ? [...site.units].join(', ') : '',
   ].filter(Boolean).join(' – '))
 
-  drawReceiptCopy(receipt, pageHeight - 35, pageHeight / 2 + 18, { dateLabel, addresses, condominiums, protocols }, true, font, bold, color)
+  drawReceiptCopy(receipt, pageHeight - 35, pageHeight / 2 + 18, { dateLabel, addresses, condominiums, protocols }, true, font, bold, color, logoImage)
   receipt.drawLine({
     start: { x: margin, y: pageHeight / 2 },
     end: { x: pageWidth - margin, y: pageHeight / 2 },
     thickness: 0.4,
     color: color(muted),
   })
-  drawReceiptCopy(receipt, pageHeight / 2 - 24, 24, { dateLabel, addresses, condominiums, protocols }, false, font, bold, color)
+  drawReceiptCopy(receipt, pageHeight / 2 - 24, 24, { dateLabel, addresses, condominiums, protocols }, false, font, bold, color, logoImage)
 
   return document.save()
 }

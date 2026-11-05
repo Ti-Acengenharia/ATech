@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, CircleAlert, Pencil, Plus, Printer, RefreshCw, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
-import { Clock3 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, CircleAlert, Clock3, FileSignature, Pencil, Plus, Printer, RefreshCw, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { apiRequest } from '../api/client'
+import { getCompanyLogoDataUrl } from '../utils/companyLogo'
 import TicketProgrammingForm from './TicketProgrammingForm'
 import type { TicketSummary } from './types'
 import { getProgrammingRoleVisibility, saveProgrammingRoleVisibility } from './programming-role-visibility'
@@ -32,6 +32,8 @@ interface Appointment {
   equipment: string[]
   tools: string[]
   completed: boolean
+  is_finalization?: boolean
+  completion_term_delivered?: boolean
   programming_type: 'general' | 'foreman'
   collaborator_name: string
   collaborator_role: string
@@ -92,7 +94,10 @@ function roleName(value: string, label?: string) {
 }
 
 async function createSchedulePdf(date: string, programmingType: 'general' | 'foreman', groups: { title: string; people: CollaboratorDay[] }[], dayEvents: number) {
-  const { jsPDF } = await import('jspdf')
+  const [{ jsPDF }, logoDataUrl] = await Promise.all([
+    import('jspdf'),
+    getCompanyLogoDataUrl(),
+  ])
   const document = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageWidth = document.internal.pageSize.getWidth()
   const pageHeight = document.internal.pageSize.getHeight()
@@ -133,18 +138,25 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
 
   function drawPageHeader(firstPage: boolean) {
     if (firstPage) {
-      document.setFillColor(24, 73, 112)
+      document.setFillColor(15, 59, 153)
       document.rect(0, 0, pageWidth, 43, 'F')
+      let textX = margin
+      if (logoDataUrl) {
+        document.setFillColor(255, 255, 255)
+        document.roundedRect(margin, 8, 22, 22, 2.5, 2.5, 'F')
+        document.addImage(logoDataUrl, 'PNG', margin + 2, 10, 18, 18)
+        textX = margin + 27
+      }
       document.setTextColor(255, 255, 255)
       document.setFont('helvetica', 'bold')
-      document.setFontSize(17)
-      document.text(`ATech | ${programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}`, margin, 16)
+      document.setFontSize(16)
+      document.text(`AC Engenharia · ATech | ${programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}`, textX, 16)
       document.setFont('helvetica', 'normal')
       document.setFontSize(10)
-      document.text(dateLabel, margin, 24)
+      document.text(dateLabel, textX, 24)
       document.setTextColor(215, 232, 247)
       document.setFontSize(8)
-      document.text(`${dayEvents} atividades · ${groups.reduce((total, group) => total + group.people.filter((person) => person.appointments.length).length, 0)} colaboradores escalados`, margin, 33)
+      document.text(`${dayEvents} atividades · ${groups.reduce((total, group) => total + group.people.filter((person) => person.appointments.length).length, 0)} colaboradores escalados`, textX, 33)
       y = 53
     } else {
       y = 18
@@ -213,11 +225,13 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
         const lines: { label: string; value: string; bold?: boolean }[] = [
           { label: appointment.protocol ? 'PROTOCOLO' : appointment.legal_process_number ? 'PROCESSO JURÍDICO' : 'ATIVIDADE', value: appointment.protocol ? `#${appointment.protocol}  ·  ${appointment.subject || 'Atendimento'}` : appointment.legal_process_number ? `${appointment.legal_process_number}${appointment.legal_process_claimant ? ` · ${appointment.legal_process_claimant}` : ''}` : 'Atividade avulsa', bold: true },
           { label: 'EMPREENDIMENTO', value: appointment.protocol || appointment.legal_process_number ? appointment.enterprise || 'Não informado' : 'Não se aplica' },
-          { label: 'LOCAL', value: appointment.standalone_location || (appointment.common_area_location
-            ? `Área comum: ${appointment.common_area_location}`
-            : appointment.block || appointment.unit
-              ? `Bloco ${appointment.block || '—'}  ·  Unidade ${appointment.unit || '—'}`
-              : 'Local não especificado') },
+          {
+            label: 'LOCAL', value: appointment.standalone_location || (appointment.common_area_location
+              ? `Área comum: ${appointment.common_area_location}`
+              : appointment.block || appointment.unit
+                ? `Bloco ${appointment.block || '—'}  ·  Unidade ${appointment.unit || '—'}`
+                : 'Local não especificado')
+          },
           { label: 'SERVIÇO', value: appointment.activity_description },
         ]
         if (appointment.materials.length) lines.push({ label: 'MATERIAIS', value: appointment.materials.join(', ') })
@@ -230,12 +244,30 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
           drawCollaboratorHeader(person, true)
         }
         document.setFillColor(235, 243, 249)
-        document.roundedRect(margin + 2, y, contentWidth - 4, 8, 1.5, 1.5, 'F')
+        document.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
         document.setFont('helvetica', 'bold')
         document.setFontSize(8.5)
         document.setTextColor(40, 91, 132)
-        document.text(`${displayTime(appointment.starts_at)}–${displayTime(appointment.ends_at)}`, margin + 5, y + 5.5)
-        y += 11
+        document.text(`${displayTime(appointment.starts_at)}–${displayTime(appointment.ends_at)}`, margin + 5, y + 5.2)
+        if (appointment.is_finalization) {
+          y += 9.5
+          if (y + 12 > bottom) {
+            document.addPage()
+            drawPageHeader(false)
+            drawRoleHeader({ ...group, people: scheduledPeople }, true)
+            drawCollaboratorHeader(person, true)
+          }
+          document.setFillColor(255, 247, 237)
+          document.setDrawColor(249, 115, 22)
+          document.roundedRect(margin + 4, y, contentWidth - 8, 6.5, 1.2, 1.2, 'FD')
+          document.setFont('helvetica', 'bold')
+          document.setFontSize(7.2)
+          document.setTextColor(194, 65, 12)
+          document.text('Atenção: Finalização do Chamado - Solicitar assinatura do cliente no termo de finalização após o serviço.', margin + 7, y + 4.4)
+          y += 12.0
+        } else {
+          y += 12.0
+        }
         for (const line of lines) {
           const wrapped = document.splitTextToSize(line.value, contentWidth - 44) as string[]
           let offset = 0
@@ -294,7 +326,7 @@ function formatDatePt(value: string) {
   return `${day}/${month}/${year}`
 }
 
-export default function ProgrammingPage() {
+export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean } = {}) {
   const programmingFormRef = useRef<HTMLElement>(null)
   const [date, setDate] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -364,11 +396,11 @@ export default function ProgrammingPage() {
     const params = new URLSearchParams({ date, type: programmingType })
     apiRequest<{ date: string; collaborators: CollaboratorDay[] }>(`/api/programming?${params}`)
       .then((program) => {
-      if (cancelled) return
-      setStaff(program.collaborators)
-    }).catch((requestError: unknown) => {
-      if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar a programação.')
-    }).finally(() => { if (!cancelled) setLoading(false) })
+        if (cancelled) return
+        setStaff(program.collaborators)
+      }).catch((requestError: unknown) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar a programação.')
+      }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [date, programmingType, refresh])
 
@@ -425,6 +457,26 @@ export default function ProgrammingPage() {
       setRefresh((value) => value + 1)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a realização da programação.')
+    } finally {
+      setUpdatingAppointments((current) => {
+        const next = new Set(current)
+        next.delete(appointment.id)
+        return next
+      })
+    }
+  }
+
+  async function updateAppointmentTermDelivery(appointment: Appointment, delivered: boolean) {
+    setUpdatingAppointments((current) => new Set(current).add(appointment.id))
+    setError('')
+    try {
+      await apiRequest(`/api/programming/${appointment.id}/term-delivery`, {
+        method: 'PATCH',
+        body: JSON.stringify({ delivered }),
+      })
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar o status de entrega do termo.')
     } finally {
       setUpdatingAppointments((current) => {
         const next = new Set(current)
@@ -498,7 +550,7 @@ export default function ProgrammingPage() {
       <section className="programming-calendar" aria-label="Programação diária da equipe">
         <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>
         <div className="calendar-week-strip no-print">{week.map((day) => <button type="button" key={day.date} className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''}`} onClick={() => setDate(day.date)} aria-pressed={day.date === date}><span>{day.shortName}</span><strong>{day.number}</strong></button>)}</div>
-        {programmingType === 'general' && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
+        {programmingType === 'general' && isAdmin && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
           <strong>Funções na agenda</strong>
           {savingRoleVisibility && <span className="schedule-role-saving">Salvando para todos...</span>}
           {roles.map((role) => {
@@ -565,7 +617,27 @@ export default function ProgrammingPage() {
                     )}
 
                     {collaborator.appointments.length ? collaborator.appointments.map((appointment) => (
-                      <div className="schedule-appointment-summary" key={appointment.id}>
+                      <div className={`schedule-appointment-summary ${appointment.is_finalization ? 'is-finalization-activity' : ''}`} key={appointment.id}>
+                        {appointment.is_finalization && (
+                          <div className="ticket-programming-finalization-alert">
+                            <div className="ticket-programming-finalization-alert-top">
+                              <div className="ticket-programming-alert-tag">
+                                <FileSignature size={12} />
+                                <span>FINALIZAÇÃO DO CHAMADO</span>
+                              </div>
+                              <span className={`ticket-programming-delivery-badge ${appointment.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
+                                {appointment.completion_term_delivered ? (
+                                  <><Check size={11} /> Termo entregue ao colaborador</>
+                                ) : (
+                                  <><Clock3 size={11} /> Termo pendente de entrega</>
+                                )}
+                              </span>
+                            </div>
+                            <p className="ticket-programming-alert-msg">
+                              Solicitar a assinatura do termo de finalização ao cliente após a realização do serviço.
+                            </p>
+                          </div>
+                        )}
                         <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.protocol ? `Protocolo #${appointment.protocol}` : appointment.legal_process_number ? `Processo jurídico ${appointment.legal_process_number}` : 'Atividade avulsa'}</strong>
                         <span>{appointment.protocol ? `${appointment.subject || 'Atendimento'} · ${appointment.enterprise}` : appointment.legal_process_number ? `${appointment.legal_process_claimant || 'Requerente não informado'} · ${appointment.enterprise || 'Sem condomínio associado'}` : 'Sem vínculo com chamado'}</span>
                         <span>{appointment.standalone_location || (appointment.common_area_location
@@ -581,7 +653,38 @@ export default function ProgrammingPage() {
                         ].filter(([, items]) => Array.isArray(items) && items.length > 0).map(([label, items]) => (
                           <span className="schedule-kit-line" key={label as string}><strong>{label as string}:</strong> {(items as string[]).join(', ')}</span>
                         ))}
-                        <div className="schedule-appointment-actions no-print"><label className={`schedule-completion-check ${appointment.completed ? 'is-complete' : ''}`}><input type="checkbox" checked={appointment.completed} disabled={updatingAppointments.has(appointment.id)} onChange={(event) => void updateAppointmentCompletion(appointment, event.target.checked)} /><span>{appointment.completed ? 'Realizada' : 'Marcar como realizada'}</span></label><button type="button" className="text-action-btn" onClick={() => { setShowForm(false); setEditingAppointment(appointment) }}><Pencil size={13} /> Editar</button><button type="button" className="text-action-btn danger-action" onClick={() => void deleteAppointment(appointment)}><Trash2 size={13} /> Excluir</button></div>
+                        <div className="ticket-programming-footer">
+                          <div className="ticket-programming-checks">
+                            <label className={`programming-pill-check ${appointment.completed ? 'is-checked' : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={appointment.completed}
+                                disabled={updatingAppointments.has(appointment.id)}
+                                onChange={(event) => void updateAppointmentCompletion(appointment, event.target.checked)}
+                              />
+                              <span>{appointment.completed ? 'Realizada' : 'Marcar como realizada'}</span>
+                            </label>
+                            {appointment.is_finalization && (
+                              <label className={`programming-pill-check is-term ${appointment.completion_term_delivered ? 'is-checked' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(appointment.completion_term_delivered)}
+                                  disabled={updatingAppointments.has(appointment.id)}
+                                  onChange={(event) => void updateAppointmentTermDelivery(appointment, event.target.checked)}
+                                />
+                                <span>{appointment.completion_term_delivered ? 'Termo entregue' : 'Termo entregue ao colaborador'}</span>
+                              </label>
+                            )}
+                          </div>
+                          <div className="ticket-programming-buttons">
+                            <button type="button" className="text-action-btn" onClick={() => { setShowForm(false); setEditingAppointment(appointment) }}>
+                              <Pencil size={12} /> Editar
+                            </button>
+                            <button type="button" className="text-action-btn danger-action" onClick={() => void deleteAppointment(appointment)}>
+                              <Trash2 size={12} /> Excluir
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     )) : (
                       <p className="schedule-free-label">

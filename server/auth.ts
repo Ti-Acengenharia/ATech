@@ -1,9 +1,11 @@
 import type { NextFunction, Request, Response } from 'express'
 import { pool } from './db.js'
+import { getSessionTimeoutMinutes } from './services/session-settings.js'
 
 export const pageAccessKeys = [
   'home',
   'tickets',
+  'letter-filling',
   'schedule',
   'collaborators',
   'inventory',
@@ -16,11 +18,37 @@ export const pageAccessKeys = [
 
 export type PageAccessKey = typeof pageAccessKeys[number]
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = req.session.user
   if (!user) {
     res.status(401).json({ error: 'Autenticação necessária.', code: 'SESSION_REQUIRED' })
     return
+  }
+
+  // Dynamic session timeout enforcement
+  const timeoutMinutes = await getSessionTimeoutMinutes()
+  const timeoutMs = timeoutMinutes * 60 * 1000
+  const now = Date.now()
+  const lastActivity = req.session.lastActivity || req.session.loginTime || now
+
+  if (now - lastActivity > timeoutMs) {
+    req.session.destroy((error) => {
+      if (error) {
+        next(error)
+        return
+      }
+      res.clearCookie('atech.sid')
+      res.status(401).json({
+        error: `Sua sessão expirou por tempo limite (${timeoutMinutes} min). Faça login novamente.`,
+        code: 'SESSION_REQUIRED',
+      })
+    })
+    return
+  }
+
+  req.session.lastActivity = now
+  if (req.session.cookie) {
+    req.session.cookie.maxAge = timeoutMs
   }
 
   pool.query(

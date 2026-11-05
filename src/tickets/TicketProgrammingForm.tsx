@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { AlertTriangle, CalendarDays, Check, ChevronDown, Clock3, Search, UsersRound, Wrench, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, ChevronDown, Clock3, FileSignature, Search, UsersRound, Wrench, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import type { LegalProcessOption, TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
@@ -49,6 +49,8 @@ interface EditingAppointment {
   tools: string[]
   starts_at: string
   ends_at: string
+  is_finalization?: boolean
+  completion_term_delivered?: boolean
 }
 
 function formatMinutes(value: number) {
@@ -186,6 +188,8 @@ export default function TicketProgrammingForm({
   const [equipment, setEquipment] = useState((editingAppointment?.equipment ?? []).join('\n'))
   const [tools, setTools] = useState((editingAppointment?.tools ?? []).join('\n'))
   const [standaloneLocation, setStandaloneLocation] = useState(editingAppointment?.standalone_location ?? '')
+  const [isFinalization, setIsFinalization] = useState(editingAppointment?.is_finalization ?? false)
+  const [completionTermDelivered, setCompletionTermDelivered] = useState(editingAppointment?.completion_term_delivered ?? false)
   const [searchFilter, setSearchFilter] = useState('')
   const [ticketSearchFilter, setTicketSearchFilter] = useState('')
   const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
@@ -485,6 +489,8 @@ export default function TicketProgrammingForm({
             materials: listItems(materials),
             equipment: listItems(equipment),
             tools: listItems(tools),
+            isFinalization: activityType === 'ticket' ? isFinalization : false,
+            completionTermDelivered: activityType === 'ticket' ? completionTermDelivered : false,
           }),
         })
       } else {
@@ -512,6 +518,8 @@ export default function TicketProgrammingForm({
             materials: listItems(materials),
             equipment: listItems(equipment),
             tools: listItems(tools),
+            isFinalization: activityType === 'ticket' ? isFinalization : false,
+            completionTermDelivered: activityType === 'ticket' ? completionTermDelivered : false,
           }),
         })
       }
@@ -803,6 +811,54 @@ export default function TicketProgrammingForm({
         <label className="ticket-form-field"><span>Equipamentos (um por linha)</span><textarea rows={3} maxLength={3000} value={equipment} onChange={(event) => setEquipment(event.target.value)} placeholder="Ex.: betoneira" /></label>
         <label className="ticket-form-field"><span>Ferramentas (um por linha)</span><textarea rows={3} maxLength={3000} value={tools} onChange={(event) => setTools(event.target.value)} placeholder="Ex.: colher de pedreiro" /></label>
       </div>
+
+      {activityType === 'ticket' && (
+        <div className={`programming-finalization-card ${isFinalization ? 'is-active' : ''}`} style={{ gridColumn: '1 / -1' }}>
+          <div className="programming-finalization-header">
+            <label className="programming-finalization-checkbox-label">
+              <input
+                type="checkbox"
+                checked={isFinalization}
+                onChange={(event) => {
+                  const nextChecked = event.target.checked
+                  setIsFinalization(nextChecked)
+                  if (!nextChecked) setCompletionTermDelivered(false)
+                }}
+              />
+              <span className="programming-finalization-title">
+                <FileSignature size={14} className="programming-finalization-icon" />
+                Programação de finalização do chamado
+              </span>
+            </label>
+            {isFinalization && (
+              <span className="programming-finalization-badge">
+                Solicitar assinatura do termo ao cliente
+              </span>
+            )}
+          </div>
+          <p className="programming-finalization-desc">
+            Identifica esta atividade como a visita final da assistência técnica, gerando alertas na agenda e no relatório PDF para coleta da assinatura do cliente no termo de finalização.
+          </p>
+
+          {isFinalization && (
+            <div className="programming-finalization-subrow">
+              <label className="programming-term-delivered-toggle">
+                <input
+                  type="checkbox"
+                  checked={completionTermDelivered}
+                  onChange={(event) => setCompletionTermDelivered(event.target.checked)}
+                />
+                <span>Termo de finalização entregue ao colaborador</span>
+              </label>
+              <small className={`programming-term-delivered-hint ${completionTermDelivered ? 'is-delivered' : ''}`}>
+                {completionTermDelivered
+                  ? '✓ Via física já repassada ao colaborador para coleta da assinatura em campo.'
+                  : 'Lembrete: certifique-se de imprimir o termo de finalização e entregá-lo ao colaborador antes da visita.'}
+              </small>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="availability-panel">
         <strong>Horários livres em comum ({collaboratorIds.length} colaboradores, {scheduleDates.length} dias úteis) · 08:00–18:00</strong>

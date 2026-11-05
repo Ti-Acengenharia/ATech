@@ -1,9 +1,24 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pool } from '../db.js'
 import { decryptPersonalData, encryptPersonalData, fingerprintPhoneSearchTokens, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 
 try {
+  // Garantir a tabela de controle de migrações
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name VARCHAR(255) PRIMARY KEY,
+      checksum VARCHAR(64) NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+
+  const appliedRows = await pool.query<{ name: string; checksum: string }>(
+    'SELECT name, checksum FROM schema_migrations',
+  )
+  const appliedMap = new Map(appliedRows.rows.map((row) => [row.name, row.checksum]))
+
   const migrations = [
     '001_init.sql',
     '002_session_store_sid.sql',
@@ -50,12 +65,46 @@ try {
     '043_legal_process_tags.sql',
     '044_process_number_inventory_access_and_phone_index.sql',
     '045_allow_multiple_admins_and_collaborator_absences.sql',
+    '046_security_audit_notifications_and_permissions.sql',
+    '047_personal_activities_priority_checklist_and_schema_migrations.sql',
+    '048_session_timeout_and_live_sync_settings.sql',
+    '049_programming_completion_flag_and_term_delivery.sql',
+    '050_dashboard_performance_indexes.sql',
   ]
+
+  let newlyAppliedCount = 0
+
   for (const migrationName of migrations) {
     const migration = await readFile(resolve('server/migrations', migrationName), 'utf8')
-    await pool.query(migration)
+    const hash = createHash('sha256').update(migration).digest('hex')
+
+    // Se já foi aplicada com o mesmo hash, pula
+    if (appliedMap.has(migrationName)) {
+      continue
+    }
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(migration)
+      await client.query(
+        `INSERT INTO schema_migrations (name, checksum, applied_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (name) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()`,
+        [migrationName, hash],
+      )
+      await client.query('COMMIT')
+      newlyAppliedCount++
+      console.log(`[migração] Aplicada: ${migrationName}`)
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   }
 
+  // Backfills idempotentes legados
   const legacyDateColumn = await pool.query<{ exists: boolean }>(
     `SELECT EXISTS (
        SELECT 1 FROM information_schema.columns
@@ -113,7 +162,7 @@ try {
     }
   }
 
-  console.log('Migrações PostgreSQL aplicadas com sucesso.')
+  console.log(`Migrações PostgreSQL concluídas com sucesso (${newlyAppliedCount} nova(s) aplicada(s)).`)
 } catch (error) {
   console.error('Não foi possível aplicar a migração:', error)
   process.exitCode = 1

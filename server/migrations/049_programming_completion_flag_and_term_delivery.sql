@@ -1,0 +1,4 @@
+ALTER TABLE ticket_programming
+  ADD COLUMN IF NOT EXISTS is_finalization BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS completion_term_delivered BOOLEAN NOT NULL DEFAULT FALSE;
+

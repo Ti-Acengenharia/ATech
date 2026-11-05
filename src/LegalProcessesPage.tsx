@@ -30,7 +30,6 @@ import {
   Pencil,
   Plus,
   Receipt,
-  Save,
   Search,
   Trash2,
   UploadCloud,
@@ -41,6 +40,7 @@ import Papa from 'papaparse'
 import { apiRequest } from './api/client'
 import SearchableMultiSelect from './SearchableMultiSelect'
 import TicketProgrammingForm from './tickets/TicketProgrammingForm'
+import { ATechLoading } from './ATechLoading'
 import type { LegalProcessOption } from './tickets/types'
 import './LegalProcessesPage.css'
 
@@ -222,6 +222,20 @@ const conclusionLabels: Record<ConclusionResult, string> = {
   partial_loss: 'Perda parcial',
 }
 
+function formatCnjProcessNumber(value: string | null | undefined): string {
+  if (!value) return ''
+  if (/[a-zA-Z]/.test(value)) return value
+  const d = value.replace(/\D/g, '').slice(0, 20)
+  if (!d) return ''
+  let r = d.slice(0, 7)
+  if (d.length > 7) r += '-' + d.slice(7, 9)
+  if (d.length > 9) r += '.' + d.slice(9, 13)
+  if (d.length > 13) r += '.' + d.slice(13, 14)
+  if (d.length > 14) r += '.' + d.slice(14, 16)
+  if (d.length > 16) r += '.' + d.slice(16, 20)
+  return r
+}
+
 function dateInput(value: string | null | undefined) { return value ? value.slice(0, 10) : '' }
 function showDate(value: string | null | undefined) {
   if (!value) return '—'
@@ -242,11 +256,13 @@ function blankDraft(statusId: number): ProcessDraft {
 }
 function toDraft(process: ProcessDetail): ProcessDraft {
   return {
-    title: process.title, processNumber: process.processNumber ?? '', statusId: process.statusId, enterpriseKey: process.enterpriseKey ?? '', startDate: dateInput(process.startDate),
+    title: process.title, processNumber: formatCnjProcessNumber(process.processNumber), statusId: process.statusId, enterpriseKey: process.enterpriseKey ?? '', startDate: dateInput(process.startDate),
     endDate: dateInput(process.endDate), description: process.description,
     caseValue: process.caseValue ?? '', claimant: process.claimant, driveUrl: process.driveUrl,
     notebookUrl: process.notebookUrl, distributionDate: dateInput(process.distributionDate),
-    assigneeIds: process.assigneeIds, children: process.children, items: process.items,
+    assigneeIds: process.assigneeIds,
+    children: process.children.map((c) => ({ ...c, processNumber: formatCnjProcessNumber(c.processNumber) })),
+    items: process.items,
   }
 }
 function fileBase64(file: File) {
@@ -356,7 +372,15 @@ function loadSavedLegalDashboardFilters(): SavedLegalDashboardFilters {
   }
 }
 
-export default function LegalProcessesPage({ currentUser }: { currentUser: { id: number; role: 'admin' | 'member' } }) {
+export default function LegalProcessesPage({
+  currentUser,
+  initialProcessId = null,
+  onProcessOpened,
+}: {
+  currentUser: { id: number; role: 'admin' | 'member' }
+  initialProcessId?: string | null
+  onProcessOpened?: () => void
+}) {
   const [statuses, setStatuses] = useState<LegalStatus[]>([])
   const [processes, setProcesses] = useState<LegalProcess[]>([])
   const [legalTags, setLegalTags] = useState<LegalTag[]>([])
@@ -480,11 +504,8 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   const [autoSaveError, setAutoSaveError] = useState('')
   const [paymentDraft, setPaymentDraft] = useState({ description: '', amount: '', dueDate: '', isPaid: false })
   const [paymentFile, setPaymentFile] = useState<File | null>(null)
-  const [saving, setSaving] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
   const [busyPayment, setBusyPayment] = useState<number | null>(null)
-  const [editingLink, setEditingLink] = useState<'driveUrl' | 'notebookUrl' | null>(null)
-  const [linkDraft, setLinkDraft] = useState('')
   const [comment, setComment] = useState('')
   const [mentions, setMentions] = useState<number[]>([])
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
@@ -1002,13 +1023,13 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     localStorage.setItem('legal-process-card-face-v2', JSON.stringify(updated))
   }
 
-  async function openDetail(
+  const openDetail = useCallback(async (
     item: Pick<LegalProcess, 'id'>,
     openScheduler = false,
     openConclusion = false,
     openReopen = false,
     requestedReopenStatusId?: number,
-  ) {
+  ) => {
     setNotice(null)
     const token = ++editTokenRef.current
     try {
@@ -1037,10 +1058,23 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
       setAutoSaveError('')
       setPaymentDraft({ description: '', amount: '', dueDate: '', isPaid: false })
       setPaymentFile(null)
+      const url = new URL(window.location.href)
+      url.searchParams.set('processId', String(result.process.id))
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível abrir o processo.' })
     }
-  }
+  }, [statuses])
+
+  useEffect(() => {
+    const queryProcessId = initialProcessId || new URLSearchParams(window.location.search).get('processId')
+    if (!queryProcessId) return
+    const numericId = Number(queryProcessId)
+    if (Number.isInteger(numericId) && numericId > 0 && processIdRef.current !== numericId) {
+      void openDetail({ id: numericId })
+      onProcessOpened?.()
+    }
+  }, [initialProcessId, onProcessOpened, openDetail])
 
   function startCreate(statusId = statuses.find((status) => !isConcludedStatus(status.name))?.id ?? statuses[0]?.id ?? 0) {
     editTokenRef.current += 1
@@ -1064,15 +1098,18 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   }
 
   async function closeEditor() {
-    if (draft && JSON.stringify(draft) !== savedDraftRef.current) {
-      if (autoSaveTimerRef.current !== null) {
-        window.clearTimeout(autoSaveTimerRef.current)
-        autoSaveTimerRef.current = null
-      }
-      const saved = await queueProcessSave(draft)
-      if (!saved) return
-    }
     editTokenRef.current += 1
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    if (draft && draft.title.trim() && JSON.stringify(draft) !== savedDraftRef.current) {
+      try {
+        await queueProcessSave(draft)
+      } catch {
+        // Ignora erros para nunca prender o usuário na tela ao clicar em voltar
+      }
+    }
     setNewProcess(false)
     setSelected(null)
     setShowProgrammingForm(false)
@@ -1083,11 +1120,13 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
     setConclusionSummary('')
     processIdRef.current = null
     setDraft(null)
-    setEditingLink(null)
     setReplyingTo(null)
     setEditingComment(null)
     setAutoSaveState('idle')
     setAutoSaveError('')
+    const url = new URL(window.location.href)
+    url.searchParams.delete('processId')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
   }
 
   const queueProcessSave = useCallback((snapshot: ProcessDraft): Promise<boolean> => {
@@ -1127,13 +1166,15 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
         const body = {
           ...job.draft,
           title: job.draft.title.trim(),
-          processNumber: job.draft.processNumber.trim(),
+          processNumber: formatCnjProcessNumber(job.draft.processNumber).trim(),
           enterpriseKey: job.draft.enterpriseKey || null,
           startDate: job.draft.startDate || null,
           endDate: job.draft.endDate || null,
           caseValue,
           distributionDate: job.draft.distributionDate || null,
-          children: job.draft.children.filter((child) => child.processNumber.trim() && child.description.trim()),
+          children: job.draft.children
+            .filter((child) => child.processNumber.trim() && child.description.trim())
+            .map((child) => ({ ...child, processNumber: formatCnjProcessNumber(child.processNumber).trim() })),
           items: job.draft.items.filter((item) => item.title.trim()),
         }
         setAutoSaveState('saving')
@@ -1178,23 +1219,6 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
   useEffect(() => {
     queueProcessSaveRef.current = queueProcessSave
   }, [queueProcessSave])
-
-  async function saveLink(field: 'driveUrl' | 'notebookUrl') {
-    if (!selected) return
-    setSaving(true)
-    try {
-      await apiRequest(`/api/legal-processes/${selected.id}/links`, {
-        method: 'PATCH',
-        body: JSON.stringify({ field, url: linkDraft }),
-      })
-      setSelected({ ...selected, [field]: linkDraft })
-      setDraft((current) => current ? { ...current, [field]: linkDraft } : current)
-      setEditingLink(null)
-      setNotice({ kind: 'success', text: 'Link atualizado com sucesso.' })
-    } catch (error) {
-      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar o link.' })
-    } finally { setSaving(false) }
-  }
 
   function updateCommentText(value: string, cursor: number) {
     setComment(value)
@@ -1582,10 +1606,6 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
         setEditingComment(null)
         return
       }
-      if (editingLink) {
-        setEditingLink(null)
-        return
-      }
       if (showConclusionForm) {
         setShowConclusionForm(false)
         return
@@ -1790,9 +1810,23 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
 
         <div className="legal-heading-actions">
           {detailPageOpen ? (
-            <button type="button" className="secondary-button" onClick={() => void closeEditor()}>
-              <ArrowLeft size={15} /> Voltar ao painel
-            </button>
+            <>
+              {autoSaveState !== 'idle' && (
+                <span
+                  className={`legal-autosave-pill is-${autoSaveState}`}
+                  role="status"
+                  aria-live="polite"
+                  title={autoSaveError || undefined}
+                >
+                  {(autoSaveState === 'pending' || autoSaveState === 'saving') && 'Salvando alterações...'}
+                  {autoSaveState === 'saved' && '✓ Salvo automaticamente'}
+                  {autoSaveState === 'error' && (autoSaveError || 'Erro ao salvar')}
+                </span>
+              )}
+              <button type="button" className="secondary-button" onClick={() => void closeEditor()}>
+                <ArrowLeft size={15} /> Voltar ao painel
+              </button>
+            </>
           ) : (
             <>
               {/* Abas superiores integradas (Quadro, Lista, Dashboard) */}
@@ -2123,7 +2157,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
 
           {/* CONTEÚDO PRINCIPAL (QUADRO OU LISTA) */}
           {loading ? (
-            <div className="legal-empty">Carregando processos jurídicos...</div>
+            <ATechLoading message="Carregando processos jurídicos..." subtitle="Sincronizando processos e fases..." />
           ) : !processes.length && activeTab === 'list' ? (
             <div className="legal-empty">
               <FileText size={29} />
@@ -2413,7 +2447,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
           )}
 
           {loading ? (
-            <div className="legal-empty">Carregando indicadores jurídicos...</div>
+            <ATechLoading message="Carregando indicadores jurídicos..." subtitle="Calculando estatísticas e prazos..." />
           ) : (
             <>
               {/* KPIs Principais */}
@@ -2983,10 +3017,10 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
                               value={child.processNumber}
                               onChange={(event) => setDraft({
                                 ...draft,
-                                children: draft.children.map((entry, i) => i === index ? { ...entry, processNumber: event.target.value } : entry),
+                                children: draft.children.map((entry, i) => i === index ? { ...entry, processNumber: formatCnjProcessNumber(event.target.value) } : entry),
                               })}
-                              placeholder="Número do processo filho"
-                              maxLength={100}
+                              placeholder="0000000-00.0000.0.00.0000"
+                              maxLength={25}
                               required
                             />
                             <button
@@ -3314,9 +3348,9 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
                 <div className="legal-sidebar-number-input">
                   <input
                     value={draft.processNumber}
-                    onChange={(event) => setDraft({ ...draft, processNumber: event.target.value })}
+                    onChange={(event) => setDraft({ ...draft, processNumber: formatCnjProcessNumber(event.target.value) })}
                     placeholder="0000000-00.0000.0.00.0000"
-                    maxLength={100}
+                    maxLength={25}
                   />
                   {draft.processNumber && (
                     <button
@@ -3403,36 +3437,26 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
                   const label = field === 'driveUrl' ? 'Google Drive' : 'Notebook'
                   return (
                     <div className="legal-resource-row" key={field}>
-                      <span className="legal-resource-title">{label}</span>
-                      {selected ? editingLink === field ? (
-                        <div className="legal-link-edit">
-                          <input type="url" value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} placeholder="https://" />
-                          <button type="button" className="primary-button" disabled={saving} onClick={() => void saveLink(field)}>
-                            <Save size={13} /> Salvar
-                          </button>
-                          <button type="button" className="text-action-btn" onClick={() => setEditingLink(null)}>Cancelar</button>
-                        </div>
-                      ) : (
-                        <div className="legal-resource-value">
-                          {selected[field] ? (
-                            <a href={selected[field]} target="_blank" rel="noreferrer" title={selected[field]}>
-                              <ExternalLink size={13} /> Acessar {label}
-                            </a>
-                          ) : (
-                            <span className="legal-resource-empty">Não informado</span>
-                          )}
-                          <button type="button" className="text-action-btn" onClick={() => { setLinkDraft(selected[field]); setEditingLink(field) }}>
-                            <Pencil size={13} />
-                          </button>
-                        </div>
-                      ) : (
-                        <input
-                          type="url"
-                          value={draft[field]}
-                          onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
-                          placeholder="https://"
-                        />
-                      )}
+                      <div className="legal-resource-title-row">
+                        <span className="legal-resource-title">{label}</span>
+                        {draft[field] ? (
+                          <a
+                            href={draft[field]}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="legal-resource-link-btn"
+                            title={`Acessar ${label}`}
+                          >
+                            <ExternalLink size={12} /> Acessar
+                          </a>
+                        ) : null}
+                      </div>
+                      <input
+                        type="url"
+                        value={draft[field]}
+                        onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
+                        placeholder="https://"
+                      />
                     </div>
                   )
                 })}
@@ -3502,7 +3526,7 @@ export default function LegalProcessesPage({ currentUser }: { currentUser: { id:
               {/* Ações de Fechamento / Exclusão */}
               <div className="legal-sidebar-footer">
                 <button type="button" className="secondary-button" onClick={() => void closeEditor()}>
-                  {autoSaveState === 'saving' || autoSaveState === 'pending' ? 'Salvar e voltar' : 'Voltar'}
+                  <ArrowLeft size={14} /> Voltar aos processos
                 </button>
                 {selected && (
                   <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProcess()}>

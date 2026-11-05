@@ -11,11 +11,13 @@ SELECT u.id, page_key
 FROM users u
 CROSS JOIN (VALUES ('home'), ('tickets'), ('schedule'), ('collaborators'), ('information')) AS defaults(page_key)
 WHERE u.role = 'member'
+  AND NOT EXISTS (SELECT 1 FROM user_page_access)
 ON CONFLICT (user_id, page_key) DO NOTHING;
 
 INSERT INTO user_page_access (user_id, page_key)
 SELECT user_id, 'legal-processes'
 FROM legal_process_access
+WHERE NOT EXISTS (SELECT 1 FROM user_page_access WHERE page_key = 'legal-processes')
 ON CONFLICT (user_id, page_key) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS user_page_access_page_index

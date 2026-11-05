@@ -3,6 +3,8 @@ import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
+import { validateBinaryFileSignature } from '../services/file-validation.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
 
 const router = Router()
 const columnSchema = z.object({ name: z.string().trim().min(1).max(80) })
@@ -13,11 +15,19 @@ const activitySchema = z.object({
   columnId: z.coerce.number().int().positive(),
   title: z.string().trim().min(1).max(240),
   description: z.string().max(6000).default(''),
+  priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
   startDate: z.string().date().nullable().optional(),
   dueDate: z.string().date().nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
 })
 const activityUpdateSchema = activitySchema.partial().refine((value) => Object.keys(value).length > 0)
+const checklistItemSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+})
+const checklistItemUpdateSchema = z.object({
+  title: z.string().trim().min(1).max(300).optional(),
+  isDone: z.boolean().optional(),
+}).refine((value) => Object.keys(value).length > 0)
 const tagSchema = z.object({ name: z.string().trim().min(1).max(40) })
 const commentSchema = z.object({ body: z.string().trim().min(1).max(6000) })
 const uploadSchema = z.object({
@@ -167,11 +177,14 @@ router.get('/', async (req, res, next) => {
         [userId],
       ),
       client.query<{
-        id: string; column_id: string; title: string; description: string; start_date: string | null; due_date: string | null; tags: string[]; comments_count: number; attachments_count: number
+        id: string; column_id: string; title: string; description: string; priority: string; start_date: string | null; due_date: string | null; tags: string[]; comments_count: number; attachments_count: number; checklist_total: number; checklist_done: number
       }>(
-        `SELECT a.id, a.column_id, a.title, a.description, a.start_date::text, a.due_date::text, a.tags,
+        `SELECT a.id, a.column_id, a.title, a.description, COALESCE(a.priority, 'medium') AS priority,
+                a.start_date::text, a.due_date::text, a.tags,
                 (SELECT count(*)::int FROM personal_activity_comments c WHERE c.activity_id = a.id) AS comments_count,
-                (SELECT count(*)::int FROM personal_activity_attachments f WHERE f.activity_id = a.id) AS attachments_count
+                (SELECT count(*)::int FROM personal_activity_attachments f WHERE f.activity_id = a.id) AS attachments_count,
+                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id) AS checklist_total,
+                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id AND ch.is_done = TRUE) AS checklist_done
          FROM personal_activities a WHERE a.user_id = $1 ORDER BY a.created_at, a.id`,
         [userId],
       ),
@@ -192,11 +205,14 @@ router.get('/', async (req, res, next) => {
         columnId: Number(activity.column_id),
         title: activity.title,
         description: activity.description,
+        priority: activity.priority || 'medium',
         startDate: activity.start_date,
         dueDate: activity.due_date,
         tags: activity.tags,
         commentsCount: activity.comments_count,
         attachmentsCount: activity.attachments_count,
+        checklistTotal: activity.checklist_total,
+        checklistDone: activity.checklist_done,
       })),
     })
   } catch (error) {
@@ -362,6 +378,7 @@ router.delete('/tags/:id', async (req, res, next) => {
       [id.data, req.session.user!.id],
     )
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -422,6 +439,7 @@ router.patch('/columns/order', async (req, res, next) => {
       [parsed.data.ids, req.session.user!.id],
     )
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -448,6 +466,7 @@ router.patch('/columns/:id', async (req, res, next) => {
       res.status(404).json({ error: 'Coluna não encontrada.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -473,6 +492,7 @@ router.delete('/columns/:id', async (req, res, next) => {
       res.status(409).json({ error: 'A coluna não existe, ainda contém atividades ou é a última do quadro. Mova ou exclua as atividades primeiro.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -490,13 +510,13 @@ router.post('/items', async (req, res, next) => {
     await client.query('BEGIN')
     const tags = await canonicalizeTagNames(client, Number(req.session.user!.id), parsed.data.tags)
     const result = await client.query<{
-      id: string; column_id: string; title: string; description: string; start_date: string | null; due_date: string | null; tags: string[]
+      id: string; column_id: string; title: string; description: string; priority: string; start_date: string | null; due_date: string | null; tags: string[]
     }>(
-      `INSERT INTO personal_activities (user_id, column_id, title, description, start_date, due_date, tags)
-       SELECT $1, c.id, $3, $4, $5, $6, $7
+      `INSERT INTO personal_activities (user_id, column_id, title, description, priority, start_date, due_date, tags)
+       SELECT $1, c.id, $3, $4, $5, $6, $7, $8
        FROM personal_activity_columns c WHERE c.id = $2 AND c.user_id = $1
-       RETURNING id, column_id, title, description, start_date::text, due_date::text, tags`,
-      [req.session.user!.id, parsed.data.columnId, parsed.data.title, parsed.data.description, parsed.data.startDate ?? null, parsed.data.dueDate ?? null, tags],
+       RETURNING id, column_id, title, description, priority, start_date::text, due_date::text, tags`,
+      [req.session.user!.id, parsed.data.columnId, parsed.data.title, parsed.data.description, parsed.data.priority, parsed.data.startDate ?? null, parsed.data.dueDate ?? null, tags],
     )
     if (!result.rowCount) {
       await client.query('ROLLBACK')
@@ -506,8 +526,9 @@ router.post('/items', async (req, res, next) => {
     const activity = result.rows[0]
     await persistTagNames(client, Number(req.session.user!.id), activity.tags)
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'create' })
     res.status(201).json({
-      activity: { id: Number(activity.id), columnId: Number(activity.column_id), title: activity.title, description: activity.description, startDate: activity.start_date, dueDate: activity.due_date, tags: activity.tags },
+      activity: { id: Number(activity.id), columnId: Number(activity.column_id), title: activity.title, description: activity.description, priority: activity.priority, startDate: activity.start_date, dueDate: activity.due_date, tags: activity.tags, checklistTotal: 0, checklistDone: 0 },
     })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -524,7 +545,7 @@ router.patch('/items/:id', async (req, res, next) => {
     res.status(400).json({ error: 'Atividade inválida.' })
     return
   }
-  const { columnId, title, description, startDate, dueDate, tags } = parsed.data
+  const { columnId, title, description, priority, startDate, dueDate, tags } = parsed.data
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -536,16 +557,17 @@ router.patch('/items/:id', async (req, res, next) => {
        SET column_id = COALESCE($1, a.column_id),
            title = COALESCE($2, a.title),
            description = COALESCE($3, a.description),
-           due_date = CASE WHEN $4::boolean THEN $5::date ELSE a.due_date END,
-           start_date = CASE WHEN $6::boolean THEN $7::date ELSE a.start_date END,
-           tags = CASE WHEN $8::boolean THEN $9::text[] ELSE a.tags END,
+           priority = COALESCE($4, a.priority),
+           due_date = CASE WHEN $5::boolean THEN $6::date ELSE a.due_date END,
+           start_date = CASE WHEN $7::boolean THEN $8::date ELSE a.start_date END,
+           tags = CASE WHEN $9::boolean THEN $10::text[] ELSE a.tags END,
            updated_at = now()
-       WHERE a.id = $10 AND a.user_id = $11
+       WHERE a.id = $11 AND a.user_id = $12
          AND ($1::bigint IS NULL OR EXISTS (
            SELECT 1 FROM personal_activity_columns c WHERE c.id = $1 AND c.user_id = a.user_id
          ))
        RETURNING a.id`,
-      [columnId ?? null, title ?? null, description ?? null, dueDate !== undefined, dueDate ?? null,
+      [columnId ?? null, title ?? null, description ?? null, priority ?? null, dueDate !== undefined, dueDate ?? null,
         startDate !== undefined, startDate ?? null, tags !== undefined, canonicalTags ?? null, id.data, req.session.user!.id],
     )
     if (!result.rowCount) {
@@ -555,12 +577,150 @@ router.patch('/items/:id', async (req, res, next) => {
     }
     if (canonicalTags !== undefined) await persistTagNames(client, Number(req.session.user!.id), canonicalTags)
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
     next(error)
   } finally {
     client.release()
+  }
+})
+
+// Checklist Endpoints
+router.get('/items/:id/checklist', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!id.success) {
+    res.status(400).json({ error: 'Identificador de atividade inválido.' })
+    return
+  }
+  try {
+    const ownerId = await getActivityAccess(req, res, id.data)
+    if (ownerId === null) return
+    const result = await pool.query<{
+      id: string; title: string; is_done: boolean; position: number; created_at: Date
+    }>(
+      `SELECT id::text, title, is_done, position, created_at
+       FROM personal_activity_checklists
+       WHERE activity_id = $1
+       ORDER BY position, id`,
+      [id.data],
+    )
+    res.json({
+      items: result.rows.map((row) => ({
+        id: Number(row.id),
+        title: row.title,
+        isDone: row.is_done,
+        position: row.position,
+        createdAt: row.created_at.toISOString(),
+      })),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/items/:id/checklist', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = checklistItemSchema.safeParse(req.body)
+  if (!id.success || !parsed.success) {
+    res.status(400).json({ error: 'Informe um item válido para o checklist.' })
+    return
+  }
+  try {
+    const ownerId = await getActivityAccess(req, res, id.data, true)
+    if (ownerId === null) return
+    const nextPos = await pool.query<{ max_pos: number | null }>(
+      'SELECT max(position) AS max_pos FROM personal_activity_checklists WHERE activity_id = $1',
+      [id.data],
+    )
+    const pos = (nextPos.rows[0]?.max_pos ?? -1) + 1
+    const result = await pool.query<{
+      id: string; title: string; is_done: boolean; position: number; created_at: Date
+    }>(
+      `INSERT INTO personal_activity_checklists (activity_id, title, is_done, position)
+       VALUES ($1, $2, FALSE, $3)
+       RETURNING id::text, title, is_done, position, created_at`,
+      [id.data, parsed.data.title, pos],
+    )
+    const item = result.rows[0]
+    res.status(201).json({
+      item: {
+        id: Number(item.id),
+        title: item.title,
+        isDone: item.is_done,
+        position: item.position,
+        createdAt: item.created_at.toISOString(),
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.patch('/items/:id/checklist/:itemId', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  const itemId = z.coerce.number().int().positive().safeParse(req.params.itemId)
+  const parsed = checklistItemUpdateSchema.safeParse(req.body)
+  if (!id.success || !itemId.success || !parsed.success) {
+    res.status(400).json({ error: 'Dados de item inválidos.' })
+    return
+  }
+  try {
+    const ownerId = await getActivityAccess(req, res, id.data, true)
+    if (ownerId === null) return
+    const result = await pool.query<{
+      id: string; title: string; is_done: boolean; position: number; created_at: Date
+    }>(
+      `UPDATE personal_activity_checklists
+       SET title = COALESCE($1, title),
+           is_done = COALESCE($2, is_done),
+           updated_at = now()
+       WHERE id = $3 AND activity_id = $4
+       RETURNING id::text, title, is_done, position, created_at`,
+      [parsed.data.title ?? null, parsed.data.isDone ?? null, itemId.data, id.data],
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Item de checklist não encontrado.' })
+      return
+    }
+    const item = result.rows[0]
+    res.json({
+      item: {
+        id: Number(item.id),
+        title: item.title,
+        isDone: item.is_done,
+        position: item.position,
+        createdAt: item.created_at.toISOString(),
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.delete('/items/:id/checklist/:itemId', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  const itemId = z.coerce.number().int().positive().safeParse(req.params.itemId)
+  if (!id.success || !itemId.success) {
+    res.status(400).json({ error: 'Item de checklist inválido.' })
+    return
+  }
+  try {
+    const ownerId = await getActivityAccess(req, res, id.data, true)
+    if (ownerId === null) return
+    const result = await pool.query(
+      'DELETE FROM personal_activity_checklists WHERE id = $1 AND activity_id = $2 RETURNING id',
+      [itemId.data, id.data],
+    )
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Item de checklist não encontrado.' })
+      return
+    }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
   }
 })
 
@@ -645,6 +805,7 @@ router.patch('/items/:id/comments/:commentId', async (req, res, next) => {
       res.status(404).json({ error: 'Comentário não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -671,6 +832,7 @@ router.delete('/items/:id/comments/:commentId', async (req, res, next) => {
       res.status(404).json({ error: 'Comentário não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -715,9 +877,13 @@ router.post('/items/:id/attachments', async (req, res, next) => {
   const contentType = parsed.data.contentType.toLowerCase()
   const content = Buffer.from(parsed.data.contentBase64, 'base64')
   const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/plain', 'text/csv'])
-  if (!fileName || !allowedTypes.has(contentType) || !content.length || content.length > 5 * 1024 * 1024 ||
+  const binaryTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] as const
+  const isValidContent = binaryTypes.includes(contentType as typeof binaryTypes[number])
+    ? validateBinaryFileSignature(content, contentType, binaryTypes).valid
+    : (contentType === 'text/plain' || contentType === 'text/csv') && !content.includes(0x00)
+  if (!fileName || !allowedTypes.has(contentType) || !isValidContent || !content.length || content.length > 5 * 1024 * 1024 ||
       content.toString('base64') !== parsed.data.contentBase64) {
-    res.status(400).json({ error: 'Anexe PDF, imagem JPEG/PNG/WebP ou arquivo de texto/CSV de até 5 MiB.' })
+    res.status(400).json({ error: 'Anexe PDF, imagem JPEG/PNG/WebP ou arquivo de texto/CSV válido de até 5 MiB.' })
     return
   }
   try {
@@ -783,6 +949,7 @@ router.delete('/items/:id/attachments/:attachmentId', async (req, res, next) => 
       res.status(404).json({ error: 'Anexo não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -804,6 +971,7 @@ router.delete('/items/:id', async (req, res, next) => {
       res.status(404).json({ error: 'Atividade não encontrada.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     next(error)

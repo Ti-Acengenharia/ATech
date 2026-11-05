@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react'
 import { GoogleLogin, GoogleOAuthProvider, type CredentialResponse } from '@react-oauth/google'
 import { apiRequest } from './api/client'
+import { startLiveSync } from './api/liveSync'
 import {
-  ArrowRight,
   ArrowUpRight,
   Ban,
   Bell,
@@ -14,6 +14,7 @@ import {
   ContactRound,
   ClipboardList,
   FileText,
+  History,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -27,52 +28,23 @@ import {
   Search,
   ShieldCheck,
   UsersRound,
-  Wrench,
   Zap,
   X,
 } from 'lucide-react'
+import { APP_CURRENT_VERSION } from './version'
+import { ATechLoading } from './ATechLoading'
 import './atech.css'
 
 type UserRole = 'admin' | 'member'
 type UserStatus = 'invited' | 'active' | 'suspended'
-type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities'
+type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities' | 'logs'
+type AppPage = AdminPage | 'not-found'
 
 interface SessionUser {
   id: number
   email: string
   displayName: string
   role: UserRole
-}
-
-interface CelebrationPerson {
-  id: string
-  name: string
-  role: string
-  day: number
-  month?: number
-  year?: number
-  admissionDate?: string
-  years?: number
-  months?: number
-  days?: number
-}
-
-interface CelebrationGroup {
-  label: string
-  people: CelebrationPerson[]
-}
-
-interface DashboardCelebrations {
-  birthdays: {
-    previous: CelebrationGroup
-    current: CelebrationGroup
-    next: CelebrationGroup
-  }
-  workAnniversaries: {
-    previous: CelebrationGroup
-    current: CelebrationGroup
-    next: CelebrationGroup
-  }
 }
 
 interface ManagedUser extends SessionUser {
@@ -94,18 +66,40 @@ interface SessionResponse {
 
 interface UserNotification {
   id: string
-  ticket_id: string
+  source?: 'ticket' | 'legal-process'
+  ticket_id: string | null
+  process_id?: string | null
   protocol: string
-  kind: 'mention' | 'mention_reply'
+  process_number?: string | null
+  kind: 'mention' | 'mention_reply' | 'legal_mention'
   message: string
   actor_name: string
   created_at: string
   read_at: string | null
 }
 
+interface AuditLogEntry {
+  id: string
+  actorUserId: number | null
+  actorName: string
+  action: string
+  resourceType: string
+  resourceId: string
+  summary: string
+  createdAt: string
+}
+
+interface QuickSearchResultItem {
+  kind: 'ticket' | 'legal-process' | 'collaborator'
+  id: string
+  title: string
+  subtitle: string
+}
+
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
 const configuredDomain = import.meta.env.VITE_CORPORATE_DOMAIN ?? 'empresa.com.br'
 const CollaboratorsPage = lazy(() => import('./CollaboratorsPage'))
+const HomeDashboard = lazy(() => import('./HomeDashboard'))
 const InventoryPage = lazy(() => import('./InventoryPage'))
 const TicketBoardPage = lazy(() => import('./tickets/TicketBoardPage'))
 const TicketLetterPage = lazy(() => import('./tickets/TicketLetterPage'))
@@ -116,21 +110,33 @@ const WarrantyManagementPage = lazy(() => import('./WarrantyManagementPage'))
 const UserProfileModal = lazy(() => import('./UserProfileModal'))
 const LegalProcessesPage = lazy(() => import('./LegalProcessesPage'))
 const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
+const HomepageTicketsFilterSettings = lazy(() => import('./HomepageTicketsFilterSettings'))
+const SessionTimeoutSettings = lazy(() => import('./SessionTimeoutSettings'))
+const AuditLogsPage = lazy(() => import('./AuditLogsPage'))
+const VersionHistoryModal = lazy(() => import('./VersionHistoryModal'))
+const NotFoundPage = lazy(() => import('./NotFoundPage'))
+const PrivacyPolicyModal = lazy(() => import('./PrivacyPolicyModal'))
 
 const allAdminPages: AdminPage[] = [
   'home', 'tickets', 'letter-filling', 'schedule', 'collaborators', 'inventory',
-  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities',
+  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities', 'logs',
 ]
 
-function readPageFromLocation(): AdminPage {
+function readPageFromLocation(): AppPage {
   if (typeof window === 'undefined') return 'home'
   const queryPage = new URLSearchParams(window.location.search).get('page')
-  if (queryPage && allAdminPages.includes(queryPage as AdminPage)) {
-    return queryPage as AdminPage
+  if (queryPage) {
+    if (allAdminPages.includes(queryPage as AdminPage)) {
+      return queryPage as AdminPage
+    }
+    return 'not-found'
   }
   const pathSegment = window.location.pathname.replace(/^\/+|\/+$/g, '')
-  if (pathSegment && allAdminPages.includes(pathSegment as AdminPage)) {
-    return pathSegment as AdminPage
+  if (pathSegment) {
+    if (allAdminPages.includes(pathSegment as AdminPage)) {
+      return pathSegment as AdminPage
+    }
+    return 'not-found'
   }
   return 'home'
 }
@@ -138,6 +144,15 @@ function readPageFromLocation(): AdminPage {
 function formatDate(value: string | null) {
   if (!value) return 'Ainda não acessou'
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
 }
 
 export default function ATechApp() {
@@ -171,6 +186,56 @@ export default function ATechApp() {
     return () => window.removeEventListener('atech:session-expired', handleSessionExpired)
   }, [])
 
+  useEffect(() => {
+    if (!user) return
+
+    let lastCheckTime = Date.now()
+
+    const verifySession = async () => {
+      try {
+        const session = await apiRequest<SessionResponse>('/api/auth/session')
+        if (!session.user) {
+          setUser(null)
+          setSessionNotice('Sua sessão expirou por inatividade. Faça login novamente para continuar.')
+        } else {
+          setPageAccess(session.pageAccess)
+          setCanViewOtherPersonalActivities(session.canViewOtherPersonalActivities)
+        }
+      } catch {
+        // apiRequest já dispara atech:session-expired em caso de desconexão ou expiração
+      }
+    }
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now()
+        if (now - lastCheckTime >= 30_000) {
+          lastCheckTime = now
+          void verifySession()
+        }
+      }
+    }
+
+    const heartbeatTimer = window.setInterval(() => {
+      lastCheckTime = Date.now()
+      void verifySession()
+    }, 120_000)
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus)
+    window.addEventListener('focus', handleVisibilityOrFocus)
+
+    return () => {
+      window.clearInterval(heartbeatTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
+      window.removeEventListener('focus', handleVisibilityOrFocus)
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    return startLiveSync()
+  }, [user])
+
   async function signOut() {
     try { await apiRequest('/api/auth/logout', { method: 'POST' }) }
     finally {
@@ -179,7 +244,15 @@ export default function ATechApp() {
     }
   }
 
-  if (loading) return <main className="boot-screen"><span className="brand-mark"><Wrench size={19} /></span></main>
+  if (loading) {
+    return (
+      <ATechLoading
+        fullscreen
+        message="Carregando informações..."
+        subtitle="Verificando sessão e ambiente de trabalho..."
+      />
+    )
+  }
 
   if (!user) {
     const login = <LoginScreen domain={domain} apiAvailable={apiAvailable} sessionNotice={sessionNotice} onAuthenticated={(session) => {
@@ -201,6 +274,7 @@ function LoginScreen({ domain, apiAvailable, sessionNotice, onAuthenticated }: {
   onAuthenticated: (session: SessionResponse) => void
 }) {
   const [adminMode, setAdminMode] = useState(false)
+  const [showPrivacy, setShowPrivacy] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -234,65 +308,259 @@ function LoginScreen({ domain, apiAvailable, sessionNotice, onAuthenticated }: {
   }
 
   return (
-    <main className="login-layout">
-      <section className="login-story" aria-label="ATech assistência técnica">
-        <div className="story-topline"><Brand /><span className="workspace-tag"><i /> AMBIENTE DE TRABALHO</span></div>
-        <div className="story-copy"><span className="eyebrow">OPERAÇÃO TÉCNICA, EM ORDEM</span><h1>O trabalho bem feito começa com <em>acesso certo.</em></h1><p>Um espaço seguro para quem mantém tudo funcionando.</p></div>
-        <div className="service-visual" aria-hidden="true">
-          <div className="visual-grid" />
-          <div className="service-ticket">
-            <div className="ticket-head"><span>ATECH / SERVICE DESK</span><span className="ticket-status"><i /> SEGURO</span></div>
-            <div className="ticket-rule" />
-            <div className="ticket-middle"><span className="ticket-emblem"><Wrench size={24} /></span><span><small>IDENTIDADE VERIFICADA</small><strong>Equipe técnica</strong></span><ArrowUpRight size={18} className="ticket-arrow" /></div>
-            <div className="ticket-foot"><span>DOMÍNIO CORPORATIVO</span><span>01 — 03</span></div>
+    <main className="despojado-login-layout">
+      {/* Coluna Visual Hero: Destaque para ATech e AC Engenharia */}
+      <section className="login-hero-showcase" aria-label="Apresentação ATech e AC Engenharia">
+        <div className="hero-mesh-glow hero-glow-1" />
+        <div className="hero-mesh-glow hero-glow-2" />
+        <div className="hero-grid-pattern" />
+
+        <div className="hero-topline">
+          <div className="hero-company-pill">
+            <span className="hero-logo-box">
+              <img src="/logo-ac.png" alt="AC Engenharia" className="hero-logo-img" />
+            </span>
+            <div className="hero-company-info">
+              <strong>AC ENGENHARIA</strong>
+              <small>Assistência Técnica & Qualidade</small>
+            </div>
           </div>
-          <div className="visual-index">ACESSO CONTROLADO <i /> 24/7</div>
+          <span className="hero-badge-live">
+            <i /> AMBIENTE SEGURO
+          </span>
         </div>
-        <footer className="story-footer"><span>© ATech</span><span><ShieldCheck size={14} /> Acesso protegido</span></footer>
+
+        <div className="hero-center-content">
+          <div className="hero-title-container">
+            <span className="hero-super-tag">PLATAFORMA OPERACIONAL INTEGRADA</span>
+            <h1 className="hero-atech-title">
+              ATech<span className="hero-dot">.</span>
+            </h1>
+            <p className="hero-description">
+              Inteligência, agilidade e excelência técnica para os empreendimentos e clientes da AC Engenharia.
+            </p>
+          </div>
+
+          <div className="hero-features-stream">
+            <div className="hero-feature-card">
+              <div className="feature-icon-wrap icon-cyan">
+                <ClipboardList size={18} />
+              </div>
+              <div className="feature-text">
+                <strong>Chamados & Vistorias</strong>
+                <small>Gestão de ponta a ponta com fluxo CVCRM integrado</small>
+              </div>
+            </div>
+
+            <div className="hero-feature-card">
+              <div className="feature-icon-wrap icon-blue">
+                <ListTodo size={18} />
+              </div>
+              <div className="feature-text">
+                <strong>Quadro de Atividades</strong>
+                <small>Organização visual de prioridades, prazos e rotinas técnicas</small>
+              </div>
+            </div>
+
+            <div className="hero-feature-card">
+              <div className="feature-icon-wrap icon-purple">
+                <ShieldCheck size={18} />
+              </div>
+              <div className="feature-text">
+                <strong>Sincronização em Tempo Real</strong>
+                <small>Informações sempre atualizadas para toda a equipe</small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer className="hero-footer-bar">
+          <span>© AC Engenharia · Todos os direitos reservados</span>
+          <span>Acesso corporativo seguro</span>
+        </footer>
       </section>
 
-      <section className="login-panel">
-        <div className="mobile-brand"><Brand /></div>
-        <div className="login-content">
-          <div className="login-heading"><span className="eyebrow">BEM-VINDO À ATECH</span><h2>{adminMode ? 'Acesso administrativo' : 'Entre na sua conta'}</h2><p>{adminMode ? 'Use as credenciais de primeiro acesso.' : 'Acesse com seu e-mail corporativo convidado.'}</p></div>
-          {!apiAvailable && <div className="notice notice-warning"><CircleAlert size={17} /> API indisponível. Inicie o servidor e o banco para autenticar.</div>}
-          {sessionNotice && <div className="notice notice-warning" role="alert"><CircleAlert size={17} /> {sessionNotice}</div>}
+      {/* Coluna de Login: Ação de entrada fluida e moderna */}
+      <section className="login-action-column">
+        <div className="login-action-container">
+          <div className="login-mobile-brand">
+            <span className="mobile-logo-box">
+              <img src="/logo-ac.png" alt="AC Engenharia" className="hero-logo-img" />
+            </span>
+            <span className="mobile-atech-logo">ATech<span>.</span></span>
+          </div>
 
-          {adminMode ? (
-            <form className="admin-form" onSubmit={handleAdminSubmit}>
-              <label htmlFor="admin-email">E-mail administrador</label>
-              <div className="input-wrap"><Mail size={17} /><input id="admin-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@atech.local" required /></div>
-              <label htmlFor="admin-password">Senha</label>
-              <div className="input-wrap"><KeyRound size={17} /><input id="admin-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha de acesso" required /></div>
-              {error && <p className="form-error" role="alert">{error}</p>}
-              <button className="primary-button login-submit" type="submit" disabled={busy}>{busy ? 'Verificando...' : 'Entrar na administração'} <ArrowUpRight size={17} /></button>
-              <button className="text-button back-to-google" type="button" onClick={() => { setAdminMode(false); setError('') }}>Voltar ao acesso corporativo</button>
-            </form>
-          ) : (
-            <div className="sso-content">
-              <div className="domain-chip"><i /><span>DOMÍNIO AUTORIZADO</span><strong>@{domain}</strong></div>
-              {googleClientId ? <div className="google-button-wrap"><GoogleLogin onSuccess={handleGoogleSuccess} onError={() => setError('Falha ao conectar com o Google. Tente novamente.')} text="continue_with" theme="outline" shape="rectangular" size="large" width="360" useOneTap={false} /></div> : <div className="setup-note"><CircleAlert size={18} /><span>Configure as credenciais do Google em <code>.env</code> para habilitar o login corporativo.</span></div>}
-              {error && <p className="form-error" role="alert">{error}</p>}
-              <p className="invite-hint"><ShieldCheck size={15} /> Somente contas convidadas pela administração podem entrar.</p>
-              <div className="login-divider"><span>OU</span></div>
-              <button className="secondary-button admin-access" type="button" onClick={() => { setAdminMode(true); setError('') }}><KeyRound size={16} /> Acesso do administrador <ArrowUpRight size={15} /></button>
+          {sessionNotice && (
+            <div className="despojado-alert session-alert" role="alert">
+              <CircleAlert size={16} />
+              <span>{sessionNotice}</span>
             </div>
           )}
+
+          {!apiAvailable && (
+            <div className="despojado-alert api-alert" role="alert">
+              <CircleAlert size={16} />
+              <span>Servidor ou banco temporariamente indisponível. Verifique a conexão.</span>
+            </div>
+          )}
+
+          <div className="login-panel-card">
+            <div className="login-panel-head">
+              <span className="eyebrow">{adminMode ? 'ACESSO RESTRITO' : 'PORTAL CORPORATIVO'}</span>
+              <h2>{adminMode ? 'Acesso Administrativo' : 'Bem-vindo de volta'}</h2>
+              <p>
+                {adminMode
+                  ? 'Informe seu e-mail e senha de administrador para gerenciar a plataforma.'
+                  : 'Acesse seu ambiente de trabalho com a conta Google corporativa.'}
+              </p>
+            </div>
+
+            {adminMode ? (
+              <form className="despojado-admin-form" onSubmit={handleAdminSubmit}>
+                <label htmlFor="admin-email">E-mail de administrador</label>
+                <div className="input-wrap">
+                  <Mail size={16} />
+                  <input
+                    id="admin-email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="admin@atech.local"
+                    required
+                  />
+                </div>
+
+                <label htmlFor="admin-password">Senha de acesso</label>
+                <div className="input-wrap">
+                  <KeyRound size={16} />
+                  <input
+                    id="admin-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="••••••••••••"
+                    required
+                  />
+                </div>
+
+                {error && <p className="form-error" role="alert">{error}</p>}
+
+                <button className="primary-button login-submit-btn" type="submit" disabled={busy}>
+                  {busy ? 'Verificando...' : 'Entrar na administração'}
+                  <ArrowUpRight size={16} />
+                </button>
+
+                <button
+                  className="text-button login-back-link"
+                  type="button"
+                  onClick={() => {
+                    setAdminMode(false)
+                    setError('')
+                  }}
+                >
+                  ← Voltar ao login corporativo (Google)
+                </button>
+              </form>
+            ) : (
+              <div className="despojado-sso-wrap">
+                <div className="authorized-domain-card">
+                  <div className="domain-indicator-pulse" />
+                  <div className="domain-text">
+                    <small>DOMÍNIO AUTORIZADO</small>
+                    <strong>@{domain}</strong>
+                  </div>
+                  <ShieldCheck size={16} className="domain-shield-icon" />
+                </div>
+
+                {googleClientId ? (
+                  <div className="google-auth-button-area">
+                    <GoogleLogin
+                      onSuccess={handleGoogleSuccess}
+                      onError={() => setError('Falha ao conectar com o Google. Tente novamente.')}
+                      text="continue_with"
+                      theme="outline"
+                      shape="rectangular"
+                      size="large"
+                      width="100%"
+                      useOneTap={false}
+                    />
+                  </div>
+                ) : (
+                  <div className="despojado-setup-note">
+                    <CircleAlert size={17} />
+                    <span>Configure <code>VITE_GOOGLE_CLIENT_ID</code> para habilitar o login corporativo.</span>
+                  </div>
+                )}
+
+                {error && <p className="form-error" role="alert">{error}</p>}
+
+                <div className="invited-only-banner">
+                  <UsersRound size={14} />
+                  <span>Acesso liberado somente para colaboradores convidados pela administração.</span>
+                </div>
+              </div>
+            )}
+
+            <div className="panel-discreet-footer">
+              <span>AC Engenharia · ATech</span>
+              {!adminMode && (
+                <button
+                  type="button"
+                  className="despojado-discreet-admin-link"
+                  onClick={() => {
+                    setAdminMode(true)
+                    setError('')
+                  }}
+                  title="Acesso de manutenção com credenciais"
+                  aria-label="Acesso restrito de manutenção"
+                >
+                  <KeyRound size={11} />
+                  <span>Acesso com credenciais</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="login-subfooter">
+            <span>Precisa de acesso? Solicite convite ao seu gestor ou suporte técnico.</span>
+            <button
+              type="button"
+              className="login-privacy-link"
+              onClick={() => setShowPrivacy(true)}
+            >
+              Privacidade & Termos LGPD
+            </button>
+          </div>
         </div>
-        <div className="login-panel-footer"><span>Precisa de acesso? Solicite um convite ao administrador.</span><span>Privacidade <i /> Segurança</span></div>
       </section>
+
+      {showPrivacy && (
+        <Suspense fallback={null}>
+          <PrivacyPolicyModal onClose={() => setShowPrivacy(false)} />
+        </Suspense>
+      )}
     </main>
   )
 }
 
 function Brand() {
-  return <div className="brand-lockup"><span className="brand-mark"><Wrench size={19} strokeWidth={2.2} /></span><span className="brand-name">ATech<span>.</span></span></div>
+  return (
+    <div className="brand-lockup">
+      <span className="brand-mark brand-logo-mark">
+        <img src="/logo-ac.png" alt="AC Engenharia" className="brand-logo-img" />
+      </span>
+      <span className="brand-name">ATech<span>.</span></span>
+    </div>
+  )
 }
 
 function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; canViewOtherPersonalActivities: boolean; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
-  const [pageState, setPageState] = useState<AdminPage>(readPageFromLocation)
+  const [pageState, setPageState] = useState<AppPage>(readPageFromLocation)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('atech.sidebar-collapsed') === 'true')
   const [users, setUsers] = useState<ManagedUser[]>([])
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([])
   const [search, setSearch] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
@@ -302,10 +570,22 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   const [unreadNotifications, setUnreadNotifications] = useState(0)
   const [showNotifications, setShowNotifications] = useState(false)
   const [initialTicketId, setInitialTicketId] = useState<string | null>(null)
+  const [initialProcessId, setInitialProcessId] = useState<string | null>(null)
+  const [initialCollaboratorId, setInitialCollaboratorId] = useState<string | null>(null)
   const [showProfile, setShowProfile] = useState(false)
+  const [showVersionModal, setShowVersionModal] = useState(false)
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false)
+
+  // Command Palette (Ctrl + K)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandResults, setCommandResults] = useState<QuickSearchResultItem[]>([])
+  const [commandSearching, setCommandSearching] = useState(false)
+
   const availablePages: { key: AdminPage; label: string }[] = [
     { key: 'home', label: 'Início' },
     { key: 'tickets', label: 'Chamados' },
+    { key: 'letter-filling', label: 'Preenchimento de cartas' },
     { key: 'schedule', label: 'Programação' },
     { key: 'collaborators', label: 'Colaboradores' },
     { key: 'inventory', label: 'Estoque' },
@@ -315,21 +595,23 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'legal-processes', label: 'Processos Jurídicos' },
     { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
-  const canAccessPage = useCallback((key: AdminPage) => key === 'letter-filling'
-    ? user.role === 'admin' || pageAccess.includes('tickets')
-    : key === 'accesses'
-      ? user.role === 'admin'
-      : user.role === 'admin' || pageAccess.includes(key), [pageAccess, user.role])
-  const page: AdminPage = canAccessPage(pageState) ? pageState : 'home'
-  const setPage = useCallback((nextPage: AdminPage) => {
-    if (!canAccessPage(nextPage)) return
+  const canAccessPage = useCallback((key: AdminPage) => key === 'accesses'
+    ? user.role === 'admin'
+    : user.role === 'admin' || pageAccess.includes(key), [pageAccess, user.role])
+  const isForbidden = pageState !== 'not-found' && !canAccessPage(pageState)
+  const page: AppPage = pageState
+  const setPage = useCallback((nextPage: AppPage) => {
+    if (nextPage !== 'not-found' && !canAccessPage(nextPage)) return
     setPageState(nextPage)
     const url = new URL(window.location.href)
     if (nextPage === 'home') {
       url.searchParams.delete('page')
-    } else {
+    } else if (nextPage !== 'not-found') {
       url.searchParams.set('page', nextPage)
     }
+    if (nextPage !== 'tickets') url.searchParams.delete('ticketId')
+    if (nextPage !== 'legal-processes') url.searchParams.delete('processId')
+    if (nextPage !== 'collaborators') url.searchParams.delete('collaboratorId')
     const target = `${url.pathname}${url.search}${url.hash}`
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) {
       window.history.pushState({ page: nextPage }, '', target)
@@ -342,19 +624,35 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   useEffect(() => {
     function handlePopState() {
       const next = readPageFromLocation()
-      if (canAccessPage(next)) {
-        setPageState(next)
-      } else {
-        setPageState('home')
-      }
+      setPageState(next)
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [canAccessPage])
+  }, [])
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandOpen(false)
+    setCommandQuery('')
+    setCommandResults([])
+    setCommandSearching(false)
+  }, [])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        if (commandOpen) {
+          closeCommandPalette()
+        } else {
+          setCommandOpen(true)
+        }
+        return
+      }
       if (event.key !== 'Escape') return
+      if (commandOpen) {
+        closeCommandPalette()
+        return
+      }
       if (showNotifications) {
         setShowNotifications(false)
         return
@@ -366,20 +664,46 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showNotifications])
+  }, [closeCommandPalette, commandOpen, showNotifications])
+
+  useEffect(() => {
+    const trimmed = commandQuery.trim()
+    if (!commandOpen || trimmed.length < 2) {
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setCommandSearching(true)
+      apiRequest<{ items: QuickSearchResultItem[] }>(`/api/home/quick-search?q=${encodeURIComponent(trimmed)}`)
+        .then((res) => {
+          if (!cancelled) setCommandResults(res.items)
+        })
+        .catch(() => {
+          if (!cancelled) setCommandResults([])
+        })
+        .finally(() => {
+          if (!cancelled) setCommandSearching(false)
+        })
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [commandOpen, commandQuery])
 
   const loadNotifications = useCallback(async () => {
-    if (user.role !== 'admin' && !pageAccess.includes('tickets')) return
     try {
       const result = await apiRequest<{ notifications: UserNotification[]; unreadCount: number }>('/api/team/notifications')
       setNotifications(result.notifications)
       setUnreadNotifications(result.unreadCount)
-    } catch (error) {
-      setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar as notificações.' })
+    } catch {
+      // Silencia erros de background polling
     }
-  }, [pageAccess, user.role])
+  }, [])
 
   const clearInitialTicket = useCallback(() => setInitialTicketId(null), [])
+  const clearInitialProcess = useCallback(() => setInitialProcessId(null), [])
+  const clearInitialCollaborator = useCallback(() => setInitialCollaboratorId(null), [])
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadNotifications(), 0)
@@ -391,13 +715,19 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   }, [loadNotifications])
 
   async function openNotification(notification: UserNotification) {
-    if (!canAccessPage('tickets')) return
     try {
-      await apiRequest(`/api/team/notifications/${notification.id}/read`, { method: 'PATCH' })
+      await apiRequest(`/api/team/notifications/${encodeURIComponent(notification.id)}/read`, { method: 'PATCH' })
       await loadNotifications()
-      setInitialTicketId(notification.ticket_id)
       setShowNotifications(false)
-      openPage('tickets')
+      if ((notification.source === 'legal-process' || notification.process_id) && canAccessPage('legal-processes')) {
+        setInitialProcessId(notification.process_id ?? null)
+        openPage('legal-processes')
+        return
+      }
+      if (notification.ticket_id && canAccessPage('tickets')) {
+        setInitialTicketId(notification.ticket_id)
+        openPage('tickets')
+      }
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível abrir a notificação.' })
     }
@@ -415,8 +745,12 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   async function loadUsers() {
     setLoading(true)
     try {
-      const result = await apiRequest<{ users: ManagedUser[] }>('/api/users')
-      setUsers(result.users)
+      const [usersResult, logsResult] = await Promise.all([
+        apiRequest<{ users: ManagedUser[] }>('/api/users'),
+        apiRequest<{ logs: AuditLogEntry[] }>('/api/users/audit-logs').catch(() => ({ logs: [] })),
+      ])
+      setUsers(usersResult.users)
+      setAuditLogs(logsResult.logs)
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Falha ao carregar usuários.' })
     } finally { setLoading(false) }
@@ -425,8 +759,16 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   useEffect(() => {
     if (user.role !== 'admin') return
     let cancelled = false
-    apiRequest<{ users: ManagedUser[] }>('/api/users')
-      .then((result) => { if (!cancelled) setUsers(result.users) })
+    Promise.all([
+      apiRequest<{ users: ManagedUser[] }>('/api/users'),
+      apiRequest<{ logs: AuditLogEntry[] }>('/api/users/audit-logs').catch(() => ({ logs: [] })),
+    ])
+      .then(([usersResult, logsResult]) => {
+        if (!cancelled) {
+          setUsers(usersResult.users)
+          setAuditLogs(logsResult.logs)
+        }
+      })
       .catch((error: unknown) => {
         if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Falha ao carregar usuários.' })
       })
@@ -477,6 +819,8 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
       setUsers((current) => current.map((entry) => entry.id === member.id
         ? { ...entry, pageAccess: pages, canAccessLegalProcesses: pages.includes('legal-processes') }
         : entry))
+      const logsResult = await apiRequest<{ logs: AuditLogEntry[] }>('/api/users/audit-logs').catch(() => null)
+      if (logsResult) setAuditLogs(logsResult.logs)
       setNotice({ kind: 'success', text: `Acesso à página ${enabled ? 'liberado' : 'removido'} para ${member.displayName}.` })
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar o acesso à página.' })
@@ -520,9 +864,25 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
       setUsers((current) => current.map((entry) => entry.id === member.id
         ? { ...entry, canViewOtherPersonalActivities: enabled }
         : entry))
+      const logsResult = await apiRequest<{ logs: AuditLogEntry[] }>('/api/users/audit-logs').catch(() => null)
+      if (logsResult) setAuditLogs(logsResult.logs)
       setNotice({ kind: 'success', text: `Visualização de outros quadros ${enabled ? 'liberada' : 'removida'} para ${member.displayName}.` })
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar a permissão dos quadros.' })
+    }
+  }
+
+  function handleSelectQuickSearchItem(item: QuickSearchResultItem) {
+    closeCommandPalette()
+    if (item.kind === 'ticket' && canAccessPage('tickets')) {
+      setInitialTicketId(item.id)
+      openPage('tickets')
+    } else if (item.kind === 'legal-process' && canAccessPage('legal-processes')) {
+      setInitialProcessId(item.id)
+      openPage('legal-processes')
+    } else if (item.kind === 'collaborator' && canAccessPage('collaborators')) {
+      setInitialCollaboratorId(item.id)
+      openPage('collaborators')
     }
   }
 
@@ -543,7 +903,27 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     'legal-processes': 'Processos Jurídicos',
     'personal-activities': 'Atividades pessoais',
     inventory: 'Gestão de estoque',
+    logs: 'Auditoria & Logs',
   }
+  const currentTitle = page === 'not-found'
+    ? 'Página não encontrada'
+    : isForbidden
+      ? 'Acesso restrito'
+      : pageTitles[page]
+
+  const allNavigablePages: { key: AdminPage; label: string }[] = [
+    ...availablePages,
+    ...(user.role === 'admin'
+      ? [
+          { key: 'accesses' as const, label: 'Acessos e Configurações' },
+          { key: 'logs' as const, label: 'Auditoria & Logs' },
+        ]
+      : []),
+  ].filter((entry) => canAccessPage(entry.key))
+
+  const matchingNavPages = commandQuery.trim()
+    ? allNavigablePages.filter((entry) => entry.label.toLowerCase().includes(commandQuery.trim().toLowerCase()))
+    : allNavigablePages
 
   return (
     <main className={`workspace-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -563,19 +943,109 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           {canAccessPage('personal-activities') && <button type="button" title="Atividades pessoais" aria-label="Ir para atividades pessoais" className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`} onClick={() => setPage('personal-activities')}><ListTodo size={17} /><span>Atividades pessoais</span></button>}
           {canAccessPage('information') && <button type="button" title="Informações" aria-label="Ir para informações" className={`nav-item ${page === 'information' ? 'nav-item-active' : ''}`} onClick={() => setPage('information')}><Info size={17} /><span>Informações</span></button>}
           {user.role === 'admin' && <button type="button" title="Acessos" aria-label="Ir para acessos" className={`nav-item ${page === 'accesses' ? 'nav-item-active' : ''}`} onClick={() => setPage('accesses')}><UsersRound size={17} /><span>Acessos</span></button>}
+          {user.role === 'admin' && <button type="button" title="Auditoria & Logs" aria-label="Ir para auditoria e logs" className={`nav-item ${page === 'logs' ? 'nav-item-active' : ''}`} onClick={() => setPage('logs')}><History size={17} /><span>Auditoria & Logs</span></button>}
         </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-security"><ShieldCheck size={16} /><span><strong>Acesso protegido</strong><small>Domínio @{domain}</small></span></div>
+          <button
+            className="sidebar-version-pill-btn"
+            type="button"
+            onClick={() => setShowVersionModal(true)}
+            title={`Versão ${APP_CURRENT_VERSION} · Clique para ver o histórico e notas de atualização`}
+          >
+            <span className="sidebar-version-badge">{APP_CURRENT_VERSION}</span>
+            <span className="sidebar-version-text">Notas de versão</span>
+          </button>
           <button className="profile-row" type="button" onClick={() => setShowProfile(true)} title="Editar perfil"><span className="profile-avatar">{user.displayName.slice(0, 1).toUpperCase()}</span><span className="profile-info"><strong>{user.displayName}</strong><small>Editar perfil e assinatura</small></span><Pencil size={15} /></button>
         </div>
       </aside>
 
       <section className="workspace-main" id="usuarios">
-        <header className="topbar"><div className="breadcrumbs">Espaço de trabalho <span>/</span> <strong>{pageTitles[page]}</strong></div><div className="topbar-right"><span className="live-indicator"><i /> Sistema operacional</span><span className="topbar-divider" /><div className="notification-center"><button className="notification-trigger" type="button" aria-label={`Notificações${unreadNotifications ? `, ${unreadNotifications} não lidas` : ''}`} aria-expanded={showNotifications} onClick={() => { setShowNotifications((value) => !value); void loadNotifications() }}><Bell size={17} />{unreadNotifications > 0 && <span className="notification-badge">{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>}</button>{showNotifications && <div className="notification-popover"><header><div><strong>Notificações</strong><small>{unreadNotifications} não lidas</small></div>{unreadNotifications > 0 && <button className="text-action-btn" type="button" onClick={() => void markAllNotificationsRead()}>Marcar todas como lidas</button>}</header>{notifications.length ? <ul>{notifications.map((notification) => <li key={notification.id}><button type="button" className={notification.read_at ? '' : 'is-unread'} onClick={() => void openNotification(notification)}><strong>{notification.message}</strong><span>#{notification.protocol} · {notification.actor_name}</span><small>{formatDate(notification.created_at)}</small></button></li>)}</ul> : <p>Você não tem notificações.</p>}</div>}</div><span className="topbar-admin">{user.role === 'admin' ? 'Administração' : 'Workspace'}</span></div></header>
+        <header className="topbar">
+          <div className="breadcrumbs">Espaço de trabalho <span>/</span> <strong>{currentTitle}</strong></div>
+          <div className="topbar-right">
+            <button
+              type="button"
+              className="topbar-search-trigger"
+              onClick={() => setCommandOpen(true)}
+              title="Busca rápida global (Ctrl + K)"
+            >
+              <Search size={14} />
+              <span>Buscar chamado, processo ou página...</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+            <span className="live-indicator"><i /> Sistema operacional</span>
+            <span className="topbar-divider" />
+            <div className="notification-center">
+              <button
+                className="notification-trigger"
+                type="button"
+                aria-label={`Notificações${unreadNotifications ? `, ${unreadNotifications} não lidas` : ''}`}
+                aria-expanded={showNotifications}
+                onClick={() => { setShowNotifications((value) => !value); void loadNotifications() }}
+              >
+                <Bell size={17} />
+                {unreadNotifications > 0 && <span className="notification-badge">{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>}
+              </button>
+              {showNotifications && (
+                <div className="notification-popover">
+                  <header>
+                    <div>
+                      <strong>Notificações</strong>
+                      <small>{unreadNotifications} não lidas</small>
+                    </div>
+                    {unreadNotifications > 0 && (
+                      <button className="text-action-btn" type="button" onClick={() => void markAllNotificationsRead()}>
+                        Marcar todas como lidas
+                      </button>
+                    )}
+                  </header>
+                  {notifications.length ? (
+                    <ul>
+                      {notifications.map((notification) => (
+                        <li key={notification.id}>
+                          <button
+                            type="button"
+                            className={notification.read_at ? '' : 'is-unread'}
+                            onClick={() => void openNotification(notification)}
+                          >
+                            <strong>{notification.message}</strong>
+                            <span>
+                              {notification.source === 'legal-process'
+                                ? `Jurídico · ${notification.protocol}`
+                                : `#${notification.protocol}`}
+                              {' · '}
+                              {notification.actor_name}
+                            </span>
+                            <small>{formatDate(notification.created_at)}</small>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>Você não tem notificações.</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <span className="topbar-admin">{user.role === 'admin' ? 'Administração' : 'Workspace'}</span>
+          </div>
+        </header>
         <div className="page-content">
-          <Suspense fallback={<div className="page-loading"><span className="page-loading-spinner" />Carregando página...</div>}>
-          {page === 'home' ? (
-            <HomeDashboard user={user} users={users} loading={loading} pageAccess={pageAccess} onOpenCollaborators={() => openPage('collaborators')} onOpenPage={openPage} />
+          <Suspense fallback={<ATechLoading message="Carregando página..." subtitle="Preparando ambiente de trabalho..." />}>
+          {page === 'not-found' ? (
+            <NotFoundPage onGoHome={() => openPage('home')} onGoTickets={() => openPage('tickets')} />
+          ) : isForbidden ? (
+            <NotFoundPage kind="forbidden" pageKey={page} onGoHome={() => openPage('home')} onGoTickets={() => openPage('tickets')} />
+          ) : page === 'home' ? (
+            <HomeDashboard
+              user={user}
+              users={users}
+              loading={loading}
+              pageAccess={pageAccess}
+              onOpenCollaborators={() => openPage('collaborators')}
+              onOpenPage={openPage}
+            />
           ) : page === 'api-validation' && canAccessPage('api-validation') ? (
             <ApiValidationPage onGoToTickets={() => setPage('tickets')} />
           ) : page === 'tickets' && canAccessPage('tickets') ? (
@@ -589,9 +1059,12 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           ) : page === 'letter-filling' && canAccessPage('letter-filling') ? (
             <TicketLetterPage />
           ) : page === 'schedule' && canAccessPage('schedule') ? (
-            <ProgrammingPage />
+            <ProgrammingPage isAdmin={user.role === 'admin'} />
           ) : page === 'collaborators' && canAccessPage('collaborators') ? (
-            <CollaboratorsPage />
+            <CollaboratorsPage
+              initialCollaboratorId={initialCollaboratorId}
+              onCollaboratorOpened={clearInitialCollaborator}
+            />
           ) : page === 'inventory' && canAccessPage('inventory') ? (
             <InventoryPage />
           ) : page === 'information' && canAccessPage('information') ? (
@@ -599,13 +1072,34 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           ) : page === 'warranties' && canAccessPage('warranties') ? (
             <WarrantyManagementPage />
           ) : page === 'legal-processes' && canAccessPage('legal-processes') ? (
-            <LegalProcessesPage currentUser={{ id: user.id, role: user.role }} />
+            <LegalProcessesPage
+              currentUser={{ id: user.id, role: user.role }}
+              initialProcessId={initialProcessId}
+              onProcessOpened={clearInitialProcess}
+            />
           ) : page === 'personal-activities' && canAccessPage('personal-activities') ? (
             <PersonalActivitiesPage currentUser={user} canViewOtherActivities={canViewOtherPersonalActivities} />
+          ) : page === 'logs' && user.role === 'admin' ? (
+            <AuditLogsPage />
           ) : page === 'accesses' ? (
             <>
-          <div className="page-heading-row"><div><div className="eyebrow page-eyebrow">CONTROLE DE ACESSO</div><h1>Gestão de usuários</h1><p>Convide e acompanhe quem pode acessar a ATech.</p></div><span className="domain-badge"><ShieldCheck size={15} /> @{domain}</span></div>
+          <div className="page-heading-row">
+            <div>
+              <div className="eyebrow page-eyebrow">CONFIGURAÇÕES E PERMISSÕES</div>
+              <h1>Acessos e configurações gerais</h1>
+              <p>Gerencie pessoas, permissões de acesso e personalize o filtro de contagem da página inicial.</p>
+            </div>
+            <span className="domain-badge"><ShieldCheck size={15} /> @{domain}</span>
+          </div>
           {notice && <div className={`notice notice-${notice.kind}`} role="status"><span className="notice-symbol">{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" aria-label="Fechar aviso" onClick={() => setNotice(null)}>×</button></div>}
+
+          <Suspense fallback={<div className="table-message">Carregando configurações...</div>}>
+            <HomepageTicketsFilterSettings />
+          </Suspense>
+
+          <Suspense fallback={null}>
+            <SessionTimeoutSettings />
+          </Suspense>
 
           <section className="metrics" aria-label="Resumo de acessos">
             <article className="metric"><span className="metric-icon"><UsersRound size={17} /></span><span className="metric-label">Pessoas com acesso</span><strong>{users.length}</strong><small>Inclui a conta administradora</small></article>
@@ -676,7 +1170,52 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
             </tbody></table></div>
             <div className="table-footer"><span><ShieldCheck size={14} /> A autenticação da equipe exige Google Workspace e convite ativo.</span><button className="refresh-button" type="button" onClick={() => void loadUsers()}>Atualizar lista <ArrowUpRight size={14} /></button></div>
           </section>
-          <footer className="workspace-footer"><span>ATech · Gestão de acesso</span><span>Controle de administradores <i /> Domínio verificado</span></footer>
+
+          {auditLogs.length > 0 && (
+            <section className="directory-section audit-log-section" aria-labelledby="audit-log-heading">
+              <div className="directory-heading">
+                <div>
+                  <h2 id="audit-log-heading"><History size={16} /> Trilha de auditoria recente</h2>
+                  <p>Registro automático de alterações de permissões, configurações globais e exclusões críticas.</p>
+                </div>
+              </div>
+              <div className="audit-log-list">
+                {auditLogs.slice(0, 15).map((log) => (
+                  <div className="audit-log-item" key={log.id}>
+                    <div className="audit-log-main">
+                      <strong>{log.summary}</strong>
+                      <small>Por {log.actorName || 'Sistema'} · {log.resourceType}</small>
+                    </div>
+                    <time className="audit-log-time">{formatDateTime(log.createdAt)}</time>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <footer className="workspace-footer">
+            <span>
+              AC Engenharia · ATech ·{' '}
+              <button
+                type="button"
+                className="footer-version-btn"
+                onClick={() => setShowVersionModal(true)}
+                title="Ver histórico de versões e notas de lançamento"
+              >
+                {APP_CURRENT_VERSION}
+              </button>
+              <button
+                type="button"
+                className="version-badge-button"
+                style={{ marginLeft: 6 }}
+                onClick={() => setShowPrivacyModal(true)}
+                title="Política de Privacidade & Proteção de Dados (LGPD)"
+              >
+                Privacidade LGPD
+              </button>
+            </span>
+            <span>Controle de administradores <i /> Domínio verificado</span>
+          </footer>
             </>
           ) : (
             <FutureModulePage page={page} />
@@ -684,106 +1223,95 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           </Suspense>
         </div>
       </section>
-      {showProfile && <Suspense fallback={null}><UserProfileModal onClose={() => setShowProfile(false)} onSaved={onUserUpdated} onSignOut={onSignOut} /></Suspense>}
-    </main>
-  )
-}
 
-function HomeDashboard({ user, users, loading, pageAccess, onOpenCollaborators, onOpenPage }: {
-  user: SessionUser
-  users: ManagedUser[]
-  loading: boolean
-  pageAccess: AdminPage[]
-  onOpenCollaborators: () => void
-  onOpenPage: (page: AdminPage) => void
-}) {
-  const canAccess = (key: AdminPage) => user.role === 'admin' || pageAccess.includes(key)
-  const canAccessCollaborators = canAccess('collaborators')
-  const activeUsers = users.filter((member) => member.role === 'member' && member.status === 'active').length
-  const pendingInvites = users.filter((member) => member.status === 'invited').length
-  const [celebrations, setCelebrations] = useState<DashboardCelebrations | null>(null)
-  const [celebrationsError, setCelebrationsError] = useState('')
-
-  useEffect(() => {
-    if (!canAccessCollaborators) return
-    let cancelled = false
-    apiRequest<DashboardCelebrations>('/api/collaborators/birthdays')
-      .then((result) => { if (!cancelled) setCelebrations(result) })
-      .catch((error: unknown) => {
-        if (!cancelled) setCelebrationsError(error instanceof Error ? error.message : 'Não foi possível carregar os aniversários.')
-      })
-    return () => { cancelled = true }
-  }, [canAccessCollaborators])
-
-  const renderCelebrants = (people: CelebrationPerson[], emptyMessage: string, includeYear = false) => (
-    people.length ? people.map((person) => {
-      const month = person.month ?? (person.admissionDate ? Number(person.admissionDate.slice(5, 7)) : 0)
-      const admissionDateLabel = person.admissionDate
-        ? `${person.admissionDate.slice(8, 10)}/${person.admissionDate.slice(5, 7)}/${person.admissionDate.slice(0, 4)}`
-        : ''
-      const tenureLabel = `${person.years ?? 0} ${person.years === 1 ? 'ano' : 'anos'}, ${person.months ?? 0} ${person.months === 1 ? 'mês' : 'meses'} e ${person.days ?? 0} ${person.days === 1 ? 'dia' : 'dias'}`
-      return (
-        <div className="celebrant-row" key={person.id}>
-          <span className={`celebrant-day ${includeYear ? 'celebrant-date-full' : ''}`}>{String(person.day).padStart(2, '0')}/{String(month).padStart(2, '0')}{includeYear ? `/${person.year ?? person.admissionDate?.slice(0, 4) ?? ''}` : ''}</span>
-          <span className="celebrant-identity"><strong>{person.name}</strong><small>{person.role.replaceAll('_', ' ')}{includeYear && person.admissionDate ? ` · Admissão ${admissionDateLabel} · ${tenureLabel} de empresa` : ''}</small></span>
+      {commandOpen && (
+        <div className="command-palette-backdrop" role="dialog" aria-modal="true" aria-label="Busca rápida global" onClick={closeCommandPalette}>
+          <div className="command-palette-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="command-palette-header">
+              <Search size={17} />
+              <input
+                type="search"
+                autoFocus
+                value={commandQuery}
+                onChange={(event) => {
+                  const nextValue = event.target.value
+                  setCommandQuery(nextValue)
+                  if (nextValue.trim().length < 2) {
+                    setCommandResults([])
+                    setCommandSearching(false)
+                  }
+                }}
+                placeholder="Buscar chamado (#protocolo, obra), processo jurídico (CNJ, parte), colaborador ou página..."
+                aria-label="Pesquisar no sistema"
+              />
+              <button type="button" className="command-palette-close" onClick={closeCommandPalette}>ESC</button>
+            </header>
+            <div className="command-palette-body">
+              {commandSearching && <p className="command-palette-hint">Buscando registros...</p>}
+              {commandResults.length > 0 && (
+                <div className="command-palette-group">
+                  <span className="command-palette-group-title">REGISTROS ENCONTRADOS</span>
+                  {commandResults.map((item) => (
+                    <button
+                      type="button"
+                      key={`${item.kind}-${item.id}`}
+                      className="command-palette-item"
+                      onClick={() => handleSelectQuickSearchItem(item)}
+                    >
+                      <span className={`command-palette-badge is-${item.kind}`}>
+                        {item.kind === 'ticket' ? 'Chamado' : item.kind === 'legal-process' ? 'Jurídico' : 'Colaborador'}
+                      </span>
+                      <div className="command-palette-item-copy">
+                        <strong>{item.title}</strong>
+                        {item.subtitle && <small>{item.subtitle}</small>}
+                      </div>
+                      <ArrowUpRight size={14} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {matchingNavPages.length > 0 && (
+                <div className="command-palette-group">
+                  <span className="command-palette-group-title">NAVEGAÇÃO RÁPIDA</span>
+                  {matchingNavPages.map((entry) => (
+                    <button
+                      type="button"
+                      key={entry.key}
+                      className="command-palette-item"
+                      onClick={() => {
+                        closeCommandPalette()
+                        openPage(entry.key)
+                      }}
+                    >
+                      <span className="command-palette-badge is-page">Página</span>
+                      <div className="command-palette-item-copy">
+                        <strong>{entry.label}</strong>
+                      </div>
+                      <ArrowUpRight size={14} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!commandSearching && commandResults.length === 0 && matchingNavPages.length === 0 && (
+                <p className="command-palette-hint">Nenhum resultado encontrado para “{commandQuery}”.</p>
+              )}
+            </div>
+          </div>
         </div>
-      )
-    }) : <p className="celebration-empty">{emptyMessage}</p>
-  )
+      )}
 
-  return (
-    <div className="home-dashboard">
-      <section className="dashboard-welcome">
-        <div className="welcome-copy"><span className="eyebrow">ESPAÇO DE TRABALHO · ATECH</span><h1>Olá, {user.displayName.split(' ')[0]}.</h1><p>Visão geral da assistência técnica e dos acessos da equipe.</p></div>
-        <div className="welcome-mark" aria-hidden="true"><Wrench size={30} /></div>
-        <span className="welcome-status"><i /> AMBIENTE SEGURO</span>
-      </section>
-
-      <div className="dashboard-section-title"><div><span className="eyebrow">AGORA</span><h2>Resumo da equipe</h2></div>{canAccessCollaborators && <button className="text-link" type="button" onClick={onOpenCollaborators}>Gerenciar colaboradores <ArrowRight size={15} /></button>}</div>
-      <section className="dashboard-metrics" aria-label="Resumo da equipe">
-        <article className="dashboard-metric"><span className="metric-icon"><ContactRound size={17} /></span><span className="metric-label">Contas cadastradas</span><strong>{loading ? '—' : users.filter((member) => member.role === 'member').length}</strong><small>Convites e acessos da equipe</small></article>
-        <article className="dashboard-metric"><span className="metric-icon"><Check size={17} /></span><span className="metric-label">Acessos ativos</span><strong>{loading ? '—' : activeUsers}</strong><small>Contas corporativas liberadas</small></article>
-        <article className="dashboard-metric dashboard-metric-pending"><span className="metric-icon"><Clock3 size={17} /></span><span className="metric-label">Convites pendentes</span><strong>{loading ? '—' : pendingInvites}</strong><small>Aguardando primeiro acesso</small></article>
-      </section>
-
-      {canAccessCollaborators && <>
-      <div className="dashboard-section-title celebrations-title"><div><span className="eyebrow">DATAS ESPECIAIS</span><h2>Aniversários da equipe</h2></div></div>
-      <section className="celebration-grid" aria-label="Aniversários da equipe">
-        <article className="celebration-card"><div className="celebration-card-heading"><CalendarDays size={16} /><div><h3>Aniversários pessoais</h3><small>Datas em dia/mês, sem ano de nascimento</small></div></div>
-          {celebrationsError ? <p className="celebration-error">{celebrationsError}</p> : celebrations ? <>
-            {(['previous', 'current', 'next'] as const).map((period) => (
-              <div className="celebration-subgroup" key={period}>
-                <h4>{period === 'previous' ? 'Mês anterior' : period === 'current' ? 'Este mês' : 'Próximo mês'} · {celebrations.birthdays[period].label}</h4>
-                {renderCelebrants(celebrations.birthdays[period].people, 'Nenhum aniversário.', false)}
-              </div>
-            ))}
-          </> : <p className="celebration-empty">Carregando...</p>}
-        </article>
-        <article className="celebration-card"><div className="celebration-card-heading"><ContactRound size={16} /><div><h3>Tempo de empresa · {celebrations?.workAnniversaries.current.label ?? 'este mês'}</h3><small>Aniversários de vínculo</small></div></div>
-          {celebrationsError ? <p className="celebration-error">{celebrationsError}</p> : celebrations ? renderCelebrants(celebrations.workAnniversaries.current.people, 'Nenhum aniversário de empresa neste mês.', true) : <p className="celebration-empty">Carregando...</p>}
-        </article>
-        <article className="celebration-card celebration-card-nearby"><div className="celebration-card-heading"><CalendarDays size={16} /><div><h3>Tempo de empresa · meses próximos</h3><small>Antes e depois deste mês</small></div></div>
-          {celebrationsError ? <p className="celebration-error">{celebrationsError}</p> : celebrations ? <>
-            <div className="celebration-subgroup"><h4>Mês anterior · {celebrations.workAnniversaries.previous.label}</h4>{renderCelebrants(celebrations.workAnniversaries.previous.people, 'Nenhum aniversário.', true)}</div>
-            <div className="celebration-subgroup"><h4>Próximo mês · {celebrations.workAnniversaries.next.label}</h4>{renderCelebrants(celebrations.workAnniversaries.next.people, 'Nenhum aniversário.', true)}</div>
-          </> : <p className="celebration-empty">Carregando...</p>}
-        </article>
-      </section>
-      </>}
-
-      <div className="dashboard-section-title modules-title"><div><span className="eyebrow">PLATAFORMA</span><h2>Áreas de trabalho</h2></div></div>
-      <section className="module-grid" aria-label="Áreas da plataforma">
-        {canAccessCollaborators && <button className="module-item module-item-live" type="button" onClick={onOpenCollaborators}><span className="module-icon"><ContactRound size={18} /></span><span className="module-copy"><strong>Colaboradores</strong><small>Acessos, convites e permissões</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('inventory') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('inventory')}><span className="module-icon"><Package size={18} /></span><span className="module-copy"><strong>Estoque</strong><small>Insumos, EPI e ferramentas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('tickets') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('tickets')}><span className="module-icon"><ClipboardList size={17} /></span><span className="module-copy"><strong>Chamados</strong><small>Quadro Kanban e atendimentos</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('schedule') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('schedule')}><span className="module-icon"><CalendarDays size={17} /></span><span className="module-copy"><strong>Programação</strong><small>Agenda e atividades técnicas</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('api-validation') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('api-validation')}><span className="module-icon"><Zap size={17} /></span><span className="module-copy"><strong>Validação API</strong><small>Integração CVCRM e carga CSV</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('warranties') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('warranties')}><span className="module-icon"><ShieldCheck size={17} /></span><span className="module-copy"><strong>Prazos de garantia</strong><small>Subassuntos de assistência técnica</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('personal-activities') && <button className="module-item module-item-live" type="button" onClick={() => onOpenPage('personal-activities')}><span className="module-icon"><ListTodo size={17} /></span><span className="module-copy"><strong>Atividades pessoais</strong><small>Seu quadro pessoal de atividades</small></span><ArrowUpRight size={16} className="module-arrow" /></button>}
-        {canAccess('information') && <button className="module-item" type="button" onClick={() => onOpenPage('information')}><span className="module-icon"><Info size={17} /></span><span className="module-copy"><strong>Informações</strong><small>Referências e dados operacionais</small></span><span className="module-tag">EM PREPARAÇÃO</span></button>}
-      </section>
-      <footer className="workspace-footer"><span>ATech · Assistência técnica</span><span>Administração segura <i /> {users.length} {users.length === 1 ? 'conta' : 'contas'}</span></footer>
-    </div>
+      {showProfile && <Suspense fallback={null}><UserProfileModal onClose={() => setShowProfile(false)} onSaved={onUserUpdated} onSignOut={onSignOut} /></Suspense>}
+      {showVersionModal && (
+        <Suspense fallback={null}>
+          <VersionHistoryModal onClose={() => setShowVersionModal(false)} />
+        </Suspense>
+      )}
+      {showPrivacyModal && (
+        <Suspense fallback={null}>
+          <PrivacyPolicyModal onClose={() => setShowPrivacyModal(false)} />
+        </Suspense>
+      )}
+    </main>
   )
 }
 
@@ -801,6 +1329,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
     inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
+    logs: { title: 'Auditoria & Logs', description: 'Trilha de auditoria e segurança do sistema.', icon: History },
   }[page]
   const ModuleIcon = module.icon
 

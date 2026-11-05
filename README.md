@@ -2,7 +2,7 @@
 
 Plataforma web para assistência técnica. A interface usa React + TypeScript, a API usa Express e o PostgreSQL guarda usuários e sessões.
 
-Após o login, admins e membros convidados do Workspace usam o mesmo workspace operacional. **Acessos** continua exclusivo do administrador; nele, cada página pode ser liberada individualmente por usuário. Chamados, programação, colaboradores, estoque, informações, garantias, validação da API e Processos Jurídicos verificam a permissão também na API. A navegação sincroniza a tela atual com a URL (`?page=...`) e o histórico do navegador (botões Voltar/Avançar e atualização da página com `F5`), modais e painéis podem ser fechados com a tecla `Esc`, e sessões expiradas ou suspensas redirecionam automaticamente para a tela de login com aviso claro.
+Após o login, admins e membros convidados do Workspace usam o mesmo workspace operacional. **Acessos** continua exclusivo do administrador; nele, cada página pode ser liberada individualmente por usuário. Na tela de **Acessos e Configurações**, administradores contam com o painel **Filtro de contagem de chamados da Homepage**: nele é possível configurar as regras globais aplicadas ao indicador de chamados ativos da tela inicial de todos os usuários (seleção de obras/empreendimentos, tipos de chamado **Cliente** e/ou **Condomínio**, seleção de assuntos específicos e ano de corte a partir do qual os chamados abertos são considerados), mantidas na tabela `application_settings` e aplicadas imediatamente na API para toda a equipe. Chamados, programação, colaboradores, estoque, informações, garantias, validação da API e Processos Jurídicos verificam a permissão também na API. A navegação sincroniza a tela atual com a URL (`?page=...`) e o histórico do navegador (botões Voltar/Avançar e atualização da página com `F5`), modais e painéis podem ser fechados com a tecla `Esc`, e sessões expiradas ou suspensas redirecionam automaticamente para a tela de login com aviso claro.
 
 ## Requisitos
 
@@ -356,6 +356,15 @@ O valor de `CVCRM_SUBDOMAIN` pode ser apenas o subdomínio ou o endereço comple
 
 O endpoint paginado é `GET /api/v1/relacionamento/atendimentos/listar`, com `pagina` e `registros_por_pagina=500`; os totais são lidos dos headers `X-Total-Registros` e `X-Total-Paginas`. A validação testa as duas primeiras páginas e interrompe importações/sincronizações se os IDs se repetirem, faltarem metadados de total ou a quantidade recebida não corresponder à informada, para evitar uma carga incompleta. Na tela **Validação da API**, valide a conexão e use **Importar/atualizar histórico completo** para percorrer todas as páginas e persistir chamados ativos, finalizados e cancelados. Com a sincronização automática ativada, o servidor atualiza todos os registros silenciosamente a cada 30 minutos, nos horários de Brasília entre 7h30 e 18h; fica pausada das 18h até 7h30. A sincronização manual continua disponível fora desse período. Apenas os chamados ativos são exibidos por padrão no quadro. A primeira carga completa pode levar mais tempo conforme o volume de registros; o processamento fica no servidor e os dados não são enviados em lote ao navegador. As etapas são lidas por `GET /api/v1/configuracoes/workflows/atendimentos`; somente etapas com nome não vazio são exibidas.
 
+## Página Inicial (Cockpit Operacional)
+
+A tela **Início** funciona como o cockpit executivo e operacional da ATech, trazendo visão em tempo real para engenheiros, encarregados, equipe técnica e liderança:
+- **Hero Contextual & Barra de Ações Rápidas**: saudação dinâmica por período do dia e data completa, crachá de perfil, e atalhos operacionais rápidos de 1 clique para acessar **Chamados**, agendar equipe técnica, movimentar estoque e consultar processos jurídicos.
+- **Radar Operacional (KPIs em Tempo Real)**: 4 cartões consolidados via endpoint leve `GET /api/home/summary` com chamados ativos e criados no mês, total de atividades e colaboradores em campo no dia, processos jurídicos ativos e prazos críticos a vencer em até 7 dias, além de alertas operacionais automáticos (insumos com estoque mínimo atingido e ausências registradas no dia).
+- **Equipe em Campo Hoje & Alertas de Escala**: lista detalhada das rotas e serviços agendados para a data atual (horários, colaborador, função, condomínio/unidade, protocolo e serviço), com banner de aviso preventivo caso algum colaborador esteja em atestado médico ou falta injustificada na data.
+- **Mural da Equipe & Celebrações**: widget integrado em abas para aniversariantes do mês e tempo de empresa com contagem de anos de casa.
+- **Áreas de Trabalho Categorizadas**: navegação rápida agrupada por *Atendimento Técnico & Obras*, *Pessoas, Recursos & Jurídico* e *Administração & Integrações*, sem estados defasados.
+
 ## Chamados e programação
 
 Na busca de chamados, use ID ou selecione o tipo **Cliente**/**Condomínio**. Na programação é possível pesquisar chamados por ID e agendar atividades jurídicas, pesquisando processos pelo número (inclusive números dos processos filhos), condomínio ou requerente. Um agendamento jurídico pode ser iniciado pelo botão de calendário no cartão do processo. Em instalações existentes, execute `npm run db:migrate` para aplicar `037_legal_process_programming.sql`.
@@ -439,9 +448,19 @@ Bloqueio de agenda por atestado ou falta:
 - No agendamento de novas atividades (`TicketProgrammingForm`), a verificação de disponibilidade (`/api/programming/availability`) bloqueia a janela integral de trabalho (08:00 às 18:00) nos dias de ausência, deixando zero horas livres e alertando o operador.
 - No backend (`server/routes/programming.ts`), a validação `validateAvailability` impede com rigor a criação ou edição de compromissos que colidam com atestados ou faltas cadastradas.
 
-Todos os atestados e faltas são gravados no histórico do colaborador (`collaborator_absences`), visíveis na ficha individual e no PDF da ficha, com possibilidade de exclusão com confirmação.
+Todos os atestados e faltas são gravados no histórico do colaborador (`collaborator_absences`), visíveis na ficha individual e no PDF da ficha, com possibilidade de exclusão com confirmação. Ao cadastrar atestado ou falta com choque de agenda em atendimentos ou obras, o sistema alerta o operador com links diretos com fuso horário local exato para reprogramar as atividades na tela de Programação. Em instalações existentes, execute `npm run db:migrate` para aplicar a migração `045_allow_multiple_admins_and_collaborator_absences.sql`.
 
 Pela central **Emitir relatório**, é possível emitir o **Relatório de faltas e atestados** consolidado por período de tempo (data inicial e data final), com filtros opcionais por colaborador e tipo de ocorrência. O relatório apresenta cartões de indicadores (total de ocorrências, total de dias afastados, quantidade de atestados e faltas injustificadas), tabela detalhada e botão para exportação em PDF estruturado com paginação, cabeçalho e resumo estatístico. O botão **Emitir relatório** também continua permitindo gerar a lista de colaboradores/funções, fardamentos/tamanhos ou a ficha individual; os PDFs têm cabeçalho, seções e paginação, e incluem fotos disponíveis. A programação também inclui a foto ao lado do nome no PDF.
+
+## Painel Inicial (Home) & Mural de Comemorações
+
+A tela inicial foi repaginada para oferecer um painel executivo e operacional em tempo real:
+- **Resumo de Indicadores Operacionais**: Chamados Ativos, Equipe Técnica em Campo Hoje, Processos Jurídicos em Aberto, Alertas de Estoque Mínimo, Ausências Registradas no Dia (com badges de atestado ou falta) e Tarefas Pessoais Pendentes.
+- **Atividades Programadas de Hoje**: lista das próximas atividades técnicas do dia com horário, colaborador, condomínio, bloco/unidade e protocolo de chamado ou número de processo jurídico.
+- **Mural de Celebrações Enriquecido**: abas para **Aniversariantes** e **Tempo de Empresa**, com seletor de mês (**Mês Anterior**, **Mês Atual** e **Próximo Mês**).
+  - Aniversariantes com badge de dia/mês, cargo formatado, destaque dourado "🎉 É HOJE!" para quem faz aniversário no dia atual, e contagem regressiva ("Em X dias").
+  - Tempo de empresa com medalha de anos comemorados, data de admissão e cálculo detalhado do tempo total de dedicação (anos, meses e dias).
+- **Ações Rápidas & Vitrine de Módulos**: atalhos diretos para consultar chamados, programar equipe, registrar faltas/atestados, movimentar estoque e acessar os módulos por categoria profissional.
 
 ## Estoque da assistência técnica
 

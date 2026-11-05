@@ -20,6 +20,9 @@ import {
   X,
 } from 'lucide-react'
 import { apiRequest } from './api/client'
+import { useLiveSync } from './api/liveSync'
+import { ATechLoading } from './ATechLoading'
+import { compressImageFileToDataUrl, getCompanyLogoDataUrl } from './utils/companyLogo'
 
 interface RoleOption {
   value: string
@@ -258,6 +261,16 @@ function formatCpf(value: string) {
   return cpfMask(value)
 }
 
+function toLocalDateStr(dateVal: string | Date): string {
+  const d = typeof dateVal === 'string' ? new Date(dateVal) : dateVal
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Maceio',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
 function formatDate(value: string | null) {
   if (!value) return 'Não informado'
   const [year, month, day] = value.slice(0, 10).split('-')
@@ -312,7 +325,13 @@ async function imageDataUrl(url: string) {
   })
 }
 
-export default function CollaboratorsPage() {
+export default function CollaboratorsPage({
+  initialCollaboratorId = null,
+  onCollaboratorOpened,
+}: {
+  initialCollaboratorId?: string | null
+  onCollaboratorOpened?: () => void
+} = {}) {
   const reportPickerRef = useRef<HTMLElement>(null)
   const deliveryPanelRef = useRef<HTMLElement>(null)
   const recipientCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -327,6 +346,10 @@ export default function CollaboratorsPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [collapsedRoles, setCollapsedRoles] = useState<Set<string>>(() => new Set())
   const [refreshKey, setRefreshKey] = useState(0)
+
+  useLiveSync(['collaborators'], () => {
+    setRefreshKey((value) => value + 1)
+  })
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
@@ -667,7 +690,10 @@ export default function CollaboratorsPage() {
 
   async function downloadAbsencesPdf(absences: CollaboratorAbsence[], summary: AbsenceSummary, startDate: string, endDate: string) {
     try {
-      const { jsPDF } = await import('jspdf')
+      const [{ jsPDF }, logoDataUrl] = await Promise.all([
+        import('jspdf'),
+        getCompanyLogoDataUrl(),
+      ])
       const document = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
       const pageWidth = document.internal.pageSize.getWidth()
       const pageHeight = document.internal.pageSize.getHeight()
@@ -676,16 +702,23 @@ export default function CollaboratorsPage() {
 
       let y = 0
       const drawHeader = () => {
-        document.setFillColor(22, 62, 96)
+        document.setFillColor(15, 59, 153)
         document.rect(0, 0, pageWidth, 27, 'F')
-        document.setFillColor(79, 158, 211)
+        document.setFillColor(59, 130, 246)
         document.rect(0, 27, pageWidth, 1.4, 'F')
+        let titleX = margin
+        if (logoDataUrl) {
+          document.setFillColor(255, 255, 255)
+          document.roundedRect(margin, 4.5, 18, 18, 2, 2, 'F')
+          document.addImage(logoDataUrl, 'PNG', margin + 1.5, 6, 15, 15)
+          titleX = margin + 22
+        }
         document.setTextColor(255, 255, 255)
         document.setFont('helvetica', 'bold')
         document.setFontSize(13)
-        document.text('ATECH  /  RELATÓRIOS DA EQUIPE', margin, 11)
+        document.text('AC ENGENHARIA · ATECH  /  RELATÓRIOS DA EQUIPE', titleX, 11)
         document.setFontSize(10)
-        document.text(`RELATÓRIO DE FALTAS E ATESTADOS (${formatDate(startDate)} a ${formatDate(endDate)})`, margin, 20)
+        document.text(`RELATÓRIO DE FALTAS E ATESTADOS (${formatDate(startDate)} a ${formatDate(endDate)})`, titleX, 20)
         document.setFont('helvetica', 'normal')
         document.setFontSize(8)
         document.setTextColor(218, 232, 244)
@@ -812,7 +845,18 @@ export default function CollaboratorsPage() {
     setReportOpen(true)
     setReportLoading(false)
     setEditingId(id)
+    const url = new URL(window.location.href)
+    url.searchParams.set('collaboratorId', id)
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
   }
+
+  useEffect(() => {
+    const queryCollabId = initialCollaboratorId || new URLSearchParams(window.location.search).get('collaboratorId')
+    if (queryCollabId) {
+      void openReport(queryCollabId)
+      onCollaboratorOpened?.()
+    }
+  }, [initialCollaboratorId, onCollaboratorOpened])
 
   async function revealReport(targetId?: string) {
     const id = targetId ?? editingId
@@ -869,6 +913,9 @@ export default function CollaboratorsPage() {
     setReportOpen(false)
     setReport(null)
     setEditingId(null)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('collaboratorId')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
   }
 
   async function beginReportSelection() {
@@ -1008,7 +1055,10 @@ export default function CollaboratorsPage() {
 
   async function downloadPdf(kind: 'list' | 'uniforms' | 'report') {
     try {
-      const { jsPDF } = await import('jspdf')
+      const [{ jsPDF }, logoDataUrl] = await Promise.all([
+        import('jspdf'),
+        getCompanyLogoDataUrl(),
+      ])
       const document = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
       if (kind === 'report' && !report) throw new Error('Abra a ficha do colaborador antes de gerar o PDF.')
       const people = kind === 'report' ? [] : (await apiRequest<{ collaborators: Collaborator[] }>('/api/collaborators?search=&role=all&status=all&limit=5000')).collaborators
@@ -1028,16 +1078,23 @@ export default function CollaboratorsPage() {
       }
       let y = 0
       const drawHeader = () => {
-        document.setFillColor(22, 62, 96)
+        document.setFillColor(15, 59, 153)
         document.rect(0, 0, pageWidth, 27, 'F')
-        document.setFillColor(79, 158, 211)
+        document.setFillColor(59, 130, 246)
         document.rect(0, 27, pageWidth, 1.4, 'F')
+        let titleX = margin
+        if (logoDataUrl) {
+          document.setFillColor(255, 255, 255)
+          document.roundedRect(margin, 4.5, 18, 18, 2, 2, 'F')
+          document.addImage(logoDataUrl, 'PNG', margin + 1.5, 6, 15, 15)
+          titleX = margin + 22
+        }
         document.setTextColor(255, 255, 255)
         document.setFont('helvetica', 'bold')
         document.setFontSize(13)
-        document.text('ATECH  /  RELATÓRIOS DA EQUIPE', margin, 11)
+        document.text('AC ENGENHARIA · ATECH  /  RELATÓRIOS DA EQUIPE', titleX, 11)
         document.setFontSize(10)
-        document.text(titles[kind], margin, 20)
+        document.text(titles[kind], titleX, 20)
         document.setFont('helvetica', 'normal')
         document.setFontSize(8)
         document.setTextColor(218, 232, 244)
@@ -1376,15 +1433,10 @@ export default function CollaboratorsPage() {
         collaboratorId = created.id
       }
       if (photoFile && collaboratorId) {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Não foi possível ler a foto.'))
-          reader.onerror = () => reject(new Error('Não foi possível ler a foto.'))
-          reader.readAsDataURL(photoFile)
-        })
+        const compressed = await compressImageFileToDataUrl(photoFile, 1000, 0.85)
         await apiRequest(`/api/collaborators/${collaboratorId}/photo`, {
           method: 'PUT',
-          body: JSON.stringify({ contentType: photoFile.type, contentBase64: dataUrl.split(',')[1] }),
+          body: JSON.stringify({ contentType: compressed.contentType, contentBase64: compressed.contentBase64 }),
         })
       }
       if (collaboratorId) {
@@ -1444,7 +1496,13 @@ export default function CollaboratorsPage() {
         <table className="collaborator-table">
           <thead><tr><th>COLABORADOR</th><th>FUNÇÃO</th><th>IDADE</th><th>SITUAÇÃO</th><th><span className="sr-only">Ações</span></th></tr></thead>
           <tbody>
-            {loading && collaborators.length === 0 ? <tr><td colSpan={5} className="collaborator-empty">Carregando colaboradores...</td></tr> : collaborators.length === 0 ? <tr><td colSpan={5} className="collaborator-empty"><UserPlus size={22} /><strong>Nenhum colaborador encontrado</strong><span>Cadastre uma pessoa ou ajuste os filtros.</span></td></tr> : collaboratorRows}
+            {loading && collaborators.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ padding: '36px 16px', background: '#fafbfc' }}>
+                  <ATechLoading compact message="Carregando colaboradores..." subtitle="Consultando equipe e permissões..." />
+                </td>
+              </tr>
+            ) : collaborators.length === 0 ? <tr><td colSpan={5} className="collaborator-empty"><UserPlus size={22} /><strong>Nenhum colaborador encontrado</strong><span>Cadastre uma pessoa ou ajuste os filtros.</span></td></tr> : collaboratorRows}
           </tbody>
         </table>
       </div>
@@ -1763,7 +1821,7 @@ export default function CollaboratorsPage() {
                     </div>
                     <ul className="collaborator-conflict-list">
                       {absenceConflicts.map((c) => {
-                        const conflictDay = c.date || c.startsAt.slice(0, 10)
+                        const conflictDay = c.date || toLocalDateStr(c.startsAt)
                         return (
                           <li key={c.id} className="collaborator-conflict-item">
                             <div className="collaborator-conflict-item-info">
@@ -1984,8 +2042,8 @@ export default function CollaboratorsPage() {
 
               <div style={{ display: 'grid', gap: '10px' }}>
                 <strong style={{ fontSize: '12px', color: '#334155' }}>Dias com atividades pendentes de reprogramação:</strong>
-                {Array.from(new Set(savedConflicts.conflicts.map((c) => c.date || c.startsAt.slice(0, 10)))).sort().map((dayKey) => {
-                  const dayItems = savedConflicts.conflicts.filter((c) => (c.date || c.startsAt.slice(0, 10)) === dayKey)
+                {Array.from(new Set(savedConflicts.conflicts.map((c) => c.date || toLocalDateStr(c.startsAt)))).sort().map((dayKey) => {
+                  const dayItems = savedConflicts.conflicts.filter((c) => (c.date || toLocalDateStr(c.startsAt)) === dayKey)
                   return (
                     <div key={dayKey} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', background: '#f8fafc' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>

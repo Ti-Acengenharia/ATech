@@ -9,6 +9,7 @@ import {
   fingerprintCpf,
   isPersonalDataEncryptionConfigured,
 } from '../services/personal-data.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
 
 const router = Router()
 
@@ -195,11 +196,138 @@ function isDuplicateRegistrationNumber(error: unknown) {
 function decodeSignature(value: string) {
   const bytes = Buffer.from(value, 'base64')
   if (!bytes.length || bytes.length > 100 * 1024 || bytes.toString('base64') !== value ||
-      !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return null
   }
   return bytes
 }
+
+router.get('/birthdays', requireAuth, async (_req, res, next) => {
+  try {
+    const result = await pool.query<{
+      id: string
+      name: string
+      role: string
+      role_label: string
+      birth_date_ciphertext: string
+      admission_date: string
+      termination_date: string | null
+    }>(
+      `SELECT c.id, c.name, c.role, COALESCE(r.label, c.role) AS role_label,
+              c.birth_date_ciphertext, c.admission_date::text, c.termination_date::text
+       FROM collaborators c
+       LEFT JOIN collaborator_roles r ON r.role_key = c.role
+       WHERE c.termination_date IS NULL OR c.termination_date > CURRENT_DATE
+       ORDER BY lower(c.name), c.id`,
+    )
+    const today = new Date()
+    type MonthKey = 'previous' | 'current' | 'next'
+    const monthOffset = (offset: number) => new Date(today.getFullYear(), today.getMonth() + offset, 1)
+    const targetMonths = [-1, 0, 1].map((offset) => {
+      const date = monthOffset(offset)
+      const key: MonthKey = offset === -1 ? 'previous' : offset === 0 ? 'current' : 'next'
+      return {
+        key,
+        month: date.getMonth(),
+        year: date.getFullYear(),
+        label: new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(date),
+      }
+    })
+    type WorkAnniversary = {
+      id: string
+      name: string
+      role: string
+      roleLabel: string
+      day: number
+      years: number
+      months: number
+      days: number
+      admissionDate: string
+      year: number
+    }
+    const birthdays: Record<MonthKey, {
+      label: string; people: Array<{
+        id: string
+        name: string
+        role: string
+        roleLabel: string
+        day: number
+        month: number
+      }>
+    }> = {
+      previous: { label: targetMonths[0].label, people: [] },
+      current: { label: targetMonths[1].label, people: [] },
+      next: { label: targetMonths[2].label, people: [] },
+    }
+    const workAnniversaries: Record<MonthKey, { label: string; people: WorkAnniversary[] }> = {
+      previous: { label: targetMonths[0].label, people: [] },
+      current: { label: targetMonths[1].label, people: [] },
+      next: { label: targetMonths[2].label, people: [] },
+    }
+
+    for (const collaborator of result.rows) {
+      const birthDate = decryptPersonalData(collaborator.birth_date_ciphertext, 'birth-date')
+      const [, birthMonth, birthDay] = birthDate.split('-').map(Number)
+      for (const target of targetMonths) {
+        if (birthMonth === target.month + 1) {
+          birthdays[target.key].people.push({
+            id: collaborator.id,
+            name: collaborator.name,
+            role: collaborator.role,
+            roleLabel: collaborator.role_label,
+            day: birthDay,
+            month: birthMonth,
+          })
+        }
+      }
+
+      const [admissionYear, admissionMonth, admissionDay] = collaborator.admission_date.split('-').map(Number)
+      for (const target of targetMonths) {
+        const years = target.year - admissionYear
+        if (admissionMonth === target.month + 1 && years > 0) {
+          let elapsedYears = today.getFullYear() - admissionYear
+          let elapsedMonths = today.getMonth() + 1 - admissionMonth
+          let elapsedDays = today.getDate() - admissionDay
+          if (elapsedDays < 0) {
+            elapsedMonths -= 1
+            elapsedDays += new Date(today.getFullYear(), today.getMonth(), 0).getDate()
+          }
+          if (elapsedMonths < 0) {
+            elapsedYears -= 1
+            elapsedMonths += 12
+          }
+
+          workAnniversaries[target.key].people.push({
+            id: collaborator.id,
+            name: collaborator.name,
+            role: collaborator.role,
+            roleLabel: collaborator.role_label,
+            day: admissionDay,
+            years,
+            months: elapsedMonths,
+            days: elapsedDays,
+            admissionDate: collaborator.admission_date,
+            year: target.year,
+          })
+        }
+      }
+    }
+
+    for (const target of targetMonths) {
+      birthdays[target.key].people.sort((a, b) =>
+        a.day - b.day || a.name.localeCompare(b.name, 'pt-BR'),
+      )
+    }
+    for (const target of targetMonths) {
+      workAnniversaries[target.key].people.sort((a, b) =>
+        a.day - b.day || a.name.localeCompare(b.name, 'pt-BR'),
+      )
+    }
+    res.json({ birthdays, workAnniversaries })
+  } catch (error) {
+    next(error)
+  }
+})
 
 router.use(requireAuth, requirePageAccess('collaborators'))
 
@@ -287,124 +415,6 @@ router.post('/shirt-sizes', requireAdmin, async (req, res, next) => {
   }
 })
 
-router.get('/birthdays', async (_req, res, next) => {
-  try {
-    const result = await pool.query<{
-      id: string
-      name: string
-      role: string
-      birth_date_ciphertext: string
-      admission_date: string
-      termination_date: string | null
-    }>(
-      `SELECT id, name, role, birth_date_ciphertext, admission_date::text, termination_date::text
-       FROM collaborators
-       WHERE termination_date IS NULL OR termination_date > CURRENT_DATE
-       ORDER BY lower(name), id`,
-    )
-    const today = new Date()
-    type MonthKey = 'previous' | 'current' | 'next'
-    const monthOffset = (offset: number) => new Date(today.getFullYear(), today.getMonth() + offset, 1)
-    const targetMonths = [-1, 0, 1].map((offset) => {
-      const date = monthOffset(offset)
-      const key: MonthKey = offset === -1 ? 'previous' : offset === 0 ? 'current' : 'next'
-      return {
-        key,
-        month: date.getMonth(),
-        year: date.getFullYear(),
-        label: new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(date),
-      }
-    })
-    type WorkAnniversary = {
-      id: string
-      name: string
-      role: string
-      day: number
-      years: number
-      months: number
-      days: number
-      admissionDate: string
-      year: number
-    }
-    const birthdays: Record<MonthKey, { label: string; people: Array<{
-      id: string
-      name: string
-      role: string
-      day: number
-      month: number
-    }> }> = {
-      previous: { label: targetMonths[0].label, people: [] },
-      current: { label: targetMonths[1].label, people: [] },
-      next: { label: targetMonths[2].label, people: [] },
-    }
-    const workAnniversaries: Record<MonthKey, { label: string; people: WorkAnniversary[] }> = {
-      previous: { label: targetMonths[0].label, people: [] },
-      current: { label: targetMonths[1].label, people: [] },
-      next: { label: targetMonths[2].label, people: [] },
-    }
-
-    for (const collaborator of result.rows) {
-      const birthDate = decryptPersonalData(collaborator.birth_date_ciphertext, 'birth-date')
-      const [, birthMonth, birthDay] = birthDate.split('-').map(Number)
-      for (const target of targetMonths) {
-        if (birthMonth === target.month + 1) {
-          birthdays[target.key].people.push({
-            id: collaborator.id,
-            name: collaborator.name,
-            role: collaborator.role,
-            day: birthDay,
-            month: birthMonth,
-          })
-        }
-      }
-
-      const [admissionYear, admissionMonth, admissionDay] = collaborator.admission_date.split('-').map(Number)
-      for (const target of targetMonths) {
-        const years = target.year - admissionYear
-        if (admissionMonth === target.month + 1 && years > 0) {
-          let elapsedYears = today.getFullYear() - admissionYear
-          let elapsedMonths = today.getMonth() + 1 - admissionMonth
-          let elapsedDays = today.getDate() - admissionDay
-          if (elapsedDays < 0) {
-            elapsedMonths -= 1
-            elapsedDays += new Date(today.getFullYear(), today.getMonth(), 0).getDate()
-          }
-          if (elapsedMonths < 0) {
-            elapsedYears -= 1
-            elapsedMonths += 12
-          }
-
-          workAnniversaries[target.key].people.push({
-            id: collaborator.id,
-            name: collaborator.name,
-            role: collaborator.role,
-            day: admissionDay,
-            years,
-            months: elapsedMonths,
-            days: elapsedDays,
-            admissionDate: collaborator.admission_date,
-            year: target.year,
-          })
-        }
-      }
-    }
-
-    for (const target of targetMonths) {
-      birthdays[target.key].people.sort((a, b) =>
-        a.day - b.day || a.name.localeCompare(b.name, 'pt-BR'),
-      )
-    }
-    for (const target of targetMonths) {
-      workAnniversaries[target.key].people.sort((a, b) =>
-        a.day - b.day || a.name.localeCompare(b.name, 'pt-BR'),
-      )
-    }
-    res.json({ birthdays, workAnniversaries })
-  } catch (error) {
-    next(error)
-  }
-})
-
 
 async function findCollaboratorProgrammingConflicts(
   clientOrPool: { query: typeof pool.query },
@@ -429,14 +439,14 @@ async function findCollaboratorProgrammingConflicts(
      FROM ticket_programming p
      LEFT JOIN tickets t ON t.source_id = p.ticket_id
      WHERE p.collaborator_id = $1
-       AND p.starts_at < (($3::date + interval '1 day') AT TIME ZONE 'America/Sao_Paulo')
-       AND p.ends_at > ($2::date AT TIME ZONE 'America/Sao_Paulo')
+       AND p.starts_at < (($3::date + interval '1 day')::timestamp AT TIME ZONE 'America/Maceio')
+       AND p.ends_at > ($2::date::timestamp AT TIME ZONE 'America/Maceio')
      ORDER BY p.starts_at ASC`,
     [collaboratorId, startDateStr, endDateStr],
   )
   return result.rows.map((row) => {
     const dateFormatted = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
+      timeZone: 'America/Maceio',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -468,19 +478,19 @@ router.get('/absences', async (req, res, next) => {
 
     if (startDate?.success && startDate.data) {
       values.push(startDate.data)
-      conditions.push('a.end_date >= $' + values.length + '::date')
+      conditions.push('a.end_date >= ($' + values.length + '::text)::date')
     }
     if (endDate?.success && endDate.data) {
       values.push(endDate.data)
-      conditions.push('a.start_date <= $' + values.length + '::date')
+      conditions.push('a.start_date <= ($' + values.length + '::text)::date')
     }
     if (collaboratorId?.success && collaboratorId.data) {
       values.push(collaboratorId.data)
-      conditions.push('a.collaborator_id = $' + values.length)
+      conditions.push('a.collaborator_id = $' + values.length + '::bigint')
     }
     if (typeFilter?.success && typeFilter.data) {
       values.push(typeFilter.data)
-      conditions.push('a.type = $' + values.length)
+      conditions.push('a.type = $' + values.length + '::text')
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -633,6 +643,7 @@ router.post('/absences', async (req, res, next) => {
     const conflicts = await findCollaboratorProgrammingConflicts(client, collaboratorId, startDate, endDate)
 
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence', entityId: collaboratorId })
 
     res.status(201).json({
       absence: {
@@ -674,6 +685,7 @@ router.delete('/absences/:id', async (req, res, next) => {
       res.status(404).json({ error: 'Registro de ausência não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -725,12 +737,13 @@ router.put('/:id/uniform', async (req, res, next) => {
          shirt_long_sleeve_qty = $3, pants_size = $4, boot_size = $5, updated_at = now()
        WHERE id = $6 RETURNING id`,
       [parsed.data.shirtSizeId, parsed.data.shirtShortSleeveQty, parsed.data.shirtLongSleeveQty,
-        parsed.data.pantsSize, parsed.data.bootSize, collaboratorId.data],
+      parsed.data.pantsSize, parsed.data.bootSize, collaboratorId.data],
     )
     if (!result.rowCount) {
       res.status(404).json({ error: 'Colaborador não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -839,6 +852,7 @@ router.post('/:id/uniform-deliveries', async (req, res, next) => {
       ],
     )
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'delivery', entityId: collaboratorId.data })
     res.status(201).json({ id: Number(inserted.rows[0].id) })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -865,8 +879,8 @@ router.put('/:id/photo', async (req, res, next) => {
     'image/webp': (bytes) => bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP',
   }
   if (content.length === 0 || content.length > 2 * 1024 * 1024 ||
-      content.toString('base64') !== parsed.data.contentBase64 ||
-      !signatures[parsed.data.contentType](content)) {
+    content.toString('base64') !== parsed.data.contentBase64 ||
+    !signatures[parsed.data.contentType](content)) {
     res.status(400).json({ error: 'A foto deve ser JPEG, PNG ou WebP e ter no máximo 2 MiB.' })
     return
   }
@@ -880,6 +894,7 @@ router.put('/:id/photo', async (req, res, next) => {
       res.status(404).json({ error: 'Colaborador não encontrado.' })
       return
     }
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence' })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -1065,6 +1080,7 @@ router.post('/', async (req, res, next) => {
     }
 
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'create', entityId: collaboratorId })
     res.status(201).json({ id: collaboratorId })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1200,6 +1216,8 @@ router.put('/:id', async (req, res, next) => {
     }
 
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'update', entityId: collaboratorId.data })
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1288,6 +1306,8 @@ router.delete('/:id', async (req, res, next) => {
     )
     await client.query('DELETE FROM collaborators WHERE id = $1', [collaboratorId.data])
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'update', entityId: collaboratorId.data })
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')

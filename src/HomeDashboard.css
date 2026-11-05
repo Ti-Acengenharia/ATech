@@ -1,0 +1,933 @@
+/* HomeDashboard.css - Cockpit Operacional ATech */
+
+.home-dashboard-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: reveal .35s ease both;
+  padding-bottom: 24px;
+}
+
+/* =========================================
+   1. HERO BANNER & QUICK ACTIONS
+   ========================================= */
+.home-hero-v2 {
+  position: relative;
+  background: linear-gradient(135deg, #0e3352 0%, #175385 55%, #1d69a6 100%);
+  border-radius: 10px;
+  padding: 26px 30px;
+  color: #f8fafc;
+  overflow: hidden;
+  box-shadow: 0 4px 20px -2px rgba(18, 62, 99, 0.25);
+}
+
+.home-hero-v2::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(circle at 85% 20%, rgba(216, 235, 249, 0.15), transparent 40%),
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  pointer-events: none;
+}
+
+.home-hero-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.home-hero-greeting {
+  max-width: 640px;
+}
+
+.home-hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: #bfdbfe;
+  margin-bottom: 6px;
+}
+
+.home-hero-logo {
+  height: 20px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.home-hero-title {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffffff;
+}
+
+.home-hero-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.home-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: #e2e8f0;
+  backdrop-filter: blur(4px);
+}
+
+.home-hero-badge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 8px #4ade80;
+}
+
+/* Quick Actions Bar inside Hero */
+.home-quick-actions-bar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(14, 43, 69, 0.65);
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  flex-wrap: wrap;
+}
+
+.home-quick-actions-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.home-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.home-quick-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.home-quick-btn-primary {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.45);
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.home-quick-btn-primary:hover {
+  background: rgba(255, 255, 255, 0.32);
+  border-color: #ffffff;
+}
+
+/* =========================================
+   2. RADAR OPERACIONAL (KPIs)
+   ========================================= */
+.home-kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.home-kpi-card {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 120px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+
+.home-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.08);
+  border-color: #cbd5e1;
+}
+
+.home-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.home-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.home-kpi-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.home-kpi-blue .home-kpi-icon { background: #e0f2fe; color: #0284c7; }
+.home-kpi-emerald .home-kpi-icon { background: #dcfce7; color: #16a34a; }
+.home-kpi-amber .home-kpi-icon { background: #fef3c7; color: #d97706; }
+.home-kpi-purple .home-kpi-icon { background: #ede9fe; color: #7c3aed; }
+.home-kpi-rose .home-kpi-icon { background: #ffe4e6; color: #e11d48; }
+
+.home-kpi-body {
+  margin: 10px 0 6px;
+}
+
+.home-kpi-value {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: #0f172a;
+}
+
+.home-kpi-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.home-kpi-arrow {
+  color: #94a3b8;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.home-kpi-card:hover .home-kpi-arrow {
+  transform: translateX(2px);
+  color: #1765a3;
+}
+
+/* =========================================
+   3. PAINEL CENTRAL (AGENDA + MURAL)
+   ========================================= */
+.home-split-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Agenda Card */
+.home-agenda-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.home-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.home-panel-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-panel-title-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: #eef6fc;
+  color: #1765a3;
+  border-radius: 6px;
+}
+
+.home-panel-title-wrap h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.home-panel-title-wrap small {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  font-family: var(--mono);
+}
+
+.home-panel-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  color: #1765a3;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.home-panel-action-btn:hover {
+  background: #f1f5f9;
+}
+
+/* Absence Warning Banner */
+.home-absence-banner {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #92400e;
+  font-size: 11px;
+}
+
+.home-absence-banner-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #d97706;
+}
+
+.home-absence-banner-content strong {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 650;
+}
+
+.home-absence-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.home-absence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #78350f;
+}
+
+/* Appointments List */
+.home-appointments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-appointment-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+  border-radius: 6px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.home-appointment-card:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.home-appointment-time {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  padding: 6px 4px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #1765a3;
+  flex-shrink: 0;
+}
+
+.home-appointment-time small {
+  font-size: 9px;
+  color: #94a3b8;
+  font-weight: normal;
+}
+
+.home-appointment-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-appointment-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 3px;
+}
+
+.home-appointment-worker {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.home-appointment-role {
+  font-size: 10px;
+  color: #64748b;
+  padding: 1px 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  text-transform: capitalize;
+}
+
+.home-appointment-desc {
+  font-size: 11px;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.home-appointment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: #64748b;
+  flex-wrap: wrap;
+}
+
+.home-appointment-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.home-appointment-completed {
+  opacity: 0.65;
+  background: #f1f5f9;
+}
+
+.home-empty-state {
+  text-align: center;
+  padding: 24px 16px;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-empty-state p {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  max-width: 320px;
+}
+
+/* Mural / Celebrações */
+.home-mural-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.home-mural-tabs {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.home-mural-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-mural-tab.active {
+  background: #ffffff;
+  color: #1765a3;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.home-mural-periods {
+  display: flex;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.home-mural-period-pill {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: #475569;
+  text-align: center;
+  gap: 1px;
+}
+
+.home-mural-period-pill span {
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.2;
+}
+
+.home-mural-period-pill small {
+  font-size: 9px;
+  color: #94a3b8;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.home-mural-period-pill:hover {
+  background: #ffffff;
+  color: #1e293b;
+  border-color: #cbd5e1;
+}
+
+.home-mural-period-pill.active {
+  background: #ffffff;
+  color: #1765a3;
+  border-color: #bfdbfe;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.home-mural-period-pill.active small {
+  color: #0284c7;
+  font-weight: 600;
+}
+
+.home-mural-sparkle {
+  color: #f59e0b;
+}
+
+.home-mural-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 310px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.home-celebrant-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.home-celebrant-row:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.home-celebrant-row.is-today-highlight {
+  background: #fffbeb;
+  border-color: #fde68a;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15);
+}
+
+.home-celebrant-day {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #e0f2fe;
+  color: #0369a1;
+  border-radius: 6px;
+  border: 1px solid #bae6fd;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.home-celebrant-day-num {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.home-celebrant-day-month {
+  font-size: 8px;
+  font-weight: 700;
+  color: #0284c7;
+  margin-top: 1px;
+}
+
+.home-celebrant-day-gold {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.home-celebrant-day-gold .home-celebrant-day-month {
+  color: #b45309;
+}
+
+.is-today-day {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  color: #78350f;
+  border-color: #f59e0b;
+}
+
+.home-celebrant-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-celebrant-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.home-celebrant-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.home-celebrant-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  line-height: 1.3;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.pill-today {
+  background: #f59e0b;
+  color: #ffffff;
+  animation: pulse 2s infinite;
+}
+
+.pill-upcoming {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.pill-past {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.pill-medal {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.home-celebrant-role {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: capitalize;
+  margin-bottom: 3px;
+}
+
+.home-celebrant-anniversary-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: #475569;
+  margin-top: 3px;
+}
+
+.home-celebrant-admission {
+  color: #64748b;
+  font-size: 9px;
+}
+
+.home-celebrant-tenure-full {
+  color: #0369a1;
+  font-size: 10px;
+}
+
+.home-celebrant-tenure-full strong {
+  color: #0c4a6e;
+}
+
+/* =========================================
+   4. VITRINE DE ÁREAS DE TRABALHO
+   ========================================= */
+.home-modules-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-modules-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-modules-heading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.home-modules-heading p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.home-modules-category-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-modules-cat-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-modules-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.home-module-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.home-module-card:hover {
+  transform: translateY(-2px);
+  border-color: #94a3b8;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.06);
+}
+
+.home-module-icon-wrap {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.home-mod-blue { background: #e0f2fe; color: #0284c7; }
+.home-mod-indigo { background: #e0e7ff; color: #4338ca; }
+.home-mod-teal { background: #ccfbf1; color: #0f766e; }
+.home-mod-amber { background: #fef3c7; color: #b45309; }
+.home-mod-emerald { background: #dcfce7; color: #15803d; }
+.home-mod-purple { background: #ede9fe; color: #6d28d9; }
+.home-mod-slate { background: #f1f5f9; color: #475569; }
+
+.home-module-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-module-content strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 2px;
+}
+
+.home-module-content small {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.home-module-arrow {
+  color: #cbd5e1;
+  margin-top: 2px;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.home-module-card:hover .home-module-arrow {
+  transform: translateX(2px);
+  color: #1765a3;
+}
+
+/* =========================================
+   RESPONSIVIDADE
+   ========================================= */
+@media (max-width: 1024px) {
+  .home-kpis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .home-split-layout {
+    grid-template-columns: 1fr;
+  }
+  .home-modules-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .home-hero-v2 {
+    padding: 18px 16px;
+  }
+  .home-hero-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .home-kpis-grid {
+    grid-template-columns: 1fr;
+  }
+  .home-modules-grid {
+    grid-template-columns: 1fr;
+  }
+  .home-quick-actions-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .home-ticket-search-box {
+    width: 100%;
+  }
+  .home-quick-actions-buttons {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .home-quick-btn {
+    flex: 1;
+    justify-content: center;
+  }
+}
+

@@ -6,6 +6,7 @@ import {
   AtSign,
   BarChart3,
   CalendarClock,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -15,6 +16,7 @@ import {
   Coins,
   Download,
   FileSignature,
+  FileText,
   LayoutGrid,
   List,
   MessageCircle,
@@ -32,11 +34,13 @@ import {
   Zap,
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
+import { useLiveSync } from '../api/liveSync'
 import CompletionTermModal from './CompletionTermModal'
 import { programmingDateTimeString, programmingTimeString } from './programming-time'
 import TicketProgrammingForm from './TicketProgrammingForm'
 import TicketDashboardPage from './TicketDashboardPage'
 import SearchableMultiSelect from '../SearchableMultiSelect'
+import { ATechLoading } from '../ATechLoading'
 import type { CvTicketAttachment, CvTicketMessage, TeamMentionTarget, TicketProgramming, TicketSummary, TicketTag, TicketWorkflowStage } from './types'
 
 interface SyncState {
@@ -307,6 +311,21 @@ export default function TicketBoardPage({
   const [newTagName, setNewTagName] = useState('')
   const [newTagColor, setNewTagColor] = useState('#3478a8')
   const [selected, setSelected] = useState<TicketSummary | null>(null)
+  const [urlTicketId, setUrlTicketId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return new URLSearchParams(window.location.search).get('ticketId')
+  })
+  const requestedTicketId = initialTicketId || urlTicketId
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (selected?.id) {
+      url.searchParams.set('ticketId', selected.id)
+    } else if (!requestedTicketId) {
+      url.searchParams.delete('ticketId')
+    }
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [selected, requestedTicketId])
   const [dashboardOpen, setDashboardOpen] = useState(false)
   const [termTicket, setTermTicket] = useState<TicketSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -362,7 +381,12 @@ export default function TicketBoardPage({
     return () => { cancelled = true }
   }, [refreshKey, includeInactive])
 
+  useLiveSync(['tickets'], () => {
+    setRefreshKey((k) => k + 1)
+  })
+
   useEffect(() => {
+    if (dashboardOpen) return
     let cancelled = false
     const params = new URLSearchParams()
     for (const enterprise of enterpriseFilters) params.append('enterprise', enterprise)
@@ -380,7 +404,7 @@ export default function TicketBoardPage({
         if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível atualizar as opções de bloco e unidade.' })
       })
     return () => { cancelled = true }
-  }, [enterpriseFilters, enterpriseFilterKey, blockFilter, blockUnitFilterKey, includeInactive, refreshKey])
+  }, [enterpriseFilters, enterpriseFilterKey, blockFilter, blockUnitFilterKey, includeInactive, refreshKey, dashboardOpen])
 
   useEffect(() => {
     const saved = saveTicketFilters(currentUser.id, {
@@ -404,6 +428,7 @@ export default function TicketBoardPage({
   }, [currentUser.id, search, ticketTypes, enterpriseFilters, blockOptionsReady, activeBlockFilter, activeUnitFilter, blockFilter, unitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, cardFields, sortField, sortDirection])
 
   useEffect(() => {
+    if (dashboardOpen) return
     let cancelled = false
     apiRequest<{ terms: CompletionTermFile[] }>('/api/tickets/completion-terms')
       .then((result) => {
@@ -413,9 +438,10 @@ export default function TicketBoardPage({
         if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os termos salvos.' })
       })
     return () => { cancelled = true }
-  }, [refreshKey])
+  }, [refreshKey, dashboardOpen])
 
   useEffect(() => {
+    if (dashboardOpen) return
     let cancelled = false
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams()
@@ -434,28 +460,29 @@ export default function TicketBoardPage({
         .then(async (ticketResult) => {
           if (cancelled) return
           setTickets(ticketResult.tickets)
-        if (initialTicketId) {
-          let target = ticketResult.tickets.find((ticket) => ticket.id === initialTicketId)
-          if (!target) {
-            const targetResult = await apiRequest<{ tickets: TicketSummary[] }>(
-              `/api/tickets?id=${encodeURIComponent(initialTicketId)}${includeInactive ? '&includeInactive=true' : ''}`,
-            )
-            target = targetResult.tickets[0]
+          if (requestedTicketId) {
+            let target = ticketResult.tickets.find((ticket) => ticket.id === requestedTicketId)
+            if (!target) {
+              const targetResult = await apiRequest<{ tickets: TicketSummary[] }>(
+                `/api/tickets?id=${encodeURIComponent(requestedTicketId)}${includeInactive ? '&includeInactive=true' : ''}`,
+              )
+              target = targetResult.tickets[0]
+            }
+            if (cancelled) return
+            setUrlTicketId(null)
+            if (target) {
+              setSelected(target)
+              onTicketOpened?.()
+            } else {
+              setNotice({ kind: 'error', text: 'O chamado solicitado não foi encontrado.' })
+            }
           }
-          if (cancelled) return
-          if (target) {
-            setSelected(target)
-            onTicketOpened?.()
-          } else {
-            setNotice({ kind: 'error', text: 'O chamado desta notificação não foi encontrado.' })
-          }
-        }
         }).catch((error: unknown) => {
           if (!cancelled) setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os chamados.' })
         }).finally(() => { if (!cancelled) setLoading(false) })
     }, 180)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, initialTicketId, onTicketOpened, refreshKey])
+  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, requestedTicketId, onTicketOpened, refreshKey, dashboardOpen])
 
   async function syncNow() {
     setSyncing(true)
@@ -872,7 +899,9 @@ export default function TicketBoardPage({
           </div>
         </div>}
       </section>
-      {loading ? <div className="ticket-loading">Carregando chamados...</div> : viewMode === 'list' ? (
+      {loading ? (
+        <ATechLoading message="Carregando chamados..." subtitle="Sincronizando atendimentos e etapas..." />
+      ) : viewMode === 'list' ? (
         <>
           <TicketList tickets={pagedTickets} stages={orderedStages} onOpen={setSelected} />
           <ListPagination total={filtered.length} page={currentTicketListPage} pageCount={ticketListPageCount} pageSize={listPageSize} onPageChange={(page) => setTicketListPageState({ key: ticketListKey, page })} />
@@ -1043,6 +1072,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<TicketProgramming | null>(null)
   const [showSubtaskForm, setShowSubtaskForm] = useState(false)
+  const [detailTab, setDetailTab] = useState<'data' | 'schedule' | 'comments' | 'terms'>('data')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [updatingProgramming, setUpdatingProgramming] = useState<Set<string>>(() => new Set())
@@ -1238,6 +1268,26 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
     }
   }
 
+  async function updateProgrammingTermDelivery(entry: TicketProgramming, delivered: boolean) {
+    setUpdatingProgramming((current) => new Set(current).add(entry.id))
+    setError('')
+    try {
+      await apiRequest(`/api/programming/${entry.id}/term-delivery`, {
+        method: 'PATCH',
+        body: JSON.stringify({ delivered }),
+      })
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a entrega do termo.')
+    } finally {
+      setUpdatingProgramming((current) => {
+        const next = new Set(current)
+        next.delete(entry.id)
+        return next
+      })
+    }
+  }
+
   async function uploadAttachment(file: File | undefined) {
     if (!file) return
     if (file.size > 5 * 1024 * 1024) {
@@ -1339,65 +1389,543 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
         </div>
       </section>}
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}</div>}
-      <div className="ticket-detail-grid">
-        <div className="ticket-detail-main">
-          <section className="ticket-info-section ticket-detail-tags"><div className="ticket-section-heading"><div><h2>Tags do chamado</h2><p>Classificação automática e etiquetas personalizadas.</p></div></div>
-            <TicketTagPills tags={ticketTags} />
-            <details className="ticket-tag-assignment"><summary>Editar tags personalizadas</summary><div>{tagOptions.map((tag) => <label key={tag.id}><input type="checkbox" checked={selectedTagIds.includes(tag.id)} onChange={(event) => void toggleTicketTag(tag.id, event.target.checked)} /><span style={{ color: tag.color }}>{tag.name}</span></label>)}</div></details>
-          </section>
-          <section className="ticket-info-section"><h2>Dados do atendimento</h2><div className="ticket-facts"><div><span>Cliente</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerName || 'Não informado'}</strong></div><div><span>Telefone</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerPhone || 'Não informado'}</strong></div><div><span>Assunto</span><strong>{ticket.subject}</strong></div><div><span>Subassunto</span><strong>{ticket.subsubject || 'Não informado'}</strong></div><div><span>Aberto em</span><strong>{formatDate(ticket.openedAt)}</strong></div><div><span>Tempo aberto</span><strong>{formatAge(ticket.openSeconds)}</strong></div></div><div className="ticket-opening-description"><span>Descrição informada na abertura</span><p>{ticket.description || 'O CVCRM não retornou uma descrição para este atendimento.'}</p></div></section>
 
-          <section className="ticket-info-section cv-conversation-section"><div className="ticket-section-heading"><div><h2>Mensagens do CVCRM</h2><p>{cvMessages.length} resposta(s) sincronizada(s) do chamado.</p></div></div>
-            {cvMessages.length ? <ol>{cvMessages.map((message) => <li key={message.id}><header><strong>{message.author || 'CVCRM'}</strong><time>{formatDate(message.createdAt || null)}</time></header>{message.body && <p>{cvMessageText(message.body)}</p>}{message.attachments.length > 0 && <ul>{message.attachments.map((file, index) => <li key={file.id ?? `${message.id}-${index}`}><Paperclip size={13} /><span>{file.name}</span>{file.url && <a href={file.url} target="_blank" rel="noreferrer">Abrir</a>}</li>)}</ul>}</li>)}</ol> : <p className="ticket-empty-inline">Nenhuma mensagem retornada pelo CVCRM na última sincronização.</p>}
-            <div className="cv-attachment-list"><h3>Anexos do CVCRM ({cvAttachments.length})</h3>{cvAttachments.length ? <ul>{cvAttachments.map((file, index) => <li key={file.id ?? `${file.name}-${index}`}><Paperclip size={14} /><span><strong>{file.name}</strong><small>{file.type || 'Arquivo'}{file.size ? ` · ${file.size}` : ''}{file.createdAt ? ` · ${formatDate(file.createdAt)}` : ''}</small></span>{file.url ? <a href={file.url} target="_blank" rel="noreferrer">Abrir</a> : <small>Link indisponível</small>}</li>)}</ul> : <p className="ticket-empty-inline">Nenhum anexo CVCRM retornado na última sincronização.</p>}</div>
-          </section>
+      <div className="ticket-detail-tabs-bar" role="tablist" aria-label="Abas do chamado">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTab === 'data'}
+          className={`ticket-detail-tab-btn ${detailTab === 'data' ? 'is-active' : ''}`}
+          onClick={() => setDetailTab('data')}
+        >
+          <FileText size={15} /> <span>Dados & Central CVCRM</span>
+          {(cvMessages.length + cvAttachments.length) > 0 && (
+            <span className="tab-pill">{cvMessages.length + cvAttachments.length}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTab === 'schedule'}
+          className={`ticket-detail-tab-btn ${detailTab === 'schedule' ? 'is-active' : ''}`}
+          onClick={() => setDetailTab('schedule')}
+        >
+          <CalendarDays size={15} /> <span>Programação & Tarefas</span>
+          {(programming.length + subtasks.length) > 0 && (
+            <span className="tab-pill">{programming.length + subtasks.length}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTab === 'comments'}
+          className={`ticket-detail-tab-btn ${detailTab === 'comments' ? 'is-active' : ''}`}
+          onClick={() => setDetailTab('comments')}
+        >
+          <MessageCircle size={15} /> <span>Comentários & Histórico</span>
+          {comments.length > 0 && <span className="tab-pill">{comments.length}</span>}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={detailTab === 'terms'}
+          className={`ticket-detail-tab-btn ${detailTab === 'terms' ? 'is-active' : ''}`}
+          onClick={() => setDetailTab('terms')}
+        >
+          <FileSignature size={15} /> <span>Documentos & Termos</span>
+          {(completionTerms.length + attachments.length) > 0 && (
+            <span className="tab-pill">{completionTerms.length + attachments.length}</span>
+          )}
+        </button>
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Histórico de alterações</h2><p>{history.length} evento(s) recente(s)</p></div><button className="secondary-button" type="button" aria-expanded={showHistory} onClick={() => setShowHistory((value) => !value)}>{showHistory ? 'Mostrar menos' : 'Mostrar mais'}</button></div>
-            {showHistory && <ol className="ticket-history-list">{history.map((entry) => <li key={entry.id}><span className="ticket-history-dot" /><div><strong>{entry.summary}</strong><p>{entry.actor_name} · {formatDate(entry.created_at)}</p></div></li>)}{history.length === 0 && <p className="ticket-empty-inline">Ainda não há alterações registradas.</p>}</ol>}
-          </section>
+      </div>
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Termo de finalização</h2><p>Gere o documento e acesse os termos assinados deste protocolo.</p></div></div>
-            <div className="ticket-detail-terms">
-              <button type="button" className="secondary-button" onClick={onGenerateTerm}><FileSignature size={15} /> Gerar termo de finalização</button>
-              {completionTerms.length ? completionTerms.map((term) => <div className="ticket-card-saved-term" key={term.id}>
-                <button type="button" className="ticket-card-saved-term-open" onClick={() => onDownloadTerm(term)} title={`Baixar ${term.file_name}`}><Download size={14} /><span>{term.file_name}</span></button>
-                <small>{Math.ceil(term.file_size / 1024)} KB · {term.uploaded_by_name} · {formatDate(term.created_at)}</small>
-                {(currentUser.role === 'admin' || String(term.uploaded_by) === String(currentUser.id)) && <button type="button" className="ticket-card-saved-term-delete" onClick={() => onDeleteTerm(term)} aria-label={`Excluir ${term.file_name}`} title="Excluir termo"><Trash2 size={14} /></button>}
-              </div>) : <p className="ticket-empty-inline">Nenhum termo assinado salvo neste protocolo.</p>}
+      <div className="ticket-tab-body">
+        {/* ABA 1: DADOS & ATENDIMENTO */}
+        {detailTab === 'data' && (
+          <div className="ticket-detail-grid">
+            <div className="ticket-detail-main">
+              <section className="ticket-info-section">
+                <div className="ticket-section-heading">
+                  <div>
+                    <h2>Dados do atendimento</h2>
+                    <p>Informações de cliente, localização técnica e prazos no CVCRM.</p>
+                  </div>
+                </div>
+                <div className="ticket-facts">
+                  <div><span>Cliente</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerName || 'Não informado'}</strong></div>
+                  <div><span>Telefone</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerPhone || 'Não informado'}</strong></div>
+                  <div><span>Assunto</span><strong>{ticket.subject}</strong></div>
+                  <div><span>Subassunto</span><strong>{ticket.subsubject || 'Não informado'}</strong></div>
+                  <div><span>Aberto em</span><strong>{formatDate(ticket.openedAt)}</strong></div>
+                  <div><span>Tempo aberto</span><strong>{formatAge(ticket.openSeconds)}</strong></div>
+                </div>
+                <div className="ticket-opening-description">
+                  <span>Descrição informada na abertura</span>
+                  <p>{ticket.description || 'O CVCRM não retornou uma descrição para este atendimento.'}</p>
+                </div>
+              </section>
+
+              <section className="ticket-info-section ticket-detail-tags">
+                <div className="ticket-section-heading">
+                  <div>
+                    <h2>Tags do chamado</h2>
+                    <p>Classificação automática e etiquetas personalizadas.</p>
+                  </div>
+                </div>
+                <TicketTagPills tags={ticketTags} />
+                <details className="ticket-tag-assignment">
+                  <summary>Editar tags personalizadas</summary>
+                  <div>
+                    {tagOptions.map((tag) => (
+                      <label key={tag.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedTagIds.includes(tag.id)}
+                          onChange={(event) => void toggleTicketTag(tag.id, event.target.checked)}
+                        />
+                        <span style={{ color: tag.color }}>{tag.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              </section>
+
+              {/* Central CVCRM integrada diretamente na primeira tela */}
+              <section className="ticket-info-section cv-conversation-section">
+                <div className="ticket-section-heading">
+                  <div>
+                    <h2>Central de Comunicação & Arquivos CVCRM</h2>
+                    <p>{cvMessages.length} mensagem(ns) e {cvAttachments.length} anexo(s) sincronizados do CVCRM.</p>
+                  </div>
+                </div>
+                {cvMessages.length ? (
+                  <ol>
+                    {cvMessages.map((message) => (
+                      <li key={message.id}>
+                        <header><strong>{message.author || 'CVCRM'}</strong><time>{formatDate(message.createdAt || null)}</time></header>
+                        {message.body && <p>{cvMessageText(message.body)}</p>}
+                        {message.attachments.length > 0 && (
+                          <ul>
+                            {message.attachments.map((file, index) => (
+                              <li key={file.id ?? `${message.id}-${index}`}>
+                                <Paperclip size={13} />
+                                <span>{file.name}</span>
+                                {file.url && <a href={file.url} target="_blank" rel="noreferrer">Abrir</a>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                ) : <p className="ticket-empty-inline">Nenhuma mensagem retornada pelo CVCRM na última sincronização.</p>}
+
+                <div className="cv-attachment-list">
+                  <h3>Anexos sincronizados do CVCRM ({cvAttachments.length})</h3>
+                  {cvAttachments.length ? (
+                    <ul>
+                      {cvAttachments.map((file, index) => (
+                        <li key={file.id ?? `${file.name}-${index}`}>
+                          <Paperclip size={14} />
+                          <span><strong>{file.name}</strong><small>{file.type || 'Arquivo'}{file.size ? ` · ${file.size}` : ''}{file.createdAt ? ` · ${formatDate(file.createdAt)}` : ''}</small></span>
+                          {file.url ? <a href={file.url} target="_blank" rel="noreferrer">Abrir</a> : <small>Link indisponível</small>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className="ticket-empty-inline">Nenhum anexo CVCRM retornado na última sincronização.</p>}
+                </div>
+              </section>
             </div>
-          </section>
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Anexos</h2><p>Arquivos internos vinculados a este chamado (até 5 MiB cada).</p></div><label className={`secondary-button attachment-upload-button ${uploading ? 'is-disabled' : ''}`}><Paperclip size={15} />{uploading ? 'Enviando...' : 'Anexar arquivo'}<input className="sr-only" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.webp,.zip" disabled={uploading} onChange={(event) => { void uploadAttachment(event.target.files?.[0]); event.currentTarget.value = '' }} /></label></div>
-            {attachments.length ? <ul className="ticket-attachment-list">{attachments.map((entry) => <li key={entry.id}><Paperclip size={15} /><span><strong>{entry.file_name}</strong><small>{Math.ceil(entry.file_size / 1024)} KB · {entry.uploaded_by_name}</small></span><button className="icon-button" type="button" title={`Baixar ${entry.file_name}`} aria-label={`Baixar ${entry.file_name}`} onClick={() => void downloadAttachment(entry)}><Download size={15} /></button></li>)}</ul> : <p className="ticket-empty-inline">Nenhum anexo enviado.</p>}
-          </section>
+            <aside className="ticket-detail-aside">
+              <section className="ticket-info-section">
+                <h2>Controle local</h2>
+                <form className="ticket-management-form" onSubmit={(event) => void saveManagement(event)}>
+                  <label className="ticket-form-field">
+                    <span>Prazo previsto</span>
+                    <input type="datetime-local" value={management.due} onChange={(event) => setManagement((current) => ({ ...current, due: event.target.value }))} />
+                  </label>
+                  <label className="ticket-form-field">
+                    <span><Coins size={14} /> Custo previsto</span>
+                    <input type="number" min="0" step="0.01" value={management.estimatedCost} onChange={(event) => setManagement((current) => ({ ...current, estimatedCost: event.target.value }))} />
+                  </label>
+                  <label className="ticket-form-field">
+                    <span><Coins size={14} /> Custo realizado</span>
+                    <input type="number" min="0" step="0.01" value={management.actualCost} onChange={(event) => setManagement((current) => ({ ...current, actualCost: event.target.value }))} />
+                  </label>
+                  <button className="secondary-button" type="submit" disabled={busy}>Salvar controle</button>
+                </form>
+                <div className="ticket-cost-summary">
+                  <span>Previsto <strong>{money(ticket.estimatedCost)}</strong></span>
+                  <span>Realizado <strong>{money(ticket.actualCost)}</strong></span>
+                </div>
+              </section>
+              <div className="ticket-detail-source-note">
+                <ShieldCheck size={15} />
+                <span>Situação é consultada no CVCRM; comentários, subtarefas e programação são dados locais da ATech.</span>
+              </div>
+            </aside>
+          </div>
+        )}
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Programação de atividades</h2><p>Colaboradores, horário e descritivo do serviço.</p></div><button className="secondary-button" type="button" onClick={() => { setEditingSchedule(null); setShowScheduleForm((value) => !value) }}><Plus size={15} /> Programar</button></div>
-            {(showScheduleForm || editingSchedule) && <TicketProgrammingForm key={editingSchedule ? `${editingSchedule.id}-${editingSchedule.programming_type}` : 'new-ticket-programming'} tickets={tickets} initialTicketId={ticket.id} allowMixedCollaborators editingAppointment={editingSchedule ?? undefined} onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }} onSaved={() => { setShowScheduleForm(false); setEditingSchedule(null); setRefresh((value) => value + 1); onNotice({ kind: 'success', text: 'Programação salva.' }) }} />}
-            {programming.length ? <div className="ticket-programming-list">{programming.map((entry) => <article className="ticket-programming-item" key={entry.id}><span className="programming-time">{programmingDateTimeString(entry.starts_at)}–{programmingTimeString(new Date(entry.ends_at))}</span><strong>{entry.collaborator_name}{entry.collaborator_nickname ? ` · ${entry.collaborator_nickname}` : ''}</strong><p>{entry.activity_description}</p><div className="schedule-appointment-actions"><label className={`schedule-completion-check ${entry.completed ? 'is-complete' : ''}`}><input type="checkbox" checked={entry.completed} disabled={updatingProgramming.has(entry.id)} onChange={(event) => void updateProgrammingCompletion(entry, event.target.checked)} /><span>{entry.completed ? 'Realizada' : 'Marcar como realizada'}</span></label><button type="button" className="text-action-btn" onClick={() => { setShowScheduleForm(false); setEditingSchedule(entry) }}><Pencil size={13} /> Editar</button><button type="button" className="text-action-btn danger-action" onClick={() => void deleteProgramming(entry)}><Trash2 size={13} /> Excluir</button></div></article>)}</div> : !showScheduleForm && !editingSchedule && <p className="ticket-empty-inline">Nenhuma atividade programada.</p>}
-          </section>
+        {/* ABA 2: PROGRAMAÇÃO & TAREFAS */}
+        {detailTab === 'schedule' && (
+          <div className="ticket-tab-pane">
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Programação de atividades em campo</h2>
+                  <p>Colaboradores alocados, horário e descritivo do serviço.</p>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => { setEditingSchedule(null); setShowScheduleForm((value) => !value) }}>
+                  <Plus size={15} /> Programar
+                </button>
+              </div>
+              {(showScheduleForm || editingSchedule) && (
+                <TicketProgrammingForm
+                  key={editingSchedule ? `${editingSchedule.id}-${editingSchedule.programming_type}` : 'new-ticket-programming'}
+                  tickets={tickets}
+                  initialTicketId={ticket.id}
+                  allowMixedCollaborators
+                  editingAppointment={editingSchedule ?? undefined}
+                  onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }}
+                  onSaved={() => {
+                    setShowScheduleForm(false)
+                    setEditingSchedule(null)
+                    setRefresh((value) => value + 1)
+                    onNotice({ kind: 'success', text: 'Programação salva.' })
+                  }}
+                />
+              )}
+              {programming.length ? (
+                <div className="ticket-programming-list">
+                  {programming.map((entry) => (
+                    <article className={`ticket-programming-item ${entry.is_finalization ? 'is-finalization' : ''}`} key={entry.id}>
+                      {entry.is_finalization && (
+                        <div className="ticket-programming-finalization-alert">
+                          <div className="ticket-programming-finalization-alert-top">
+                            <div className="ticket-programming-alert-tag">
+                              <FileSignature size={12} />
+                              <span>FINALIZAÇÃO DO CHAMADO</span>
+                            </div>
+                            <span className={`ticket-programming-delivery-badge ${entry.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
+                              {entry.completion_term_delivered ? (
+                                <><Check size={11} /> Termo entregue ao colaborador</>
+                              ) : (
+                                <><Clock3 size={11} /> Termo pendente de entrega</>
+                              )}
+                            </span>
+                          </div>
+                          <p className="ticket-programming-alert-msg">
+                            Solicitar a assinatura do termo de finalização ao cliente após a realização do serviço.
+                          </p>
+                        </div>
+                      )}
+                      <div className="ticket-programming-meta">
+                        <span className="programming-time">{programmingDateTimeString(entry.starts_at)}–{programmingTimeString(new Date(entry.ends_at))}</span>
+                        <strong>{entry.collaborator_name}{entry.collaborator_nickname ? ` · ${entry.collaborator_nickname}` : ''}</strong>
+                      </div>
+                      <p className="ticket-programming-desc">{entry.activity_description}</p>
+                      <div className="ticket-programming-footer">
+                        <div className="ticket-programming-checks">
+                          <label className={`programming-pill-check ${entry.completed ? 'is-checked' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={entry.completed}
+                              disabled={updatingProgramming.has(entry.id)}
+                              onChange={(event) => void updateProgrammingCompletion(entry, event.target.checked)}
+                            />
+                            <span>{entry.completed ? 'Realizada' : 'Marcar como realizada'}</span>
+                          </label>
+                          {entry.is_finalization && (
+                            <label className={`programming-pill-check is-term ${entry.completion_term_delivered ? 'is-checked' : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(entry.completion_term_delivered)}
+                                disabled={updatingProgramming.has(entry.id)}
+                                onChange={(event) => void updateProgrammingTermDelivery(entry, event.target.checked)}
+                              />
+                              <span>{entry.completion_term_delivered ? 'Termo entregue' : 'Termo de finalização entregue'}</span>
+                            </label>
+                          )}
+                        </div>
+                        <div className="ticket-programming-buttons">
+                          <button type="button" className="text-action-btn" onClick={() => { setShowScheduleForm(false); setEditingSchedule(entry) }}>
+                            <Pencil size={12} /> Editar
+                          </button>
+                          <button type="button" className="text-action-btn danger-action" onClick={() => void deleteProgramming(entry)}>
+                            <Trash2 size={12} /> Excluir
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : !showScheduleForm && !editingSchedule && (
+                <p className="ticket-empty-inline">Nenhuma atividade programada para este chamado.</p>
+              )}
+            </section>
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Subtarefas</h2><p>{subtasks.filter((item) => item.is_done).length} de {subtasks.length} concluídas</p></div><button className="secondary-button" type="button" onClick={() => setShowSubtaskForm((value) => !value)}><Plus size={15} /> Nova subtarefa</button></div>
-            {showSubtaskForm && <form className="ticket-subtask-form" onSubmit={(event) => void createSubtask(event)}><input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} placeholder="Descreva a subtarefa" maxLength={300} required /><button className="primary-button" type="submit" disabled={busy}>Adicionar</button></form>}
-            {subtasks.length ? <ul className="ticket-subtask-list">{subtasks.map((subtask) => <li key={subtask.id}><label><input type="checkbox" checked={subtask.is_done} onChange={() => void toggleSubtask(subtask)} /><span className={subtask.is_done ? 'is-complete' : ''}>{subtask.title}</span></label>{subtask.assignee_name && <small>{subtask.assignee_name}</small>}{subtask.due_at && <small>{formatDate(subtask.due_at)}</small>}</li>)}</ul> : !showSubtaskForm && <p className="ticket-empty-inline">Nenhuma subtarefa.</p>}
-          </section>
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Subtarefas & Checklist</h2>
+                  <p>{subtasks.filter((item) => item.is_done).length} de {subtasks.length} concluídas</p>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => setShowSubtaskForm((value) => !value)}>
+                  <Plus size={15} /> Nova subtarefa
+                </button>
+              </div>
+              {showSubtaskForm && (
+                <form className="ticket-subtask-form" onSubmit={(event) => void createSubtask(event)}>
+                  <input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} placeholder="Descreva a subtarefa" maxLength={300} required />
+                  <button className="primary-button" type="submit" disabled={busy}>Adicionar</button>
+                </form>
+              )}
+              {subtasks.length ? (
+                <ul className="ticket-subtask-list">
+                  {subtasks.map((subtask) => (
+                    <li key={subtask.id}>
+                      <label>
+                        <input type="checkbox" checked={subtask.is_done} onChange={() => void toggleSubtask(subtask)} />
+                        <span className={subtask.is_done ? 'is-complete' : ''}>{subtask.title}</span>
+                      </label>
+                      {subtask.assignee_name && <small>{subtask.assignee_name}</small>}
+                      {subtask.due_at && <small>{formatDate(subtask.due_at)}</small>}
+                    </li>
+                  ))}
+                </ul>
+              ) : !showSubtaskForm && (
+                <p className="ticket-empty-inline">Nenhuma subtarefa registrada.</p>
+              )}
+            </section>
+          </div>
+        )}
 
-          <section className="ticket-info-section"><div className="ticket-section-heading"><div><h2>Comentários</h2><p>Digite @ para mencionar uma pessoa; respostas notificam quem participou da menção.</p></div><MessageCircle size={17} /></div>
-            {loading ? <p className="ticket-empty-inline">Carregando conversa...</p> : <div className="ticket-comments">{comments.filter((entry) => !entry.parent_comment_id).map((entry) => {
-              const replies = comments.filter((reply) => reply.parent_comment_id === entry.id)
-              const canManageComment = currentUser.role === 'admin' || Number(entry.author_id) === currentUser.id
-              return <article className="ticket-comment-thread" key={entry.id}><article className="ticket-comment"><div className="comment-avatar">{entry.author_name.slice(0, 1).toUpperCase()}</div><div className="ticket-comment-content"><header><strong>{entry.author_name}</strong><time>{formatDate(entry.created_at)}{entry.updated_at !== entry.created_at ? ' · editado' : ''}</time></header>{editingComment?.id === entry.id ? <form className="comment-edit-form" onSubmit={(event) => { event.preventDefault(); void editComment(entry, editingComment.body) }}><textarea value={editingComment.body} onChange={(event) => setEditingComment({ ...editingComment, body: event.target.value })} maxLength={6000} required /><button className="primary-button" type="submit" disabled={busy}>Salvar</button><button className="secondary-button" type="button" onClick={() => setEditingComment(null)}>Cancelar</button></form> : <p>{entry.body}</p>}{entry.mentions.length > 0 && <small>Mencionados: {entry.mentions.map((person) => person.displayName).join(', ')}</small>}<div className="comment-actions"><button className="text-action-btn" type="button" onClick={() => { setReplyingTo(entry.id); setComment('') }}><MessageCircle size={13} /> Responder</button>{canManageComment && <><button className="text-action-btn" type="button" onClick={() => setEditingComment(entry)}><Pencil size={13} /> Editar</button><button className="text-action-btn danger-action" type="button" onClick={() => void deleteComment(entry)}><Trash2 size={13} /> Excluir</button></>}</div></div></article>
-                {replies.map((reply) => {
-                  const canManageReply = currentUser.role === 'admin' || Number(reply.author_id) === currentUser.id
-                  return <article className="ticket-comment ticket-comment-reply" key={reply.id}><div className="comment-avatar">{reply.author_name.slice(0, 1).toUpperCase()}</div><div className="ticket-comment-content"><header><strong>{reply.author_name}</strong><time>{formatDate(reply.created_at)}{reply.updated_at !== reply.created_at ? ' · editado' : ''}</time></header>{editingComment?.id === reply.id ? <form className="comment-edit-form" onSubmit={(event) => { event.preventDefault(); void editComment(reply, editingComment.body) }}><textarea value={editingComment.body} onChange={(event) => setEditingComment({ ...editingComment, body: event.target.value })} maxLength={6000} required /><button className="primary-button" type="submit" disabled={busy}>Salvar</button><button className="secondary-button" type="button" onClick={() => setEditingComment(null)}>Cancelar</button></form> : <p>{reply.body}</p>}<small>Resposta</small>{canManageReply && <div className="comment-actions"><button className="text-action-btn" type="button" onClick={() => setEditingComment(reply)}><Pencil size={13} /> Editar</button><button className="text-action-btn danger-action" type="button" onClick={() => void deleteComment(reply)}><Trash2 size={13} /> Excluir</button></div>}</div></article>
-                })}
-              </article>
-            })}{comments.length === 0 && <p className="ticket-empty-inline">Ainda não há comentários.</p>}</div>}
-            {replyingTo && <div className="replying-banner">Respondendo a {comments.find((entry) => entry.id === replyingTo)?.author_name ?? 'comentário'}<button type="button" className="text-action-btn" onClick={() => setReplyingTo(null)}>Cancelar</button></div>}
-            <form className="ticket-comment-form" onSubmit={(event) => void postComment(event)}><div className="mention-composer"><textarea value={comment} onChange={(event) => updateCommentText(event.target.value, event.currentTarget.selectionStart)} rows={3} maxLength={6000} placeholder={replyingTo ? 'Escreva uma resposta...' : 'Escreva um comentário... Use @ para mencionar'} required />{mentionQuery !== null && <div className="mention-suggestions" role="listbox">{people.filter((person) => person.displayName.toLocaleLowerCase('pt-BR').includes(mentionQuery)).slice(0, 6).map((person) => <button key={person.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(person)}><AtSign size={13} />{person.displayName}</button>)}</div>}</div><div className="comment-form-footer">{mentions.length > 0 && <small>{mentions.length} pessoa(s) mencionada(s)</small>}<button className="primary-button" type="submit" disabled={busy || !comment.trim()}>{busy ? 'Enviando...' : replyingTo ? 'Responder' : 'Comentar'}</button></div></form>
-          </section>
-        </div>
+        {/* ABA 3: COMENTÁRIOS & HISTÓRICO */}
+        {detailTab === 'comments' && (
+          <div className="ticket-tab-pane">
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Comentários e alinhamento interno</h2>
+                  <p>Digite @ para mencionar membros da equipe. Respostas notificam os participantes.</p>
+                </div>
+                <MessageCircle size={17} />
+              </div>
+              {loading ? (
+                <p className="ticket-empty-inline">Carregando conversa...</p>
+              ) : (
+                <div className="ticket-comments">
+                  {comments.filter((entry) => !entry.parent_comment_id).map((entry) => {
+                    const replies = comments.filter((reply) => reply.parent_comment_id === entry.id)
+                    const canManageComment = currentUser.role === 'admin' || Number(entry.author_id) === currentUser.id
+                    return (
+                      <article className="ticket-comment-thread" key={entry.id}>
+                        <article className="ticket-comment">
+                          <div className="comment-avatar">{entry.author_name.slice(0, 1).toUpperCase()}</div>
+                          <div className="ticket-comment-content">
+                            <header>
+                              <strong>{entry.author_name}</strong>
+                              <time>{formatDate(entry.created_at)}{entry.updated_at !== entry.created_at ? ' · editado' : ''}</time>
+                            </header>
+                            {editingComment?.id === entry.id ? (
+                              <form className="comment-edit-form" onSubmit={(event) => { event.preventDefault(); void editComment(entry, editingComment.body) }}>
+                                <textarea value={editingComment.body} onChange={(event) => setEditingComment({ ...editingComment, body: event.target.value })} maxLength={6000} required />
+                                <button className="primary-button" type="submit" disabled={busy}>Salvar</button>
+                                <button className="secondary-button" type="button" onClick={() => setEditingComment(null)}>Cancelar</button>
+                              </form>
+                            ) : (
+                              <p>{entry.body}</p>
+                            )}
+                            {entry.mentions.length > 0 && <small>Mencionados: {entry.mentions.map((person) => person.displayName).join(', ')}</small>}
+                            <div className="comment-actions">
+                              <button className="text-action-btn" type="button" onClick={() => { setReplyingTo(entry.id); setComment('') }}>
+                                <MessageCircle size={13} /> Responder
+                              </button>
+                              {canManageComment && (
+                                <>
+                                  <button className="text-action-btn" type="button" onClick={() => setEditingComment(entry)}>
+                                    <Pencil size={13} /> Editar
+                                  </button>
+                                  <button className="text-action-btn danger-action" type="button" onClick={() => void deleteComment(entry)}>
+                                    <Trash2 size={13} /> Excluir
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                        {replies.map((reply) => {
+                          const canManageReply = currentUser.role === 'admin' || Number(reply.author_id) === currentUser.id
+                          return (
+                            <article className="ticket-comment ticket-comment-reply" key={reply.id}>
+                              <div className="comment-avatar">{reply.author_name.slice(0, 1).toUpperCase()}</div>
+                              <div className="ticket-comment-content">
+                                <header>
+                                  <strong>{reply.author_name}</strong>
+                                  <time>{formatDate(reply.created_at)}{reply.updated_at !== reply.created_at ? ' · editado' : ''}</time>
+                                </header>
+                                {editingComment?.id === reply.id ? (
+                                  <form className="comment-edit-form" onSubmit={(event) => { event.preventDefault(); void editComment(reply, editingComment.body) }}>
+                                    <textarea value={editingComment.body} onChange={(event) => setEditingComment({ ...editingComment, body: event.target.value })} maxLength={6000} required />
+                                    <button className="primary-button" type="submit" disabled={busy}>Salvar</button>
+                                    <button className="secondary-button" type="button" onClick={() => setEditingComment(null)}>Cancelar</button>
+                                  </form>
+                                ) : (
+                                  <p>{reply.body}</p>
+                                )}
+                                <small>Resposta</small>
+                                {canManageReply && (
+                                  <div className="comment-actions">
+                                    <button className="text-action-btn" type="button" onClick={() => setEditingComment(reply)}>
+                                      <Pencil size={13} /> Editar
+                                    </button>
+                                    <button className="text-action-btn danger-action" type="button" onClick={() => void deleteComment(reply)}>
+                                      <Trash2 size={13} /> Excluir
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </article>
+                    )
+                  })}
+                  {comments.length === 0 && <p className="ticket-empty-inline">Ainda não há comentários.</p>}
+                </div>
+              )}
+              {replyingTo && (
+                <div className="replying-banner">
+                  Respondendo a {comments.find((entry) => entry.id === replyingTo)?.author_name ?? 'comentário'}
+                  <button type="button" className="text-action-btn" onClick={() => setReplyingTo(null)}>Cancelar</button>
+                </div>
+              )}
+              <form className="ticket-comment-form" onSubmit={(event) => void postComment(event)}>
+                <div className="mention-composer">
+                  <textarea
+                    value={comment}
+                    onChange={(event) => updateCommentText(event.target.value, event.currentTarget.selectionStart)}
+                    rows={3}
+                    maxLength={6000}
+                    placeholder={replyingTo ? 'Escreva uma resposta...' : 'Escreva um comentário... Use @ para mencionar'}
+                    required
+                  />
+                  {mentionQuery !== null && (
+                    <div className="mention-suggestions" role="listbox">
+                      {people
+                        .filter((person) => person.displayName.toLocaleLowerCase('pt-BR').includes(mentionQuery))
+                        .slice(0, 6)
+                        .map((person) => (
+                          <button key={person.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(person)}>
+                            <AtSign size={13} />{person.displayName}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+                <div className="comment-form-footer">
+                  {mentions.length > 0 && <small>{mentions.length} pessoa(s) mencionada(s)</small>}
+                  <button className="primary-button" type="submit" disabled={busy || !comment.trim()}>
+                    {busy ? 'Enviando...' : replyingTo ? 'Responder' : 'Comentar'}
+                  </button>
+                </div>
+              </form>
+            </section>
 
-        <aside className="ticket-detail-aside"><section className="ticket-info-section"><h2>Controle local</h2><form className="ticket-management-form" onSubmit={(event) => void saveManagement(event)}><label className="ticket-form-field"><span>Prazo previsto</span><input type="datetime-local" value={management.due} onChange={(event) => setManagement((current) => ({ ...current, due: event.target.value }))} /></label><label className="ticket-form-field"><span><Coins size={14} /> Custo previsto</span><input type="number" min="0" step="0.01" value={management.estimatedCost} onChange={(event) => setManagement((current) => ({ ...current, estimatedCost: event.target.value }))} /></label><label className="ticket-form-field"><span><Coins size={14} /> Custo realizado</span><input type="number" min="0" step="0.01" value={management.actualCost} onChange={(event) => setManagement((current) => ({ ...current, actualCost: event.target.value }))} /></label><button className="secondary-button" type="submit" disabled={busy}>Salvar controle</button></form><div className="ticket-cost-summary"><span>Previsto <strong>{money(ticket.estimatedCost)}</strong></span><span>Realizado <strong>{money(ticket.actualCost)}</strong></span></div></section><div className="ticket-detail-source-note"><ShieldCheck size={15} /><span>Situação é consultada no CVCRM; comentários, subtarefas e programação são dados locais da ATech.</span></div></aside>
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Histórico de alterações</h2>
+                  <p>{history.length} evento(s) recente(s)</p>
+                </div>
+                <button className="secondary-button" type="button" aria-expanded={showHistory} onClick={() => setShowHistory((value) => !value)}>
+                  {showHistory ? 'Mostrar menos' : 'Mostrar mais'}
+                </button>
+              </div>
+              {showHistory && (
+                <ol className="ticket-history-list">
+                  {history.map((entry) => (
+                    <li key={entry.id}>
+                      <span className="ticket-history-dot" />
+                      <div>
+                        <strong>{entry.summary}</strong>
+                        <p>{entry.actor_name} · {formatDate(entry.created_at)}</p>
+                      </div>
+                    </li>
+                  ))}
+                  {history.length === 0 && <p className="ticket-empty-inline">Ainda não há alterações registradas.</p>}
+                </ol>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* ABA 4: DOCUMENTOS & TERMOS */}
+        {detailTab === 'terms' && (
+          <div className="ticket-tab-pane">
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Termo de finalização</h2>
+                  <p>Gere o documento oficial e acesse os termos assinados deste protocolo.</p>
+                </div>
+              </div>
+              <div className="ticket-detail-terms">
+                <button type="button" className="secondary-button" onClick={onGenerateTerm}>
+                  <FileSignature size={15} /> Gerar termo de finalização
+                </button>
+                {completionTerms.length ? completionTerms.map((term) => (
+                  <div className="ticket-card-saved-term" key={term.id}>
+                    <button type="button" className="ticket-card-saved-term-open" onClick={() => onDownloadTerm(term)} title={`Baixar ${term.file_name}`}>
+                      <Download size={14} /><span>{term.file_name}</span>
+                    </button>
+                    <small>{Math.ceil(term.file_size / 1024)} KB · {term.uploaded_by_name} · {formatDate(term.created_at)}</small>
+                    {(currentUser.role === 'admin' || String(term.uploaded_by) === String(currentUser.id)) && (
+                      <button type="button" className="ticket-card-saved-term-delete" onClick={() => onDeleteTerm(term)} aria-label={`Excluir ${term.file_name}`} title="Excluir termo">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                )) : <p className="ticket-empty-inline">Nenhum termo assinado salvo neste protocolo.</p>}
+              </div>
+            </section>
+
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Anexos internos da ATech</h2>
+                  <p>Arquivos internos vinculados a este chamado (até 5 MiB cada).</p>
+                </div>
+                <label className={`secondary-button attachment-upload-button ${uploading ? 'is-disabled' : ''}`}>
+                  <Paperclip size={15} />{uploading ? 'Enviando...' : 'Anexar arquivo'}
+                  <input
+                    className="sr-only"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.webp,.zip"
+                    disabled={uploading}
+                    onChange={(event) => { void uploadAttachment(event.target.files?.[0]); event.currentTarget.value = '' }}
+                  />
+                </label>
+              </div>
+              {attachments.length ? (
+                <ul className="ticket-attachment-list">
+                  {attachments.map((entry) => (
+                    <li key={entry.id}>
+                      <Paperclip size={15} />
+                      <span><strong>{entry.file_name}</strong><small>{Math.ceil(entry.file_size / 1024)} KB · {entry.uploaded_by_name}</small></span>
+                      <button className="icon-button" type="button" title={`Baixar ${entry.file_name}`} aria-label={`Baixar ${entry.file_name}`} onClick={() => void downloadAttachment(entry)}>
+                        <Download size={15} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="ticket-empty-inline">Nenhum anexo interno enviado.</p>}
+            </section>
+          </div>
+        )}
       </div>
     </section>
   )

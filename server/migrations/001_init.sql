@@ -9,13 +9,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_login_at TIMESTAMPTZ,
-  CONSTRAINT admin_must_be_active CHECK (role <> 'admin' OR status = 'active'),
-  CONSTRAINT admin_requires_password CHECK (role <> 'admin' OR password_hash IS NOT NULL),
-  CONSTRAINT member_has_no_password CHECK (role <> 'member' OR password_hash IS NULL)
+  CONSTRAINT admin_must_be_active CHECK (role <> 'admin' OR status = 'active')
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (lower(email));
-CREATE UNIQUE INDEX IF NOT EXISTS only_one_atech_admin ON users (role) WHERE role = 'admin';
 CREATE INDEX IF NOT EXISTS users_status_index ON users (status);
 
 CREATE TABLE IF NOT EXISTS user_sessions (

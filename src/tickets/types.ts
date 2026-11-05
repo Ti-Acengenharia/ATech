@@ -96,6 +96,8 @@ export interface TicketProgramming {
   equipment: string[]
   tools: string[]
   completed: boolean
+  is_finalization?: boolean
+  completion_term_delivered?: boolean
   programming_type: 'general' | 'foreman'
   starts_at: string
   ends_at: string

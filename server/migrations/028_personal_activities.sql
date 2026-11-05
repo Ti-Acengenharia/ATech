@@ -37,4 +37,5 @@ INSERT INTO user_page_access (user_id, page_key)
 SELECT id, 'personal-activities'
 FROM users
 WHERE role = 'member'
+  AND NOT EXISTS (SELECT 1 FROM user_page_access WHERE page_key = 'personal-activities')
 ON CONFLICT (user_id, page_key) DO NOTHING;
