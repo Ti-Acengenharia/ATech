@@ -70,6 +70,7 @@ try {
     '048_session_timeout_and_live_sync_settings.sql',
     '049_programming_completion_flag_and_term_delivery.sql',
     '050_dashboard_performance_indexes.sql',
+    '051_calendar_and_working_hours.sql',
   ]
 
   let newlyAppliedCount = 0

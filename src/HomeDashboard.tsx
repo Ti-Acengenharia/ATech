@@ -41,6 +41,7 @@ export type AdminPage =
   | 'legal-processes'
   | 'personal-activities'
   | 'logs'
+  | 'work-calendar'
 
 interface SessionUser {
   id: number

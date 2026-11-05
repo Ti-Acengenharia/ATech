@@ -7,6 +7,7 @@ import {
   Ban,
   Bell,
   BriefcaseBusiness,
+  CalendarClock,
   CalendarDays,
   Check,
   CircleAlert,
@@ -37,7 +38,7 @@ import './atech.css'
 
 type UserRole = 'admin' | 'member'
 type UserStatus = 'invited' | 'active' | 'suspended'
-type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities' | 'logs'
+type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities' | 'logs' | 'work-calendar'
 type AppPage = AdminPage | 'not-found'
 
 interface SessionUser {
@@ -113,13 +114,14 @@ const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 const HomepageTicketsFilterSettings = lazy(() => import('./HomepageTicketsFilterSettings'))
 const SessionTimeoutSettings = lazy(() => import('./SessionTimeoutSettings'))
 const AuditLogsPage = lazy(() => import('./AuditLogsPage'))
+const CalendarManagementPage = lazy(() => import('./CalendarManagementPage'))
 const VersionHistoryModal = lazy(() => import('./VersionHistoryModal'))
 const NotFoundPage = lazy(() => import('./NotFoundPage'))
 const PrivacyPolicyModal = lazy(() => import('./PrivacyPolicyModal'))
 
 const allAdminPages: AdminPage[] = [
   'home', 'tickets', 'letter-filling', 'schedule', 'collaborators', 'inventory',
-  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities', 'logs',
+  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities', 'logs', 'work-calendar',
 ]
 
 function readPageFromLocation(): AppPage {
@@ -595,7 +597,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'legal-processes', label: 'Processos Jurídicos' },
     { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
-  const canAccessPage = useCallback((key: AdminPage) => key === 'accesses'
+  const canAccessPage = useCallback((key: AdminPage) => (key === 'accesses' || key === 'logs' || key === 'work-calendar')
     ? user.role === 'admin'
     : user.role === 'admin' || pageAccess.includes(key), [pageAccess, user.role])
   const isForbidden = pageState !== 'not-found' && !canAccessPage(pageState)
@@ -904,6 +906,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     'personal-activities': 'Atividades pessoais',
     inventory: 'Gestão de estoque',
     logs: 'Auditoria & Logs',
+    'work-calendar': 'Expediente e Calendário',
   }
   const currentTitle = page === 'not-found'
     ? 'Página não encontrada'
@@ -915,6 +918,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     ...availablePages,
     ...(user.role === 'admin'
       ? [
+          { key: 'work-calendar' as const, label: 'Expediente e Calendário' },
           { key: 'accesses' as const, label: 'Acessos e Configurações' },
           { key: 'logs' as const, label: 'Auditoria & Logs' },
         ]
@@ -942,6 +946,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           {canAccessPage('legal-processes') && <button type="button" title="Processos Jurídicos" aria-label="Ir para processos jurídicos" className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`} onClick={() => setPage('legal-processes')}><BriefcaseBusiness size={17} /><span>Processos Jurídicos</span></button>}
           {canAccessPage('personal-activities') && <button type="button" title="Atividades pessoais" aria-label="Ir para atividades pessoais" className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`} onClick={() => setPage('personal-activities')}><ListTodo size={17} /><span>Atividades pessoais</span></button>}
           {canAccessPage('information') && <button type="button" title="Informações" aria-label="Ir para informações" className={`nav-item ${page === 'information' ? 'nav-item-active' : ''}`} onClick={() => setPage('information')}><Info size={17} /><span>Informações</span></button>}
+          {user.role === 'admin' && <button type="button" title="Expediente e Calendário" aria-label="Ir para expediente e calendário" className={`nav-item ${page === 'work-calendar' ? 'nav-item-active' : ''}`} onClick={() => setPage('work-calendar')}><CalendarClock size={17} /><span>Expediente</span></button>}
           {user.role === 'admin' && <button type="button" title="Acessos" aria-label="Ir para acessos" className={`nav-item ${page === 'accesses' ? 'nav-item-active' : ''}`} onClick={() => setPage('accesses')}><UsersRound size={17} /><span>Acessos</span></button>}
           {user.role === 'admin' && <button type="button" title="Auditoria & Logs" aria-label="Ir para auditoria e logs" className={`nav-item ${page === 'logs' ? 'nav-item-active' : ''}`} onClick={() => setPage('logs')}><History size={17} /><span>Auditoria & Logs</span></button>}
         </nav>
@@ -1079,6 +1084,8 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
             />
           ) : page === 'personal-activities' && canAccessPage('personal-activities') ? (
             <PersonalActivitiesPage currentUser={user} canViewOtherActivities={canViewOtherPersonalActivities} />
+          ) : page === 'work-calendar' && user.role === 'admin' ? (
+            <CalendarManagementPage />
           ) : page === 'logs' && user.role === 'admin' ? (
             <AuditLogsPage />
           ) : page === 'accesses' ? (
@@ -1330,6 +1337,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
     inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
     logs: { title: 'Auditoria & Logs', description: 'Trilha de auditoria e segurança do sistema.', icon: History },
+    'work-calendar': { title: 'Expediente e Calendário', description: 'Feriados, sábados trabalhados e jornada da assistência técnica.', icon: CalendarClock },
   }[page]
   const ModuleIcon = module.icon
 

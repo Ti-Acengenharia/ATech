@@ -20,6 +20,7 @@ import inventoryRoutes from './routes/inventory.js'
 import homeRoutes from './routes/home.js'
 import syncRoutes from './routes/sync.js'
 import settingsRoutes from './routes/settings.js'
+import calendarRoutes from './routes/calendar.js'
 import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, syncCvcrmTickets } from './services/cvcrm.js'
 import { initPostgresSyncListener } from './services/sync-events.js'
 
@@ -204,6 +205,7 @@ app.use('/api/inventory', inventoryRoutes)
 app.use('/api/home', homeRoutes)
 app.use('/api/sync', syncRoutes)
 app.use('/api/settings', settingsRoutes)
+app.use('/api/calendar', calendarRoutes)
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Endpoint da API não encontrado.' })

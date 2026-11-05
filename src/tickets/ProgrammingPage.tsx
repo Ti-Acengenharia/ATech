@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, CircleAlert, Clock3, FileSignature, Pencil, Plus, Printer, RefreshCw, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { apiRequest } from '../api/client'
+import { useLiveSync } from '../api/liveSync'
 import { getCompanyLogoDataUrl } from '../utils/companyLogo'
 import TicketProgrammingForm from './TicketProgrammingForm'
 import type { TicketSummary } from './types'
@@ -10,6 +11,19 @@ import {
   programmingDateString,
   programmingTimeString,
 } from './programming-time'
+
+interface WorkingHoursSettings {
+  monday_thursday: { start: string; end: string }
+  friday: { start: string; end: string }
+  work_saturday: { start: string; end: string }
+}
+
+interface CalendarEntry {
+  id: string
+  date: string
+  description: string
+  type: 'holiday' | 'work_saturday'
+}
 
 interface Appointment {
   id: string
@@ -364,6 +378,32 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(false)
   const [savingRoleVisibility, setSavingRoleVisibility] = useState(false)
   const [updatingAppointments, setUpdatingAppointments] = useState<Set<string>>(() => new Set())
+  const [calendarData, setCalendarData] = useState<{
+    holidays: CalendarEntry[]
+    workSaturdays: CalendarEntry[]
+    workingHours: WorkingHoursSettings
+  } | null>(null)
+
+  const loadCalendar = useCallback(() => {
+    apiRequest<{
+      holidays: CalendarEntry[]
+      workSaturdays: CalendarEntry[]
+      workingHours: WorkingHoursSettings
+    }>('/api/calendar')
+      .then((data) => setCalendarData(data))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadCalendar()
+  }, [loadCalendar])
+
+  useLiveSync(['settings'], () => {
+    loadCalendar()
+  })
+
+  const holidayMap = useMemo(() => new Map(calendarData?.holidays.map((h) => [h.date, h]) ?? []), [calendarData])
+  const workSaturdayMap = useMemo(() => new Map(calendarData?.workSaturdays.map((s) => [s.date, s]) ?? []), [calendarData])
 
   useEffect(() => {
     if (showForm || editingAppointment) {
@@ -549,7 +589,47 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
         <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>
-        <div className="calendar-week-strip no-print">{week.map((day) => <button type="button" key={day.date} className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''}`} onClick={() => setDate(day.date)} aria-pressed={day.date === date}><span>{day.shortName}</span><strong>{day.number}</strong></button>)}</div>
+        <div className="calendar-week-strip no-print">
+          {week.map((day) => {
+            const isHoliday = holidayMap.has(day.date)
+            const holiday = holidayMap.get(day.date)
+            const isWorkSat = workSaturdayMap.has(day.date)
+            const workSat = workSaturdayMap.get(day.date)
+            return (
+              <button
+                type="button"
+                key={day.date}
+                className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
+                onClick={() => setDate(day.date)}
+                aria-pressed={day.date === date}
+                title={isHoliday ? `Feriado: ${holiday?.description}` : isWorkSat ? `Compensação: ${workSat?.description}` : undefined}
+              >
+                <span>{day.shortName}</span>
+                <strong>{day.number}</strong>
+                {isHoliday && <span className="calendar-day-tag holiday-tag">Feriado</span>}
+                {isWorkSat && <span className="calendar-day-tag saturday-tag">Compensação</span>}
+              </button>
+            )
+          })}
+        </div>
+        {holidayMap.has(date) && (
+          <div className="calendar-day-notice holiday-notice no-print" role="alert">
+            <CalendarDays size={16} />
+            <div>
+              <strong>Data marcada como feriado: {holidayMap.get(date)?.description}</strong>
+              <p>O expediente está suspenso e novos agendamentos não são permitidos neste dia.</p>
+            </div>
+          </div>
+        )}
+        {workSaturdayMap.has(date) && (
+          <div className="calendar-day-notice saturday-notice no-print">
+            <CalendarDays size={16} />
+            <div>
+              <strong>Sábado com expediente liberado (Compensação): {workSaturdayMap.get(date)?.description}</strong>
+              <p>Jornada autorizada para atendimentos e programações de campo.</p>
+            </div>
+          </div>
+        )}
         {programmingType === 'general' && isAdmin && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
           <strong>Funções na agenda</strong>
           {savingRoleVisibility && <span className="schedule-role-saving">Salvando para todos...</span>}

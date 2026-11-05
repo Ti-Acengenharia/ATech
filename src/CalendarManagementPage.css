@@ -1,0 +1,428 @@
+.calendar-mgmt-page {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px clamp(16px, 2.5vw, 36px) 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: page-arrive 0.2s ease both;
+}
+
+.calendar-mgmt-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calendar-mgmt-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a365d;
+  margin: 0;
+}
+
+.calendar-mgmt-header p {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* CARDS GERAIS */
+.calendar-mgmt-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.calendar-mgmt-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 14px;
+}
+
+.calendar-mgmt-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.calendar-mgmt-card-title svg {
+  color: #1e5f96;
+  flex-shrink: 0;
+}
+
+.calendar-mgmt-card-title h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.calendar-mgmt-card-title p {
+  font-size: 12px;
+  color: #64748b;
+  margin: 2px 0 0;
+}
+
+/* JORNADA DE TRABALHO (HORAS ÚTEIS) */
+.working-hours-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.working-hours-box {
+  background: #f8fafc;
+  border: 1px solid #e2edf6;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.working-hours-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.working-hours-box-header strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.working-hours-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.working-hours-badge.badge-friday {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.working-hours-badge.badge-saturday {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.working-hours-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.working-hours-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  flex: 1;
+}
+
+.working-hours-inputs input[type="time"] {
+  height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  background: #fff;
+}
+
+.working-hours-inputs input[type="time"]:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.working-hours-separator {
+  color: #94a3b8;
+  font-size: 12px;
+  padding-top: 18px;
+}
+
+.working-hours-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
+/* TOOLBAR & AÇÕES DE FERIADOS / SÁBADOS */
+.calendar-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.calendar-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* FORMULÁRIO INLINE DE CADASTRO */
+.calendar-inline-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: #f8fafc;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+}
+
+.calendar-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  flex: 1 1 200px;
+}
+
+.calendar-form-field input[type="date"],
+.calendar-form-field input[type="text"] {
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1e293b;
+  background: #fff;
+}
+
+.calendar-form-field input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+/* TABELA DE REGISTROS */
+.calendar-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.calendar-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 700;
+  font-size: 11px;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  letter-spacing: 0.02em;
+}
+
+.calendar-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+}
+
+.calendar-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.calendar-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.calendar-date-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.calendar-date-cell strong {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.calendar-date-cell span {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: capitalize;
+}
+
+.calendar-desc-cell strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.calendar-delete-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.calendar-delete-btn:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.calendar-empty-row {
+  text-align: center;
+  padding: 28px 14px !important;
+  color: #64748b;
+  font-style: italic;
+}
+
+/* MODAL DE IMPORTAÇÃO CSV */
+.csv-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.csv-modal-box {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.15);
+  width: min(650px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.csv-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.csv-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.csv-modal-body {
+  padding: 18px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.csv-dropzone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  background: #f8fafc;
+  transition: all 0.15s ease;
+}
+
+.csv-dropzone:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.csv-dropzone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+}
+
+.csv-dropzone-content svg {
+  color: #2563eb;
+}
+
+.csv-preview-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.csv-errors-box {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #9f1239;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.csv-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+@media (max-width: 640px) {
+  .calendar-inline-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .working-hours-inputs {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .working-hours-separator {
+    display: none;
+  }
+}
+

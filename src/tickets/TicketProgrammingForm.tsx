@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AlertTriangle, CalendarDays, Check, ChevronDown, Clock3, FileSignature, Search, UsersRound, Wrench, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
+import { useLiveSync } from '../api/liveSync'
 import type { LegalProcessOption, TicketSummary } from './types'
 import { getProgrammingRoleVisibility } from './programming-role-visibility'
 import {
@@ -9,6 +10,19 @@ import {
   programmingMinutes,
   programmingTimeString,
 } from './programming-time'
+
+interface WorkingHoursSettings {
+  monday_thursday: { start: string; end: string }
+  friday: { start: string; end: string }
+  work_saturday: { start: string; end: string }
+}
+
+interface CalendarEntry {
+  id: string
+  date: string
+  description: string
+  type: 'holiday' | 'work_saturday'
+}
 
 interface CollaboratorOption {
   id: string
@@ -53,13 +67,50 @@ interface EditingAppointment {
   completion_term_delivered?: boolean
 }
 
+const EMPTY_APPOINTMENTS: Record<string, AvailabilityEntry[]> = {}
+
 function formatMinutes(value: number) {
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
 }
 
-function getFreeSlots(date: string, appointments: AvailabilityEntry[]): FreeSlot[] {
-  const windowStart = 8 * 60
-  const windowEnd = 18 * 60
+function parseMin(str?: string, defaultMin: number = 0): number {
+  if (!str) return defaultMin
+  const [h, m] = str.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function getDayWindow(date: string, workingHours?: WorkingHoursSettings): { windowStart: number; windowEnd: number; label: string } {
+  const dt = new Date(`${date}T12:00:00Z`)
+  const day = dt.getUTCDay()
+  if (day === 5) {
+    const start = parseMin(workingHours?.friday?.start, 8 * 60)
+    const end = parseMin(workingHours?.friday?.end, 17 * 60)
+    return {
+      windowStart: start,
+      windowEnd: end,
+      label: `${workingHours?.friday?.start || '08:00'}–${workingHours?.friday?.end || '17:00'}`,
+    }
+  }
+  if (day === 6) {
+    const start = parseMin(workingHours?.work_saturday?.start, 8 * 60)
+    const end = parseMin(workingHours?.work_saturday?.end, 18 * 60)
+    return {
+      windowStart: start,
+      windowEnd: end,
+      label: `${workingHours?.work_saturday?.start || '08:00'}–${workingHours?.work_saturday?.end || '18:00'}`,
+    }
+  }
+  const start = parseMin(workingHours?.monday_thursday?.start, 8 * 60)
+  const end = parseMin(workingHours?.monday_thursday?.end, 18 * 60)
+  return {
+    windowStart: start,
+    windowEnd: end,
+    label: `${workingHours?.monday_thursday?.start || '08:00'}–${workingHours?.monday_thursday?.end || '18:00'}`,
+  }
+}
+
+function getFreeSlots(date: string, appointments: AvailabilityEntry[], workingHours?: WorkingHoursSettings): FreeSlot[] {
+  const { windowStart, windowEnd } = getDayWindow(date, workingHours)
   const booked = appointments
     .map((appointment) => ({ start: new Date(appointment.starts_at), end: new Date(appointment.ends_at) }))
     .filter(({ start, end }) =>
@@ -90,10 +141,6 @@ function getFreeSlots(date: string, appointments: AvailabilityEntry[]): FreeSlot
 
 function intersectSlots(slotGroups: FreeSlot[][]) {
   if (!slotGroups.length || slotGroups.some((slots) => slots.length === 0)) return []
-  const parseMin = (value: string) => {
-    const [hours, minutes] = value.split(':').map(Number)
-    return hours * 60 + minutes
-  }
   let intersections = slotGroups[0]
   for (const slots of slotGroups.slice(1)) {
     const nextIntersections: FreeSlot[] = []
@@ -112,13 +159,30 @@ function intersectSlots(slotGroups: FreeSlot[][]) {
   return intersections
 }
 
-function weekdayDatesBetween(startDate: string, endDate: string) {
+function availableWorkDatesBetween(
+  startDate: string,
+  endDate: string,
+  holidays: Set<string>,
+  workSaturdays: Set<string>,
+) {
   if (!startDate || !endDate || startDate > endDate) return []
   const dates: string[] = []
   const date = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   while (date <= end) {
-    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) dates.push(date.toISOString().slice(0, 10))
+    const iso = date.toISOString().slice(0, 10)
+    const dayOfWeek = date.getUTCDay()
+    if (dayOfWeek !== 0) {
+      if (!holidays.has(iso)) {
+        if (dayOfWeek === 6) {
+          if (workSaturdays.has(iso)) {
+            dates.push(iso)
+          }
+        } else {
+          dates.push(iso)
+        }
+      }
+    }
     date.setUTCDate(date.getUTCDate() + 1)
   }
   return dates
@@ -213,13 +277,70 @@ export default function TicketProgrammingForm({
     endDate,
     editingAppointment?.id ?? '',
   ])
+  const [calendarData, setCalendarData] = useState<{
+    holidays: CalendarEntry[]
+    workSaturdays: CalendarEntry[]
+    workingHours: WorkingHoursSettings
+  } | null>(null)
+
+  const loadCalendar = useCallback(() => {
+    apiRequest<{
+      holidays: CalendarEntry[]
+      workSaturdays: CalendarEntry[]
+      workingHours: WorkingHoursSettings
+    }>('/api/calendar')
+      .then((data) => setCalendarData(data))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadCalendar()
+  }, [loadCalendar])
+
+  useLiveSync(['settings'], () => {
+    loadCalendar()
+  })
+
+  const holidayMap = useMemo(() => new Map(calendarData?.holidays.map((h) => [h.date, h]) ?? []), [calendarData])
+  const workSaturdayMap = useMemo(() => new Map(calendarData?.workSaturdays.map((s) => [s.date, s]) ?? []), [calendarData])
+  const holidaySet = useMemo(() => new Set(calendarData?.holidays.map((h) => h.date) ?? []), [calendarData])
+  const workSaturdaySet = useMemo(() => new Set(calendarData?.workSaturdays.map((s) => s.date) ?? []), [calendarData])
+
+  const holidaysInRange = useMemo(() => {
+    if (!startDate || !endDate || startDate >= endDate) return []
+    const list: CalendarEntry[] = []
+    const dt = new Date(`${startDate}T00:00:00Z`)
+    const end = new Date(`${endDate}T00:00:00Z`)
+    while (dt <= end) {
+      const iso = dt.toISOString().slice(0, 10)
+      const h = holidayMap.get(iso)
+      if (h) list.push(h)
+      dt.setUTCDate(dt.getUTCDate() + 1)
+    }
+    return list
+  }, [startDate, endDate, holidayMap])
+
+  const workSatsInRange = useMemo(() => {
+    if (!startDate || !endDate || startDate >= endDate) return []
+    const list: CalendarEntry[] = []
+    const dt = new Date(`${startDate}T00:00:00Z`)
+    const end = new Date(`${endDate}T00:00:00Z`)
+    while (dt <= end) {
+      const iso = dt.toISOString().slice(0, 10)
+      const s = workSaturdayMap.get(iso)
+      if (s) list.push(s)
+      dt.setUTCDate(dt.getUTCDate() + 1)
+    }
+    return list
+  }, [startDate, endDate, workSaturdayMap])
+
   const hasValidAvailabilityRange = Boolean(
     collaboratorIds.length && startDate && endDate && startDate <= endDate,
   )
   const currentAvailability = availabilityState.requestKey === availabilityRequestKey
     ? availabilityState
     : null
-  const appointmentsByCollaborator = currentAvailability?.appointments ?? {}
+  const appointmentsByCollaborator = currentAvailability?.appointments ?? EMPTY_APPOINTMENTS
   const availabilityLoading = hasValidAvailabilityRange && !currentAvailability
 
   useEffect(() => {
@@ -387,12 +508,18 @@ export default function TicketProgrammingForm({
     return () => { cancelled = true }
   }, [availabilityRequestKey, collaboratorIds, startDate, endDate, editingAppointment])
 
-  const scheduleDates = weekdayDatesBetween(startDate, endDate)
-  const freeSlots = intersectSlots(scheduleDates.flatMap((date) =>
-    collaboratorIds.map((collaboratorId) =>
-      getFreeSlots(date, appointmentsByCollaborator[collaboratorId] ?? []),
-    ),
-  ))
+  const scheduleDates = useMemo(
+    () => availableWorkDatesBetween(startDate, endDate, holidaySet, workSaturdaySet),
+    [startDate, endDate, holidaySet, workSaturdaySet],
+  )
+  const freeSlots = useMemo(
+    () => intersectSlots(scheduleDates.flatMap((date) =>
+      collaboratorIds.map((collaboratorId) =>
+        getFreeSlots(date, appointmentsByCollaborator[collaboratorId] ?? [], calendarData?.workingHours),
+      ),
+    )),
+    [scheduleDates, collaboratorIds, appointmentsByCollaborator, calendarData?.workingHours],
+  )
 
   const filteredCollaborators = collaborators.filter((person) => {
     if (!allowMixedCollaborators && selectedProgrammingType === 'foreman' ? person.role !== 'encarregado' : !allowMixedCollaborators && person.role === 'encarregado') return false
@@ -465,6 +592,17 @@ export default function TicketProgrammingForm({
       if (elapsedDays >= 90) throw new Error('O intervalo da programação deve ter no máximo 90 dias corridos.')
       if (!scheduleDates.length) throw new Error('O intervalo não contém dias úteis para programar.')
       if (endsAt <= startsAt) throw new Error('O horário final deve ser posterior ao inicial.')
+
+      for (const curDate of scheduleDates) {
+        const { windowStart, windowEnd, label } = getDayWindow(curDate, calendarData?.workingHours)
+        const [sh, sm] = startsAt.split(':').map(Number)
+        const [eh, em] = endsAt.split(':').map(Number)
+        const sMin = (sh || 0) * 60 + (sm || 0)
+        const eMin = (eh || 0) * 60 + (em || 0)
+        if (sMin < windowStart || eMin > windowEnd) {
+          throw new Error(`O horário ${startsAt}–${endsAt} está fora do expediente de ${curDate.split('-').reverse().join('/')} (${label}).`)
+        }
+      }
 
       if (editingAppointment) {
         await apiRequest(`/api/programming/${editingAppointment.id}`, {
@@ -774,6 +912,50 @@ export default function TicketProgrammingForm({
         </label>
       </div>
 
+      {startDate === endDate ? (
+        holidayMap.has(startDate) ? (
+          <div className="notice notice-error" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+            <AlertTriangle size={15} />
+            <span>A data selecionada ({startDate.split('-').reverse().join('/')}) é feriado: <strong>{holidayMap.get(startDate)?.description}</strong>. Não é permitido criar programações neste dia.</span>
+          </div>
+        ) : new Date(`${startDate}T12:00:00Z`).getUTCDay() === 6 && workSaturdayMap.has(startDate) ? (
+          <div className="notice notice-success" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+            <Check size={15} />
+            <span>Sábado com expediente liberado para compensação: <strong>{workSaturdayMap.get(startDate)?.description}</strong>.</span>
+          </div>
+        ) : new Date(`${startDate}T12:00:00Z`).getUTCDay() === 6 ? (
+          <div className="notice notice-error" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+            <AlertTriangle size={15} />
+            <span>Aos sábados não há expediente padrão. Apenas sábados cadastrados como compensação na administração são permitidos.</span>
+          </div>
+        ) : new Date(`${startDate}T12:00:00Z`).getUTCDay() === 0 ? (
+          <div className="notice notice-error" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+            <AlertTriangle size={15} />
+            <span>Aos domingos não há expediente da assistência técnica.</span>
+          </div>
+        ) : new Date(`${startDate}T12:00:00Z`).getUTCDay() === 5 ? (
+          <div className="notice notice-info" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+            <Clock3 size={15} />
+            <span>Expediente de sexta-feira: <strong>{calendarData?.workingHours.friday.start ?? '08:00'} às {calendarData?.workingHours.friday.end ?? '17:00'}</strong>.</span>
+          </div>
+        ) : null
+      ) : (
+        <>
+          {holidaysInRange.length > 0 && (
+            <div className="notice notice-info" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+              <CalendarDays size={15} />
+              <span>Feriados no intervalo desconsiderados: <strong>{holidaysInRange.map((h) => `${h.date.split('-').reverse().join('/')} (${h.description})`).join(', ')}</strong>.</span>
+            </div>
+          )}
+          {workSatsInRange.length > 0 && (
+            <div className="notice notice-success" style={{ gridColumn: '1 / -1', margin: '4px 0 8px' }}>
+              <Check size={15} />
+              <span>Sábados de compensação incluídos no intervalo: <strong>{workSatsInRange.map((s) => `${s.date.split('-').reverse().join('/')} (${s.description})`).join(', ')}</strong>.</span>
+            </div>
+          )}
+        </>
+      )}
+
       <label className="ticket-form-field" style={{ gridColumn: '1 / -1' }}>
         <span><Wrench size={14} /> Atividade prevista</span>
         <textarea
@@ -861,7 +1043,14 @@ export default function TicketProgrammingForm({
       )}
 
       <div className="availability-panel">
-        <strong>Horários livres em comum ({collaboratorIds.length} colaboradores, {scheduleDates.length} dias úteis) · 08:00–18:00</strong>
+        <strong>
+          Horários livres em comum ({collaboratorIds.length} {collaboratorIds.length === 1 ? 'colaborador' : 'colaboradores'}, {scheduleDates.length} {scheduleDates.length === 1 ? 'dia útil' : 'dias úteis'})
+          {calendarData?.workingHours && (
+            <span style={{ fontWeight: 400, marginLeft: 6, color: '#64748b' }}>
+              · Seg-Qui {calendarData.workingHours.monday_thursday.start}–{calendarData.workingHours.monday_thursday.end}, Sex {calendarData.workingHours.friday.start}–{calendarData.workingHours.friday.end}
+            </span>
+          )}
+        </strong>
         {currentAvailability?.absences && Object.entries(currentAvailability.absences).some(([, absList]) => absList.length > 0) && (
           <div className="collaborator-conflict-warning" style={{ margin: '8px 0', borderLeft: '4px solid #dc2626' }}>
             <div className="collaborator-conflict-warning-title" style={{ color: '#b91c1c' }}>
@@ -902,7 +1091,7 @@ export default function TicketProgrammingForm({
             ))}
           </div>
         ) : (
-          <span role="status">Não há horários disponíveis em comum para os colaboradores selecionados nos dias úteis desse período (08:00–18:00).</span>
+          <span role="status">Não há horários disponíveis em comum para os colaboradores selecionados nos dias úteis desse período.</span>
         )}
         <small>O horário escolhido precisa estar livre para todos os colaboradores em todos os dias úteis do intervalo.</small>
       </div>

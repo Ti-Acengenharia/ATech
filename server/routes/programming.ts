@@ -536,6 +536,72 @@ async function validateAvailability(
     throw new Error('A programação selecionada não corresponde ao cargo do colaborador.')
   }
 
+  // Validação de calendário (feriados, domingos e sábados compensados)
+  const dateIso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: programmingTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(startsAt)
+
+  const calendarDay = await client.query<{ type: string; description: string }>(
+    `SELECT type, description FROM work_calendar WHERE date = $1`,
+    [dateIso],
+  )
+  if (calendarDay.rows[0]?.type === 'holiday') {
+    const [y, m, d] = dateIso.split('-')
+    throw new Error(`Agenda bloqueada: a data ${d}/${m}/${y} é feriado (${calendarDay.rows[0].description}).`)
+  }
+
+  const dateInTz = new Date(startsAt.toLocaleString('en-US', { timeZone: programmingTimeZone }))
+  const dayOfWeek = dateInTz.getDay() // 0 = Dom, 6 = Sáb
+
+  if (dayOfWeek === 0) {
+    throw new Error('Agenda bloqueada: domingos não possuem expediente da assistência técnica.')
+  }
+  if (dayOfWeek === 6 && calendarDay.rows[0]?.type !== 'work_saturday') {
+    throw new Error('Agenda bloqueada: sábados sem compensação cadastrada não possuem expediente.')
+  }
+
+  // Validação de jornada de trabalho (horas úteis)
+  const workingHoursSetting = await client.query<{ setting_value: { monday_thursday?: { start: string; end: string }; friday?: { start: string; end: string }; work_saturday?: { start: string; end: string } } }>(
+    `SELECT setting_value FROM application_settings WHERE setting_key = 'working_hours'`,
+  )
+  const wh = workingHoursSetting.rows[0]?.setting_value ?? {}
+  const mondayThursdayRule = wh.monday_thursday ?? { start: '08:00', end: '18:00' }
+  const fridayRule = wh.friday ?? { start: '08:00', end: '17:00' }
+  const saturdayRule = wh.work_saturday ?? { start: '08:00', end: '18:00' }
+
+  let scheduleRule = mondayThursdayRule
+  let dayLabel = 'Segunda a Quinta'
+  if (dayOfWeek === 5) {
+    scheduleRule = fridayRule
+    dayLabel = 'Sextas-feiras'
+  } else if (dayOfWeek === 6) {
+    scheduleRule = saturdayRule
+    dayLabel = 'Sábados compensados'
+  }
+
+  const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: programmingTimeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const startParts = timeFormatter.format(startsAt).split(':').map(Number)
+  const endParts = timeFormatter.format(endsAt).split(':').map(Number)
+  const [ruleStartH, ruleStartM] = scheduleRule.start.split(':').map(Number)
+  const [ruleEndH, ruleEndM] = scheduleRule.end.split(':').map(Number)
+
+  const startsMin = startParts[0] * 60 + startParts[1]
+  const endsMin = endParts[0] * 60 + endParts[1]
+  const ruleStartMin = ruleStartH * 60 + ruleStartM
+  const ruleEndMin = ruleEndH * 60 + ruleEndM
+
+  if (startsMin < ruleStartMin || endsMin > ruleEndMin) {
+    throw new Error(`Horário fora do expediente da assistência técnica (${dayLabel}: ${scheduleRule.start} às ${scheduleRule.end}).`)
+  }
+
   const absenceOverlap = await client.query<{
     type: 'atestado' | 'falta_injustificada'
     start_date: string

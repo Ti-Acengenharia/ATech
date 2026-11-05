@@ -9,9 +9,46 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.4.0'
+export const APP_CURRENT_VERSION = 'v2.4.1'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.4.1',
+    date: '05/11/2026',
+    title: 'Expediente & Feriados, Ergonomia em Kanbans e Otimizações',
+    tagline: 'Gestão completa de jornada e feriados, bloqueios inteligentes na agenda e navegação responsiva.',
+    changes: [
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Módulo de Expediente e Calendário no menu de Administração para controle da jornada técnica, feriados e compensações.',
+          'Configuração de horas úteis da assistência técnica com expediente diferenciado às sextas-feiras (até às 17h) e sábados compensados.',
+          'Importação de feriados em lote por modelo CSV oficial (download de modelo, drag & drop, validação e preview de duplicidades) e cadastro manual rápido.',
+          'Cadastro e gestão de sábados trabalhados (compensações) com validação de dias e status Programado/Concluído.',
+          'Bloqueio estrito de agendamentos em feriados, domingos e sábados não compensados no backend e no formulário de programação.',
+          'Cálculo dinâmico da janela livre compartilhada entre colaboradores considerando horários úteis específicos do dia e exclusão de feriados.',
+          'Paginação e enriquecimento de dados no resumo de agendamentos de equipes em campo da Homepage (bloco e unidade exibidos).',
+          'Ocultação automática de colunas vazias durante a filtragem de processos jurídicos no Workflow Kanban.',
+        ],
+      },
+      {
+        category: 'Design & UX',
+        items: [
+          'Ergonomia aprimorada dos Kanbans (Chamados, Jurídico e Atividades): visualização garantida de pelo menos um cartão inteiro com filtros abertos e sob diferentes níveis de zoom.',
+          'Adaptação vertical fluida dos quadros Kanban ao recolher filtros, eliminando espaços em branco e barras de rolagem desnecessárias.',
+          'Destaque visual na régua semanal de Programação para feriados (em vermelho) e sábados de compensação (em verde), acompanhados de avisos explicativos.',
+          'Correção de rolagem no modal de controle de versões para telas com nível de zoom elevado.',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Migração de banco de dados 051_calendar_and_working_hours.sql com tabelas dedicadas e sincronização de eventos LiveSync via SSE.',
+          'Otimização de consultas e índices no banco de dados (050_dashboard_performance_indexes.sql), acelerando o carregamento da Homepage de ~5s para tempos sub-segundo.',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.4.0',
     date: '04/11/2026',
