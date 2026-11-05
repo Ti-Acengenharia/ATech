@@ -4,15 +4,17 @@
   z-index: 1300;
   background: rgba(15, 23, 42, 0.5);
   backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: clamp(10px, 3vh, 24px) 16px;
+  box-sizing: border-box;
 }
 
 .version-modal {
   width: min(100%, 880px);
-  max-height: 86vh;
+  max-height: min(92vh, 850px);
+  height: min(740px, calc(100vh - 32px));
   background: #fff;
   border: 1px solid #cbd5e1;
   border-radius: 14px;
@@ -21,14 +23,16 @@
   flex-direction: column;
   overflow: hidden;
   animation: reveal 0.18s ease both;
+  box-sizing: border-box;
 }
 
 .version-modal-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 22px;
+  padding: 16px 20px;
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
 }
@@ -81,10 +85,10 @@
 }
 
 .version-modal-layout {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  min-height: 440px;
-  max-height: calc(86vh - 130px);
   overflow: hidden;
 }
 
@@ -96,6 +100,8 @@
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
 }
 
 .version-sidebar-title {
@@ -179,9 +185,11 @@
 .version-detail-content {
   padding: 22px 26px;
   overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  scrollbar-gutter: stable;
 }
 
 .version-detail-hero {
@@ -289,6 +297,7 @@
 }
 
 .version-modal-footer {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;

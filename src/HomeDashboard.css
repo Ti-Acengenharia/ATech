@@ -481,6 +481,66 @@
   background: #f1f5f9;
 }
 
+.home-schedule-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px 2px;
+  margin-top: 4px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 11px;
+  color: #64748b;
+  flex-wrap: wrap;
+}
+
+.home-schedule-pagination-info {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.home-schedule-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-schedule-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-schedule-page-btn:hover:not(:disabled) {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.home-schedule-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #f8fafc;
+  color: #94a3b8;
+  border-color: #e2e8f0;
+}
+
+.home-schedule-page-current {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #334155;
+  padding: 0 4px;
+}
+
 .home-empty-state {
   text-align: center;
   padding: 24px 16px;

@@ -78,18 +78,18 @@
 .legal-board-controls > span { margin-right: auto; color: #7a8da0; font-size: 11px; font-weight: 500; }
 .legal-board-controls button { width: 34px; height: 32px; display: grid; place-items: center; color: #2e5b7d; background: #fff; border: 1px solid #dce6ef; border-radius: 7px; cursor: pointer; }
 .legal-board-controls button:hover { color: #155a91; background: #edf5fb; border-color: #bfd4e5; }
-.legal-board { display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; min-height: 380px; padding: 4px 2px 20px; scroll-behavior: smooth; cursor: grab; touch-action: pan-x pan-y; overscroll-behavior-x: contain; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
+.legal-board { display: flex; align-items: stretch; gap: 14px; overflow-x: auto; min-height: 260px; padding: 4px 2px 6px; scroll-behavior: smooth; cursor: grab; touch-action: pan-x pan-y; overscroll-behavior-x: contain; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
 .legal-board.is-dragging { cursor: grabbing; user-select: none; scroll-behavior: auto; }
 .legal-board.is-dragging * { user-select: none; }
 
-.legal-column { flex: 0 0 295px; overflow: hidden; background: #f2f5f9; border: 1px solid #e1e9f1; border-radius: 12px; }
+.legal-column { flex: 0 0 295px; display: flex; flex-direction: column; align-self: stretch; height: 100%; min-height: 0; overflow: hidden; background: #f2f5f9; border: 1px solid #e1e9f1; border-radius: 12px; }
 .legal-column > header { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: #fff; border-top: 4px solid #3478a8; border-bottom: 1px solid #e7eff5; }
 .legal-column-header-main { display: flex; align-items: center; gap: 8px; width: 100%; }
 .legal-column-header-main i { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .legal-column-header-main strong { overflow: hidden; flex: 1; color: #1e3a54; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .legal-column-header-main span { min-width: 22px; padding: 2px 7px; color: #526f86; background: #edf4f9; border-radius: 12px; text-align: center; font-size: 10px; font-weight: 700; }
 .legal-column-total-val { font: 600 11px var(--mono); color: #2e6690; padding: 2px 0 0; }
-.legal-column-body { display: flex; flex-direction: column; gap: 10px; min-height: 220px; padding: 10px 10px 12px; }
+.legal-column-body { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; gap: 10px; padding: 10px 10px 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-color: #b9cde0 transparent; scrollbar-width: thin; }
 
 /* CARTÕES DO KANBAN REDESENHADOS (Fase 1) */
 .legal-process-card { display: flex; flex-direction: column; gap: 9px; padding: 13px; background: #fff; border: 1px solid #e1e9f0; border-top: 3px solid #3478a8; border-radius: 10px; box-shadow: 0 3px 9px rgba(25, 55, 82, .045); cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }

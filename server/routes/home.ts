@@ -198,7 +198,10 @@ router.get('/summary', async (req, res, next) => {
           }>(
             `SELECT
                p.id, p.starts_at, p.ends_at, p.activity_description AS service, p.completed,
-               p.enterprise, p.block, p.unit, p.standalone_location, p.common_area_location,
+               COALESCE(p.enterprise, t.enterprise) AS enterprise,
+               COALESCE(p.block, t.block) AS block,
+               COALESCE(p.unit, t.unit) AS unit,
+               p.standalone_location, p.common_area_location,
                c.id AS collaborator_id, c.name AS collaborator_name, c.role AS collaborator_role,
                t.protocol AS ticket_protocol,
                lp.process_number AS legal_process_number, lp.title AS legal_process_title
@@ -208,8 +211,7 @@ router.get('/summary', async (req, res, next) => {
              LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
              WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
                AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
-             ORDER BY p.starts_at ASC, p.id ASC
-             LIMIT 8`,
+             ORDER BY p.starts_at ASC, p.id ASC`,
             [todayDateStr],
           ).then((r) => r.rows)
           .catch((err) => {
@@ -329,7 +331,9 @@ router.get('/summary', async (req, res, next) => {
               service: app.service,
               completed: app.completed,
               enterprise: app.enterprise,
-              location: app.standalone_location || [app.enterprise, app.block, app.unit].filter(Boolean).join(' - ') || app.common_area_location || 'Local a definir',
+              block: app.block,
+              unit: app.unit,
+              location: app.standalone_location || [app.enterprise, app.block ? `Bl. ${app.block}` : null, app.unit ? `Un. ${app.unit}` : null].filter(Boolean).join(' · ') || app.common_area_location || 'Local a definir',
               collaboratorName: app.collaborator_name,
               collaboratorRole: app.collaborator_role,
               ticketProtocol: app.ticket_protocol,

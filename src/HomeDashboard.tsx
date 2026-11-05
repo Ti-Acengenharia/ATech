@@ -3,9 +3,11 @@ import {
   ArrowRight,
   Award,
   BriefcaseBusiness,
+  Building2,
   Cake,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   ClipboardList,
   Clock,
@@ -105,6 +107,8 @@ interface HomeSummaryData {
       service: string
       completed: boolean
       enterprise: string | null
+      block: string | null
+      unit: string | null
       location: string | null
       collaboratorName: string
       collaboratorRole: string
@@ -258,6 +262,17 @@ export default function HomeDashboard({
   const celebrants = selectedCelebrationsGroup?.people ?? []
   const countBirthdaysCurrent = celebrations?.birthdays[activeMuralPeriod].people.length ?? 0
   const countAnniversariesCurrent = celebrations?.workAnniversaries[activeMuralPeriod].people.length ?? 0
+
+  const [schedulePage, setSchedulePage] = useState(1)
+  const SCHEDULE_PAGE_SIZE = 5
+
+  const allAppointments = summary?.schedule?.todayAppointments ?? []
+  const totalSchedulePages = Math.max(1, Math.ceil(allAppointments.length / SCHEDULE_PAGE_SIZE))
+  const validSchedulePage = Math.min(Math.max(1, schedulePage), totalSchedulePages)
+  const pagedAppointments = allAppointments.slice(
+    (validSchedulePage - 1) * SCHEDULE_PAGE_SIZE,
+    validSchedulePage * SCHEDULE_PAGE_SIZE,
+  )
 
   return (
     <div className="home-dashboard-v2">
@@ -513,45 +528,95 @@ export default function HomeDashboard({
           )}
 
           {/* Lista de Atividades de Hoje */}
-          {summary?.schedule?.todayAppointments && summary.schedule.todayAppointments.length > 0 ? (
-            <div className="home-appointments-list">
-              {summary.schedule.todayAppointments.map((app) => {
-                const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
-                return (
-                  <div
-                    key={app.id}
-                    className={`home-appointment-card ${app.completed ? 'home-appointment-completed' : ''}`}
-                  >
-                    <div className="home-appointment-time">
-                      <span>{start}</span>
-                      <small>{end}</small>
-                    </div>
-                    <div className="home-appointment-details">
-                      <div className="home-appointment-title">
-                        <span className="home-appointment-worker">{app.collaboratorName}</span>
-                        <span className="home-appointment-role">{app.collaboratorRole.replace(/_/g, ' ')}</span>
+          {allAppointments.length > 0 ? (
+            <>
+              <div className="home-appointments-list">
+                {pagedAppointments.map((app) => {
+                  const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
+                  return (
+                    <div
+                      key={app.id}
+                      className={`home-appointment-card ${app.completed ? 'home-appointment-completed' : ''}`}
+                    >
+                      <div className="home-appointment-time">
+                        <span>{start}</span>
+                        <small>{end}</small>
                       </div>
-                      <div className="home-appointment-desc">{app.service || 'Serviço técnico geral'}</div>
-                      <div className="home-appointment-meta">
-                        <span className="home-appointment-meta-item">
-                          <MapPin size={11} /> {app.location}
-                        </span>
-                        {app.ticketProtocol && (
-                          <span className="home-appointment-meta-item">
-                            <ClipboardList size={11} /> #{app.ticketProtocol}
-                          </span>
-                        )}
-                        {app.legalProcessNumber && (
-                          <span className="home-appointment-meta-item">
-                            <BriefcaseBusiness size={11} /> Proc. {app.legalProcessNumber}
-                          </span>
-                        )}
+                      <div className="home-appointment-details">
+                        <div className="home-appointment-title">
+                          <span className="home-appointment-worker">{app.collaboratorName}</span>
+                          <span className="home-appointment-role">{app.collaboratorRole.replace(/_/g, ' ')}</span>
+                        </div>
+                        <div className="home-appointment-desc">{app.service || 'Serviço técnico geral'}</div>
+                        <div className="home-appointment-meta">
+                          {app.enterprise && (
+                            <span className="home-appointment-meta-item" title="Empreendimento / Obra">
+                              <Building2 size={11} /> {app.enterprise}
+                            </span>
+                          )}
+                          {app.block && (
+                            <span className="home-appointment-meta-item" title="Bloco">
+                              <strong>Bl.</strong> {app.block}
+                            </span>
+                          )}
+                          {app.unit && (
+                            <span className="home-appointment-meta-item" title="Unidade">
+                              <strong>Un.</strong> {app.unit}
+                            </span>
+                          )}
+                          {!app.enterprise && !app.block && !app.unit && app.location && (
+                            <span className="home-appointment-meta-item">
+                              <MapPin size={11} /> {app.location}
+                            </span>
+                          )}
+                          {app.ticketProtocol && (
+                            <span className="home-appointment-meta-item">
+                              <ClipboardList size={11} /> #{app.ticketProtocol}
+                            </span>
+                          )}
+                          {app.legalProcessNumber && (
+                            <span className="home-appointment-meta-item">
+                              <BriefcaseBusiness size={11} /> Proc. {app.legalProcessNumber}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
+                  )
+                })}
+              </div>
+
+              {totalSchedulePages > 1 && (
+                <div className="home-schedule-pagination">
+                  <span className="home-schedule-pagination-info">
+                    Mostrando {(validSchedulePage - 1) * SCHEDULE_PAGE_SIZE + 1}–{Math.min(validSchedulePage * SCHEDULE_PAGE_SIZE, allAppointments.length)} de {allAppointments.length} programações
+                  </span>
+                  <div className="home-schedule-pagination-controls">
+                    <button
+                      type="button"
+                      className="home-schedule-page-btn"
+                      disabled={validSchedulePage === 1}
+                      onClick={() => setSchedulePage((p) => Math.max(1, p - 1))}
+                      title="Página anterior"
+                    >
+                      <ChevronLeft size={13} /> Anterior
+                    </button>
+                    <span className="home-schedule-page-current">
+                      {validSchedulePage} / {totalSchedulePages}
+                    </span>
+                    <button
+                      type="button"
+                      className="home-schedule-page-btn"
+                      disabled={validSchedulePage === totalSchedulePages}
+                      onClick={() => setSchedulePage((p) => Math.min(totalSchedulePages, p + 1))}
+                      title="Próxima página"
+                    >
+                      Próxima <ChevronRight size={13} />
+                    </button>
                   </div>
-                )
-              })}
-            </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="home-empty-state">
               <CalendarDays size={28} />

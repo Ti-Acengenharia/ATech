@@ -1789,7 +1789,7 @@ export default function LegalProcessesPage({
   const checklistPercent = checklistItems.length ? Math.round((completedChecklistCount / checklistItems.length) * 100) : 0
 
   return (
-    <section className={`legal-page${!detailPageOpen && activeTab === 'board' && processes.length > 0 ? ' legal-board-page' : ''}`}>
+    <section className={`legal-page${!detailPageOpen && activeTab === 'board' ? ' legal-board-page' : ''}`}>
       {/* Cabeçalho superior */}
       <header className="legal-heading">
         <div className="legal-heading-text">
@@ -2168,6 +2168,15 @@ export default function LegalProcessesPage({
                 <button className="secondary-button" type="button" onClick={() => void createDemo()}>Carregar exemplo fictício</button>
               </div>
             </div>
+          ) : activeTab === 'board' && activeFiltersCount > 0 && !filtered.length ? (
+            <div className="legal-empty">
+              <FileText size={29} />
+              <strong>Nenhum processo encontrado</strong>
+              <span>Nenhum processo corresponde aos filtros de busca aplicados.</span>
+              <div>
+                <button className="secondary-button" type="button" onClick={clearAllFilters}><X size={14} /> Limpar filtros</button>
+              </div>
+            </div>
           ) : activeTab === 'board' ? (
             <>
               <div className="legal-board-controls" aria-label="Navegação das situações jurídicas">
@@ -2190,7 +2199,12 @@ export default function LegalProcessesPage({
                   }
                 }}
               >
-                {statuses.map((status) => {
+                {statuses
+                  .filter((status) => {
+                    if (activeFiltersCount === 0) return true
+                    return filtered.some((process) => process.status_id === status.id)
+                  })
+                  .map((status) => {
                   const items = filtered.filter((process) => process.status_id === status.id)
                   const visibleCount = visibleProcessCounts[String(status.id)] ?? kanbanPageSize
                   const itemsToShow = items.slice(0, visibleCount)
@@ -2235,11 +2249,13 @@ export default function LegalProcessesPage({
                     </section>
                   )
                 })}
-                <section className="legal-new-column">
-                  <button type="button" onClick={() => setShowStatusForm(true)}>
-                    <Plus size={15} /> Nova situação
-                  </button>
-                </section>
+                {activeFiltersCount === 0 && (
+                  <section className="legal-new-column">
+                    <button type="button" onClick={() => setShowStatusForm(true)}>
+                      <Plus size={15} /> Nova situação
+                    </button>
+                  </section>
+                )}
               </div>
             </>
           ) : (
