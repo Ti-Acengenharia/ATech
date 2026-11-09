@@ -1,12 +1,3 @@
--- Migration 055: WhatsApp settings and automated dispatch state
-INSERT INTO application_settings (setting_key, setting_value)
-VALUES ('whatsapp_settings', '{
-  "apiUrl": "",
-  "apiKey": "",
-  "instanceName": "",
-  "programmingGroupJid": "",
-  "foremanPhoneNumber": "",
-  "autoDispatchEnabled": true
-}'::jsonb)
-ON CONFLICT (setting_key) DO NOTHING;
-
+-- Migration 055: Limpeza de configurações de WhatsApp do banco de dados
+-- Todas as credenciais da Evolution API são gerenciadas exclusivamente via variáveis de ambiente (.env)
+DELETE FROM application_settings WHERE setting_key = 'whatsapp_settings';

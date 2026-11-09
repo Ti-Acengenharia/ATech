@@ -4,7 +4,6 @@ import { requireAdmin, requireAuth } from '../auth.js'
 import { pool } from '../db.js'
 import {
   getPublicWhatsAppSettings,
-  saveWhatsAppSettings,
   sendWhatsAppTextMessage,
   testEvolutionConnection,
 } from '../services/evolution-api.js'
@@ -65,25 +64,10 @@ router.put('/session-timeout', requireAdmin, async (req, res, next) => {
   }
 })
 
-const whatsappSettingsSchema = z.object({
-  apiUrl: z.string().trim().optional(),
-  apiKey: z.string().trim().optional(),
-  instanceName: z.string().trim().optional(),
-  programmingGroupJid: z.string().trim().optional(),
-  foremanPhoneNumber: z.string().trim().optional(),
-  autoDispatchEnabled: z.boolean().optional(),
-})
-
 router.get('/whatsapp', requireAuth, async (_req, res, next) => {
   try {
-    const [publicSettings, metaRes, lastDispatchRes] = await Promise.all([
+    const [publicSettings, lastDispatchRes] = await Promise.all([
       getPublicWhatsAppSettings(),
-      pool.query<{ updated_at: string; display_name: string | null }>(
-        `SELECT s.updated_at, u.display_name
-         FROM application_settings s
-         LEFT JOIN users u ON u.id = s.updated_by
-         WHERE s.setting_key = 'whatsapp_settings'`,
-      ),
       pool.query<{ setting_value: string }>(
         `SELECT setting_value #>> '{}' AS setting_value
          FROM application_settings
@@ -93,8 +77,6 @@ router.get('/whatsapp', requireAuth, async (_req, res, next) => {
 
     res.json({
       ...publicSettings,
-      updatedAt: metaRes.rows[0]?.updated_at ?? null,
-      updatedByName: metaRes.rows[0]?.display_name ?? null,
       lastAutoDispatchDate: lastDispatchRes.rows[0]?.setting_value ?? null,
     })
   } catch (error) {
@@ -102,17 +84,23 @@ router.get('/whatsapp', requireAuth, async (_req, res, next) => {
   }
 })
 
-router.put('/whatsapp', requireAdmin, async (req, res, next) => {
-  const parsed = whatsappSettingsSchema.safeParse(req.body)
+router.put('/whatsapp/auto-dispatch', requireAdmin, async (req, res, next) => {
+  const schema = z.object({ enabled: z.boolean() })
+  const parsed = schema.safeParse(req.body)
   if (!parsed.success) {
-    res.status(400).json({ error: 'Dados de configuração do WhatsApp inválidos.' })
+    res.status(400).json({ error: 'Parâmetro inválido para ativação do envio automático.' })
     return
   }
 
   try {
     const user = req.session.user!
-    await saveWhatsAppSettings(parsed.data, user.id)
-    const publicSettings = await getPublicWhatsAppSettings()
+    await pool.query(
+      `INSERT INTO application_settings (setting_key, setting_value, updated_at, updated_by)
+       VALUES ('whatsapp_programming_auto_dispatch_enabled', to_jsonb($1::boolean), now(), $2::bigint)
+       ON CONFLICT (setting_key)
+       DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+      [parsed.data.enabled, user.id],
+    )
 
     await broadcastSyncEvent({
       scope: 'settings',
@@ -122,9 +110,7 @@ router.put('/whatsapp', requireAdmin, async (req, res, next) => {
 
     res.json({
       success: true,
-      ...publicSettings,
-      updatedAt: new Date().toISOString(),
-      updatedByName: user.displayName,
+      autoDispatchEnabled: parsed.data.enabled,
     })
   } catch (error) {
     next(error)

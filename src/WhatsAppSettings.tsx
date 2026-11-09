@@ -3,14 +3,15 @@ import {
   Check,
   CheckCircle2,
   CircleAlert,
-  Clock,
+  Code2,
+  Copy,
+  Info,
   Key,
   Link as LinkIcon,
   Loader2,
   MessageSquare,
-  Phone,
+  Power,
   Radio,
-  Save,
   Send,
   Users,
   XCircle,
@@ -27,43 +28,36 @@ interface WhatsAppSettingsData {
   foremanPhoneNumber: string
   autoDispatchEnabled: boolean
   isConfigured: boolean
-  updatedAt: string | null
-  updatedByName: string | null
   lastAutoDispatchDate: string | null
 }
+
+const ENV_SNIPPET = `# Integração Evolution API (WhatsApp Gateway para Programação)
+EVOLUTION_API_URL=https://evo.seu-dominio.com
+EVOLUTION_API_KEY=sua_chave_aqui
+EVOLUTION_INSTANCE_NAME=atech-whatsapp
+EVOLUTION_PROGRAMMING_GROUP_JID=120363000000000000@g.us
+EVOLUTION_FOREMAN_PHONE_NUMBER=5582999999999
+EVOLUTION_AUTO_DISPATCH_ENABLED=true`
 
 export default function WhatsAppSettings() {
   const [data, setData] = useState<WhatsAppSettingsData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const [testSending, setTestSending] = useState(false)
+  const [updatingAutoDispatch, setUpdatingAutoDispatch] = useState(false)
   const [showTestSend, setShowTestSend] = useState(false)
   const [testTarget, setTestTarget] = useState('')
   const [testMessage, setTestMessage] = useState('')
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | null>(null)
   const [connectionState, setConnectionState] = useState<string | null>(null)
-
-  // Campos do formulário
-  const [apiUrl, setApiUrl] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [instanceName, setInstanceName] = useState('')
-  const [programmingGroupJid, setProgrammingGroupJid] = useState('')
-  const [foremanPhoneNumber, setForemanPhoneNumber] = useState('')
-  const [autoDispatchEnabled, setAutoDispatchEnabled] = useState(true)
+  const [copiedEnv, setCopiedEnv] = useState(false)
 
   const loadSettings = async () => {
     try {
       const res = await apiRequest<WhatsAppSettingsData>('/api/settings/whatsapp')
       setData(res)
-      setApiUrl(res.apiUrl || '')
-      setApiKey('') // Chave fica em branco a menos que o usuário queira trocar
-      setInstanceName(res.instanceName || '')
-      setProgrammingGroupJid(res.programmingGroupJid || '')
-      setForemanPhoneNumber(res.foremanPhoneNumber || '')
-      setAutoDispatchEnabled(res.autoDispatchEnabled ?? true)
     } catch {
-      // Se não autenticado ou erro na carga inicial
+      // Ignora erro caso não consiga carregar inicialmente
     } finally {
       setLoading(false)
     }
@@ -77,41 +71,31 @@ export default function WhatsAppSettings() {
     void loadSettings()
   })
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSaving(true)
+  const handleToggleAutoDispatch = async (enabled: boolean) => {
+    setUpdatingAutoDispatch(true)
     setNotice(null)
-
     try {
-      const payload: Record<string, unknown> = {
-        apiUrl,
-        instanceName,
-        programmingGroupJid,
-        foremanPhoneNumber,
-        autoDispatchEnabled,
-      }
-      if (apiKey.trim()) {
-        payload.apiKey = apiKey.trim()
-      }
-
-      const updated = await apiRequest<WhatsAppSettingsData>('/api/settings/whatsapp', {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      })
-
-      setData(updated)
-      setApiKey('')
+      await apiRequest<{ success: boolean; autoDispatchEnabled: boolean }>(
+        '/api/settings/whatsapp/auto-dispatch',
+        {
+          method: 'PUT',
+          body: JSON.stringify({ enabled }),
+        },
+      )
+      setData((prev) => (prev ? { ...prev, autoDispatchEnabled: enabled } : prev))
       setNotice({
         kind: 'success',
-        text: 'Configurações do WhatsApp salvas com sucesso!',
+        text: enabled
+          ? 'Envio automático das 17h ATIVADO com sucesso!'
+          : 'Envio automático das 17h PAUSADO / DESATIVADO com sucesso.',
       })
     } catch (err) {
       setNotice({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Falha ao salvar configurações do WhatsApp.',
+        text: err instanceof Error ? err.message : 'Falha ao alterar o status do envio automático.',
       })
     } finally {
-      setSaving(false)
+      setUpdatingAutoDispatch(false)
     }
   }
 
@@ -168,6 +152,16 @@ export default function WhatsAppSettings() {
     }
   }
 
+  const handleCopyEnv = async () => {
+    try {
+      await navigator.clipboard.writeText(ENV_SNIPPET)
+      setCopiedEnv(true)
+      setTimeout(() => setCopiedEnv(false), 2000)
+    } catch {
+      // Falha silenciosa de clipboard
+    }
+  }
+
   if (loading) {
     return (
       <div className="whatsapp-settings-card">
@@ -192,7 +186,7 @@ export default function WhatsAppSettings() {
               Integração WhatsApp · Evolution API
             </h2>
             <p>
-              Envio automatizado de programações em PDF para grupo de campo e encarregados via Gateway Evolution API.
+              Envio automatizado e manual de programações diárias em PDF para grupo de campo e encarregados.
             </p>
           </div>
         </div>
@@ -218,13 +212,13 @@ export default function WhatsAppSettings() {
                 </>
               ) : (
                 <>
-                  <CheckCircle2 size={13} /> Configurado
+                  <CheckCircle2 size={13} /> Configurado no .env ({data?.instanceName})
                 </>
               )}
             </span>
           ) : (
             <span className="whatsapp-status-badge unconfigured">
-              <XCircle size={13} /> Não configurado
+              <XCircle size={13} /> Pendente de configuração no .env
             </span>
           )}
         </div>
@@ -235,7 +229,7 @@ export default function WhatsAppSettings() {
           {notice.kind === 'success' ? (
             <Check size={16} />
           ) : notice.kind === 'info' ? (
-            <Clock size={16} />
+            <Info size={16} />
           ) : (
             <CircleAlert size={16} />
           )}
@@ -246,185 +240,224 @@ export default function WhatsAppSettings() {
         </div>
       )}
 
-      <form onSubmit={handleSave}>
-        <div className="whatsapp-form-grid">
-          <div className="whatsapp-field">
-            <label htmlFor="evo-api-url">
-              <LinkIcon size={14} /> URL da Evolution API
-            </label>
-            <input
-              id="evo-api-url"
-              type="url"
-              placeholder="https://evo.seu-dominio.com"
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-            />
-            <small>URL base onde a VPS do Evolution API está hospedada.</small>
-          </div>
-
-          <div className="whatsapp-field">
-            <label htmlFor="evo-api-key">
-              <Key size={14} /> Chave de API (Global ou de Instância)
-            </label>
-            <input
-              id="evo-api-key"
-              type="password"
-              placeholder={data?.hasApiKey ? '•••••••••••••••• (configurada)' : 'Digite a chave'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            <small>
-              {data?.hasApiKey
-                ? 'Deixe em branco para manter a chave salva atualmente.'
-                : 'Chave de autenticação apikey configurada na Evolution API.'}
-            </small>
-          </div>
-
-          <div className="whatsapp-field">
-            <label htmlFor="evo-instance">
-              <MessageSquare size={14} /> Nome da Instância
-            </label>
-            <input
-              id="evo-instance"
-              type="text"
-              placeholder="ex: atech-whatsapp"
-              value={instanceName}
-              onChange={(e) => setInstanceName(e.target.value)}
-            />
-            <small>Identificador da instância criada no Evolution API.</small>
-          </div>
-
-          <div className="whatsapp-field">
-            <label htmlFor="evo-group-jid">
-              <Users size={14} /> JID do Grupo de Programação Geral
-            </label>
-            <input
-              id="evo-group-jid"
-              type="text"
-              placeholder="ex: 120363000000000000@g.us"
-              value={programmingGroupJid}
-              onChange={(e) => setProgrammingGroupJid(e.target.value)}
-            />
-            <small>ID do grupo de WhatsApp para envio automático e manual da Programação Geral.</small>
-          </div>
-
-          <div className="whatsapp-field">
-            <label htmlFor="evo-foreman-phone">
-              <Phone size={14} /> Telefone do Encarregado
-            </label>
-            <input
-              id="evo-foreman-phone"
-              type="text"
-              placeholder="ex: 5582999999999 ou (82) 99999-9999"
-              value={foremanPhoneNumber}
-              onChange={(e) => setForemanPhoneNumber(e.target.value)}
-            />
-            <small>Número de WhatsApp específico para receber a programação de encarregados.</small>
-          </div>
-        </div>
-
-        <div className="whatsapp-checkbox-row">
-          <input
-            id="evo-auto-dispatch"
-            type="checkbox"
-            checked={autoDispatchEnabled}
-            onChange={(e) => setAutoDispatchEnabled(e.target.checked)}
-          />
-          <label htmlFor="evo-auto-dispatch" className="whatsapp-checkbox-label">
-            <strong>Disparo automático às 17:00 (America/Maceio)</strong>
-            <span>
-              Envia diariamente a programação em PDF do próximo dia útil (considerando feriados e compensações) para o grupo e para o encarregado.
+      {/* Bloco de Controle do Envio Automático das 17h */}
+      <div className={`whatsapp-dispatch-card ${data?.autoDispatchEnabled ? 'is-enabled' : 'is-disabled'}`}>
+        <div className="whatsapp-dispatch-content">
+          <div className="whatsapp-dispatch-header">
+            <span className={`whatsapp-dispatch-indicator ${data?.autoDispatchEnabled ? 'online' : 'offline'}`} />
+            <strong>Envio Automático às 17:00 (America/Maceio)</strong>
+            <span className={`whatsapp-dispatch-pill ${data?.autoDispatchEnabled ? 'pill-active' : 'pill-paused'}`}>
+              {data?.autoDispatchEnabled ? 'ATIVO' : 'PAUSADO'}
             </span>
-          </label>
+          </div>
+          <p className="whatsapp-dispatch-desc">
+            Dispara automaticamente a programação do próximo dia útil (considerando feriados e compensações de sábado) para o grupo de WhatsApp e para os encarregados.
+          </p>
+          <div className="whatsapp-dispatch-meta">
+            {data?.lastAutoDispatchDate ? (
+              <span>Último envio automático executado em: <strong>{data.lastAutoDispatchDate}</strong></span>
+            ) : (
+              <span>Nenhum envio automático registrado hoje ainda.</span>
+            )}
+            <span>· Controlável por este botão ou por <code>EVOLUTION_AUTO_DISPATCH_ENABLED</code> no <code>.env</code></span>
+          </div>
         </div>
 
-        {showTestSend && (
-          <div className="whatsapp-test-dialog">
-            <strong style={{ fontSize: 13, color: '#1e293b' }}>Envio de Mensagem de Teste</strong>
-            <div className="whatsapp-test-inputs">
-              <input
-                type="text"
-                placeholder="Número (5582999999999) ou JID do Grupo"
-                value={testTarget}
-                onChange={(e) => setTestTarget(e.target.value)}
-              />
-              <input
-                type="text"
-                placeholder="Mensagem opcional"
-                value={testMessage}
-                onChange={(e) => setTestMessage(e.target.value)}
-              />
-              <button
-                type="button"
-                className="whatsapp-btn whatsapp-btn-primary"
-                disabled={testSending || !testTarget}
-                onClick={handleTestSend}
-              >
-                {testSending ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />} Enviar
-              </button>
-              <button
-                type="button"
-                className="whatsapp-btn whatsapp-btn-secondary"
-                onClick={() => setShowTestSend(false)}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        )}
+        <button
+          type="button"
+          className={`whatsapp-toggle-action-btn ${data?.autoDispatchEnabled ? 'btn-pause' : 'btn-activate'}`}
+          disabled={updatingAutoDispatch}
+          onClick={() => handleToggleAutoDispatch(!data?.autoDispatchEnabled)}
+          title={data?.autoDispatchEnabled ? 'Pausar o envio automático das 17h' : 'Ativar o envio automático das 17h'}
+        >
+          {updatingAutoDispatch ? (
+            <Loader2 className="animate-spin" size={14} />
+          ) : (
+            <Power size={14} />
+          )}
+          {data?.autoDispatchEnabled ? 'Pausar Envio das 17h' : 'Ativar Envio das 17h'}
+        </button>
+      </div>
 
-        <footer className="whatsapp-actions-row">
-          <div className="whatsapp-meta-info">
-            {data?.updatedAt && (
-              <span>
-                Última alteração: {new Date(data.updatedAt).toLocaleString('pt-BR')}
-                {data.updatedByName ? ` por ${data.updatedByName}` : ''}
-              </span>
-            )}
-            {data?.lastAutoDispatchDate && (
-              <span>
-                Último envio automático realizado em: {data.lastAutoDispatchDate}
-              </span>
-            )}
-          </div>
+      {/* Grade de Parâmetros do .env */}
+      <div className="whatsapp-readonly-grid">
+        <div className="whatsapp-readonly-item">
+          <span className="whatsapp-readonly-label">
+            <LinkIcon size={13} /> URL da Evolution API
+          </span>
+          <strong className="whatsapp-readonly-val">
+            {data?.apiUrl || <em className="whatsapp-val-missing">Não definida no .env</em>}
+          </strong>
+          <small>Variável EVOLUTION_API_URL</small>
+        </div>
 
-          <div className="whatsapp-btn-group">
+        <div className="whatsapp-readonly-item">
+          <span className="whatsapp-readonly-label">
+            <Key size={13} /> Chave de Autenticação (API Key)
+          </span>
+          <strong className="whatsapp-readonly-val">
+            {data?.hasApiKey ? (
+              <span className="whatsapp-val-present">
+                <CheckCircle2 size={13} /> Configurada no .env
+              </span>
+            ) : (
+              <em className="whatsapp-val-missing">Não definida no .env</em>
+            )}
+          </strong>
+          <small>Variável EVOLUTION_API_KEY (segura, não gravada no banco)</small>
+        </div>
+
+        <div className="whatsapp-readonly-item">
+          <span className="whatsapp-readonly-label">
+            <MessageSquare size={13} /> Nome da Instância
+          </span>
+          <strong className="whatsapp-readonly-val">
+            {data?.instanceName || <em className="whatsapp-val-missing">Não definida no .env</em>}
+          </strong>
+          <small>Variável EVOLUTION_INSTANCE_NAME</small>
+        </div>
+
+        <div className="whatsapp-readonly-item">
+          <span className="whatsapp-readonly-label">
+            <Users size={13} /> Grupo da Programação Geral
+          </span>
+          <strong className="whatsapp-readonly-val">
+            {data?.programmingGroupJid || <em className="whatsapp-val-missing">Não definido no .env</em>}
+          </strong>
+          <small>Variável EVOLUTION_PROGRAMMING_GROUP_JID</small>
+        </div>
+      </div>
+
+      {/* Regras e Envio para Encarregados */}
+      <div className="whatsapp-flow-explanation">
+        <div className="whatsapp-flow-row">
+          <div className="whatsapp-flow-icon">
+            <Users size={16} />
+          </div>
+          <div>
+            <strong>Programação Geral</strong>
+            <p>
+              Enviada diretamente para o grupo oficial cadastrado em <code>EVOLUTION_PROGRAMMING_GROUP_JID</code>.
+            </p>
+          </div>
+        </div>
+
+        <div className="whatsapp-flow-row">
+          <div className="whatsapp-flow-icon">
+            <MessageSquare size={16} />
+          </div>
+          <div>
+            <strong>Programação dos Encarregados</strong>
+            <p>
+              Cada encarregado com programação para o dia recebe individualmente a sua agenda personalizada no seu próprio número de WhatsApp cadastrado na tela de Colaboradores.
+            </p>
+          </div>
+        </div>
+
+        <div className="whatsapp-flow-row">
+          <div className="whatsapp-flow-icon">
+            <Radio size={16} />
+          </div>
+          <div>
+            <strong>Reemissões e Disparo Manual</strong>
+            <p>
+              Na tela de Programação, você pode clicar nos botões de envio a qualquer momento sem limites diários.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Caixa Informativa com o Modelo do .env */}
+      <div className="whatsapp-env-box">
+        <div className="whatsapp-env-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Code2 size={15} />
+            <strong>Configuração no arquivo .env da VPS</strong>
+          </div>
+          <button
+            type="button"
+            className="whatsapp-btn-copy"
+            onClick={handleCopyEnv}
+            title="Copiar variáveis para área de transferência"
+          >
+            {copiedEnv ? <Check size={13} /> : <Copy size={13} />}
+            {copiedEnv ? 'Copiado!' : 'Copiar modelo'}
+          </button>
+        </div>
+        <pre className="whatsapp-env-snippet">{ENV_SNIPPET}</pre>
+        <p className="whatsapp-env-tip">
+          Nenhuma credencial ou chave sensível é gravada no banco de dados. Todas as credenciais são lidas diretamente do arquivo de ambiente (.env) do servidor.
+        </p>
+      </div>
+
+      {showTestSend && (
+        <div className="whatsapp-test-dialog">
+          <strong style={{ fontSize: 13, color: '#1e293b' }}>Envio de Mensagem de Teste</strong>
+          <div className="whatsapp-test-inputs">
+            <input
+              type="text"
+              placeholder="Número (ex: 5582999999999) ou JID do Grupo"
+              value={testTarget}
+              onChange={(e) => setTestTarget(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Mensagem opcional"
+              value={testMessage}
+              onChange={(e) => setTestMessage(e.target.value)}
+            />
             <button
               type="button"
-              className="whatsapp-btn whatsapp-btn-secondary"
-              disabled={testingConnection || !isConfigured}
-              onClick={handleTestConnection}
-              title="Testa o estado da instância na Evolution API"
-            >
-              {testingConnection ? <Loader2 className="animate-spin" size={14} /> : <Radio size={14} />}
-              Testar conexão
-            </button>
-
-            <button
-              type="button"
-              className="whatsapp-btn whatsapp-btn-secondary"
-              disabled={testSending || !isConfigured}
-              onClick={() => {
-                setShowTestSend((prev) => !prev)
-                if (!testTarget) {
-                  setTestTarget(programmingGroupJid || foremanPhoneNumber || '')
-                }
-              }}
-              title="Enviar mensagem de texto de teste para validar o canal"
-            >
-              <Send size={14} /> Mensagem de teste
-            </button>
-
-            <button
-              type="submit"
               className="whatsapp-btn whatsapp-btn-primary"
-              disabled={saving}
+              disabled={testSending || !testTarget}
+              onClick={handleTestSend}
             >
-              {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} Salvar configurações
+              {testSending ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />} Enviar
+            </button>
+            <button
+              type="button"
+              className="whatsapp-btn whatsapp-btn-secondary"
+              onClick={() => setShowTestSend(false)}
+            >
+              Cancelar
             </button>
           </div>
-        </footer>
-      </form>
+        </div>
+      )}
+
+      <footer className="whatsapp-actions-row">
+        <div className="whatsapp-meta-info">
+          <span>Status do sistema e testes de conexão</span>
+        </div>
+
+        <div className="whatsapp-btn-group">
+          <button
+            type="button"
+            className="whatsapp-btn whatsapp-btn-secondary"
+            disabled={testingConnection || !isConfigured}
+            onClick={handleTestConnection}
+            title="Testa o estado da instância na Evolution API"
+          >
+            {testingConnection ? <Loader2 className="animate-spin" size={14} /> : <Radio size={14} />}
+            Testar conexão
+          </button>
+
+          <button
+            type="button"
+            className="whatsapp-btn whatsapp-btn-primary"
+            disabled={testSending || !isConfigured}
+            onClick={() => {
+              setShowTestSend((prev) => !prev)
+              if (!testTarget) {
+                setTestTarget(data?.programmingGroupJid || '')
+              }
+            }}
+            title="Enviar mensagem de texto de teste para validar o canal"
+          >
+            <Send size={14} /> Mensagem de teste
+          </button>
+        </div>
+      </footer>
     </section>
   )
 }

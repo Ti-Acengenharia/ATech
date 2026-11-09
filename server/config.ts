@@ -56,6 +56,14 @@ const envSchema = z.object({
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().min(1).optional(),
   ),
+  EVOLUTION_AUTO_DISPATCH_ENABLED: z.preprocess((value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toLowerCase()
+      if (trimmed === 'true' || trimmed === '1') return true
+      if (trimmed === 'false' || trimmed === '0') return false
+    }
+    return value
+  }, z.boolean().default(true)),
 })
 
 const parsedEnv = envSchema.safeParse(process.env)

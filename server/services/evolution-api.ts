@@ -50,28 +50,32 @@ export function normalizeWhatsAppTarget(target: string): string {
 }
 
 /**
- * Obtém as configurações do WhatsApp combinando o banco de dados e as variáveis de ambiente
+ * Obtém as configurações do WhatsApp com credenciais exclusivamente das variáveis de ambiente (.env)
+ * O status do disparo automático pode ser alternado pelo .env (EVOLUTION_AUTO_DISPATCH_ENABLED)
+ * ou pela tela de preferências operacionais do sistema.
  */
 export async function getWhatsAppSettings(): Promise<WhatsAppSettings> {
-  let dbSettings: Partial<WhatsAppSettings> = {}
+  const apiUrl = (env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
+  const apiKey = env.EVOLUTION_API_KEY || ''
+  const instanceName = env.EVOLUTION_INSTANCE_NAME || ''
+  const programmingGroupJid = env.EVOLUTION_PROGRAMMING_GROUP_JID || ''
+  const foremanPhoneNumber = env.EVOLUTION_FOREMAN_PHONE_NUMBER || ''
+
+  let autoDispatchEnabled = env.EVOLUTION_AUTO_DISPATCH_ENABLED ?? true
 
   try {
-    const result = await pool.query<{ setting_value: Partial<WhatsAppSettings> }>(
-      `SELECT setting_value FROM application_settings WHERE setting_key = 'whatsapp_settings'`,
+    const res = await pool.query<{ setting_value: string | boolean }>(
+      `SELECT setting_value #>> '{}' AS setting_value
+       FROM application_settings
+       WHERE setting_key = 'whatsapp_programming_auto_dispatch_enabled'`,
     )
-    if (result.rows[0]?.setting_value) {
-      dbSettings = result.rows[0].setting_value
+    if (res.rows[0]?.setting_value !== undefined && res.rows[0]?.setting_value !== null) {
+      const val = res.rows[0].setting_value
+      autoDispatchEnabled = val === true || val === 'true' || val === '1'
     }
-  } catch (err) {
-    console.error('[EvolutionAPI] Erro ao carregar configurações do banco:', err)
+  } catch {
+    // Mantém o padrão do .env se a tabela ainda não estiver disponível
   }
-
-  const apiUrl = (dbSettings.apiUrl?.trim() || env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
-  const apiKey = dbSettings.apiKey?.trim() || env.EVOLUTION_API_KEY || ''
-  const instanceName = dbSettings.instanceName?.trim() || env.EVOLUTION_INSTANCE_NAME || ''
-  const programmingGroupJid = dbSettings.programmingGroupJid?.trim() || env.EVOLUTION_PROGRAMMING_GROUP_JID || ''
-  const foremanPhoneNumber = dbSettings.foremanPhoneNumber?.trim() || env.EVOLUTION_FOREMAN_PHONE_NUMBER || ''
-  const autoDispatchEnabled = dbSettings.autoDispatchEnabled ?? true
 
   return {
     apiUrl,
@@ -84,7 +88,7 @@ export async function getWhatsAppSettings(): Promise<WhatsAppSettings> {
 }
 
 /**
- * Retorna as configurações seguras para exibição no frontend (oculta a chave)
+ * Retorna o status das configurações para exibição no frontend (oculta a chave)
  */
 export async function getPublicWhatsAppSettings(): Promise<WhatsAppPublicSettings> {
   const settings = await getWhatsAppSettings()
@@ -100,38 +104,7 @@ export async function getPublicWhatsAppSettings(): Promise<WhatsAppPublicSetting
 }
 
 /**
- * Salva as configurações de WhatsApp no banco
- */
-export async function saveWhatsAppSettings(
-  newSettings: Partial<WhatsAppSettings>,
-  userId?: string | number,
-): Promise<WhatsAppSettings> {
-  const current = await getWhatsAppSettings()
-
-  const updated: WhatsAppSettings = {
-    apiUrl: newSettings.apiUrl !== undefined ? newSettings.apiUrl.trim() : current.apiUrl,
-    apiKey: newSettings.apiKey !== undefined && newSettings.apiKey.trim() !== ''
-      ? newSettings.apiKey.trim()
-      : current.apiKey,
-    instanceName: newSettings.instanceName !== undefined ? newSettings.instanceName.trim() : current.instanceName,
-    programmingGroupJid: newSettings.programmingGroupJid !== undefined ? newSettings.programmingGroupJid.trim() : current.programmingGroupJid,
-    foremanPhoneNumber: newSettings.foremanPhoneNumber !== undefined ? newSettings.foremanPhoneNumber.trim() : current.foremanPhoneNumber,
-    autoDispatchEnabled: newSettings.autoDispatchEnabled !== undefined ? Boolean(newSettings.autoDispatchEnabled) : current.autoDispatchEnabled,
-  }
-
-  await pool.query(
-    `INSERT INTO application_settings (setting_key, setting_value, updated_at, updated_by)
-     VALUES ('whatsapp_settings', $1::jsonb, now(), $2::bigint)
-     ON CONFLICT (setting_key)
-     DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-    [JSON.stringify(updated), userId ?? null],
-  )
-
-  return updated
-}
-
-/**
- * Testa o estado da conexão na Evolution API
+ * Testa o estado da conexão na Evolution API usando as credenciais do .env
  */
 export async function testEvolutionConnection(): Promise<{
   ok: boolean
@@ -143,7 +116,7 @@ export async function testEvolutionConnection(): Promise<{
   if (!config.apiUrl || !config.apiKey || !config.instanceName) {
     return {
       ok: false,
-      message: 'Evolution API não configurada. Preencha URL, Chave de API e Nome da Instância.',
+      message: 'Evolution API não configurada no .env da VPS. Defina EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE_NAME.',
     }
   }
 
@@ -201,7 +174,7 @@ export async function sendWhatsAppPdfDocument({
 }): Promise<{ ok: boolean; responseData?: unknown }> {
   const config = await getWhatsAppSettings()
   if (!config.apiUrl || !config.apiKey || !config.instanceName) {
-    throw new Error('Evolution API não está configurada no servidor.')
+    throw new Error('Evolution API não está configurada no .env do servidor.')
   }
 
   const normalizedTarget = normalizeWhatsAppTarget(target)
@@ -252,7 +225,7 @@ export async function sendWhatsAppTextMessage({
 }): Promise<{ ok: boolean; responseData?: unknown }> {
   const config = await getWhatsAppSettings()
   if (!config.apiUrl || !config.apiKey || !config.instanceName) {
-    throw new Error('Evolution API não está configurada no servidor.')
+    throw new Error('Evolution API não está configurada no .env do servidor.')
   }
 
   const normalizedTarget = normalizeWhatsAppTarget(target)
