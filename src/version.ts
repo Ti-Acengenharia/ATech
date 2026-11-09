@@ -9,9 +9,91 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.4.1'
+export const APP_CURRENT_VERSION = 'v2.4.3'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.4.3',
+    date: '09/11/2026',
+    title: 'Integração WhatsApp · Evolution API para Envio de Programações',
+    tagline: 'Disparo automático às 17h para o próximo dia útil e botão de envio manual de relatórios em PDF para grupos e encarregados.',
+    changes: [
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Integração oficial com a Evolution API instalada na VPS como gateway WhatsApp para a Assistência Técnica.',
+          'Disparo automático diário às 17h00 (horário de Maceió): envia a programação do próximo dia útil (calculado dinamicamente respeitando feriados e compensações de sábados trabalhados).',
+          'Envio da Programação Geral no grupo de WhatsApp de campo através do JID configurado.',
+          'Envio da Programação de Encarregados para o número específico de WhatsApp do encarregado.',
+          'Botão direto "Gerar e enviar no grupo" / "Gerar e enviar ao encarregado" na barra de ferramentas da agenda diária, permitindo disparo imediato.',
+          'Geração do relatório em PDF idêntico no backend anexado como documento com resumo executivo na legenda (total de atividades e colaboradores escalados).',
+        ],
+      },
+      {
+        category: 'Design & UX',
+        items: [
+          'Painel de Configuração do WhatsApp na tela de Administração (Acessos e configurações gerais) com gestão de URL, chave de API, nome da instância, JID do grupo e telefone do encarregado.',
+          'Botão "Testar conexão" para verificar em tempo real se a instância do WhatsApp está conectada no Evolution API.',
+          'Recurso "Mensagem de teste" para validar entrega em números individuais ou grupos.',
+          'Botão com destaque visual e ícones contextuais na barra de agenda para disparo rápido sem sair da tela.',
+          'Alertas visuais de feedback com confirmação do destino e relatório gerado.',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Suporte a variáveis de ambiente no .env.example (EVOLUTION_API_URL, EVOLUTION_API_KEY, EVOLUTION_INSTANCE_NAME, EVOLUTION_PROGRAMMING_GROUP_JID, EVOLUTION_FOREMAN_PHONE_NUMBER) com fallback bidirecional com o banco de dados.',
+          'Higienização automática de números telefônicos (DDI 55 + DDD) e IDs de grupos (@g.us).',
+          'Rotina agendada no backend com trava diária para evitar disparos duplicados.',
+          'Registro de log de auditoria detalhado a cada disparo manual ou automático.',
+          'Migração 055 para inicialização de configurações do WhatsApp na tabela application_settings.',
+        ],
+      },
+    ],
+  },
+  {
+    version: 'v2.4.2',
+    date: '09/11/2026',
+    title: 'Módulo de Unidades em Estoque e Checklist de Vistorias',
+    tagline: 'Integração completa com API CV CRM para unidades não vendidas, controle de vistorias com fotos e apontamento técnico.',
+    changes: [
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Nova tela "Unidades em estoque" com sincronização direta via API do Construtor de Vendas (CV CRM) para visualização de apartamentos não vendidos divididos por empreendimento.',
+          'Sincronização automática semanal: atualização agendada todas as segundas-feiras às 07h00 da manhã com detecção de alterações de status comercial.',
+          'Página e URL vinculadas por unidade (?page=stock-units&unitId=...): ao abrir um apartamento, a visualização foca exclusivamente na página da unidade, atualiza o link da URL (suportando compartilhamento direto e botão Voltar) e oferece botão de cópia rápida do link.',
+          'Otimização de recursos nas vistorias: compressão automática de fotos no cliente antes do envio (reduzindo em até 95% o consumo de memória e rede), expansão sob demanda do histórico de laudos e cache imutável de fotos.',
+          'Seleção múltipla de obras: seletor com pesquisa, seleção em lote ("Apenas entregues", "Todas") e tags de obras ativas (removido filtro duplicado de abas para manter a interface limpa e focada).',
+          'Controle de Situação da Obra ("Obra Finalizada / Concluída" vs "Em Andamento") diretamente na tela de Informações dos Empreendimentos, refletindo instantaneamente como base para identificação de obras entregues no estoque.',
+          'Foco em obras entregues: identificação clara de empreendimentos concluídos e filtro rápido para a assistência técnica acompanhar unidades entregues.',
+          'Notificações no sistema quando a situação comercial de uma unidade em obra concluída for alterada no CV CRM, permitindo agendar vistorias preventivas com um clique.',
+          'Controle e atualização rápida da data da próxima vistoria periódica com predefinições (+30, +60, +90 dias).',
+          'Formulário de Cadastro de Vistorias em tela cheia (fullscreen) com barra de rolagem explícita, cobrindo os 8 itens obrigatórios: Esquadrias de madeira, Esquadrias de alumínio, Pisos e Revestimentos, Metais, Louças, Pedras e Granitos, Elétrica e Hidráulica.',
+          'Botões deslizantes (switch toggles) para Aprovado / Reprovado em cada item técnico.',
+          'Exigência obrigatória de envio de foto(s) e descrição da não conformidade sempre que qualquer item for Reprovado.',
+          'Campo geral de anotações "Outros" e identificação do técnico responsável pela inspeção.',
+          'Histórico de vistorias com visualizador de fotos em lightbox e exibição do laudo consolidado.',
+          'Remoção de dados dispensáveis (valor de avaliação e área total), mantendo o foco exclusivo nas especificações técnicas relevantes.',
+        ],
+      },
+      {
+        category: 'Design & UX',
+        items: [
+          'Tela de vistoria em tela cheia (fullscreen) com cabeçalho e rodapé fixos, contadores ao vivo e rolagem vertical contínua.',
+          'Painel moderno e responsivo com KPIs técnicos e destaque visual para obras concluídas.',
+          'Badges de situação e cadência de vistoria (em dia, atrasada, pendente, com apontamentos).',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Migrações 052 e 053 com tabelas dedicadas: stock_units, unit_inspections, unit_inspection_photos e stock_unit_notifications.',
+          'Integração de notificações de estoque com a central de alertas da equipe (sino do topo) e SSE em tempo real.',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.4.1',
     date: '05/11/2026',

@@ -1,3 +1,4 @@
+/// <reference path="./types/express-session.d.ts" />
 import type { NextFunction, Request, Response } from 'express'
 import { pool } from './db.js'
 import { getSessionTimeoutMinutes } from './services/session-settings.js'

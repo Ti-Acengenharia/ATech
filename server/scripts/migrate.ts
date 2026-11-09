@@ -71,6 +71,9 @@ try {
     '049_programming_completion_flag_and_term_delivery.sql',
     '050_dashboard_performance_indexes.sql',
     '051_calendar_and_working_hours.sql',
+    '052_stock_units_and_inspections.sql',
+    '053_stock_unit_notifications_and_delivery.sql',
+    '054_enterprise_work_status.sql',
   ]
 
   let newlyAppliedCount = 0

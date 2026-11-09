@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
 
 const router = Router()
 
@@ -15,6 +16,7 @@ const nullableDate = z.string()
   .nullable()
 const informationSchema = z.object({
   enterpriseName: z.string().trim().min(1).max(240),
+  workStatus: z.enum(['finished', 'in_progress']).default('in_progress'),
   syndicName: z.string().trim().max(160),
   syndicPhone: z.string().trim().max(40),
   syndicEmail: optionalEmail,
@@ -46,6 +48,7 @@ router.get('/', async (_req, res, next) => {
          GROUP BY enterprise_key
        )
        SELECT p.enterprise_key, p.enterprise_name, p.ticket_count,
+              COALESCE(i.work_status, 'in_progress') AS work_status,
               i.syndic_name, i.syndic_phone, i.syndic_email,
               i.supervisor_name, i.supervisor_phone, i.supervisor_email,
               i.condominium_email, i.work_address, i.occupancy_permit_date, i.condominium_delivery_date
@@ -70,12 +73,13 @@ router.put('/', async (req, res, next) => {
   try {
     await pool.query(
       `INSERT INTO enterprise_information (
-         enterprise_key, enterprise_name, syndic_name, syndic_phone, syndic_email,
+         enterprise_key, enterprise_name, work_status, syndic_name, syndic_phone, syndic_email,
          supervisor_name, supervisor_phone, supervisor_email, condominium_email,
          work_address, occupancy_permit_date, condominium_delivery_date
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (enterprise_key) DO UPDATE SET
          enterprise_name = EXCLUDED.enterprise_name,
+         work_status = EXCLUDED.work_status,
          syndic_name = EXCLUDED.syndic_name,
          syndic_phone = EXCLUDED.syndic_phone,
          syndic_email = EXCLUDED.syndic_email,
@@ -88,11 +92,22 @@ router.put('/', async (req, res, next) => {
          condominium_delivery_date = EXCLUDED.condominium_delivery_date,
          updated_at = now()`,
       [
-        enterpriseKey, data.enterpriseName, data.syndicName, data.syndicPhone, data.syndicEmail,
+        enterpriseKey, data.enterpriseName, data.workStatus, data.syndicName, data.syndicPhone, data.syndicEmail,
         data.supervisorName, data.supervisorPhone, data.supervisorEmail, data.condominiumEmail, data.workAddress,
         data.occupancyPermitDate, data.condominiumDeliveryDate,
       ],
     )
+
+    // Atualiza imediatamente unidades em estoque que correspondam a este empreendimento
+    await pool.query(
+      `UPDATE stock_units
+       SET is_delivered = ($1 = 'finished'),
+           enterprise_status = CASE WHEN $1 = 'finished' THEN 'Obras Finalizadas' ELSE 'Em Andamento' END
+       WHERE lower(enterprise_name) = $2`,
+      [data.workStatus, enterpriseKey],
+    )
+    void broadcastSyncEvent({ scope: 'stock-units', action: 'enterprise_status_updated' })
+
     res.status(204).end()
   } catch (error) {
     next(error)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, CircleAlert, Clock3, FileSignature, Pencil, Plus, Printer, RefreshCw, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import { useLiveSync } from '../api/liveSync'
 import { getCompanyLogoDataUrl } from '../utils/companyLogo'
@@ -374,6 +374,8 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [sendingWhatsapp, setSendingWhatsapp] = useState(false)
+  const [whatsappNotice, setWhatsappNotice] = useState<{ kind: 'success'; text: string } | null>(null)
   const [hiddenRoleKeys, setHiddenRoleKeys] = useState<Set<string>>(() => new Set())
   const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(false)
   const [savingRoleVisibility, setSavingRoleVisibility] = useState(false)
@@ -554,6 +556,36 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     }
   }
 
+  async function handleSendWhatsapp() {
+    setSendingWhatsapp(true)
+    setError('')
+    setWhatsappNotice(null)
+    try {
+      const res = await apiRequest<{
+        success: boolean
+        message: string
+      }>('/api/programming/whatsapp/send', {
+        method: 'POST',
+        body: JSON.stringify({
+          date,
+          programmingType,
+        }),
+      })
+      setWhatsappNotice({
+        kind: 'success',
+        text: res.message,
+      })
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? `Não foi possível enviar a programação pelo WhatsApp: ${requestError.message}`
+          : 'Não foi possível enviar a programação pelo WhatsApp.',
+      )
+    } finally {
+      setSendingWhatsapp(false)
+    }
+  }
+
   const week = weekdayStrip(date)
   const roles = Array.from(new Map(staff.map((person) => [
     person.role,
@@ -585,10 +617,11 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
       </nav>
 
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={() => setError('')} aria-label="Fechar aviso">×</button></div>}
+      {whatsappNotice && <div className="notice notice-success" role="status"><Check size={16} />{whatsappNotice.text}<button type="button" onClick={() => setWhatsappNotice(null)} aria-label="Fechar aviso">×</button></div>}
       {(showForm || editingAppointment) && <section ref={programmingFormRef} className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={() => { setShowForm(false); setEditingAppointment(null); setRefresh((value) => value + 1) }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
-        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button></div></header>
+        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
         <div className="calendar-week-strip no-print">
           {week.map((day) => {
             const isHoliday = holidayMap.has(day.date)

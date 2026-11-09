@@ -4,7 +4,11 @@ import { requireAdmin, requireAuth } from '../auth.js'
 import { APP_TIMEZONE } from '../config.js'
 import { pool } from '../db.js'
 import { recordAuditLog } from '../services/audit-log.js'
+import { getWhatsAppSettings, sendWhatsAppPdfDocument } from '../services/evolution-api.js'
+import { decryptPersonalData } from '../services/personal-data.js'
+import { fetchDailyProgrammingData, generateSchedulePdf } from '../services/schedule-pdf.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
+import { getTodayDateString } from '../services/working-days.js'
 
 const router = Router()
 const programmingTimeZone = APP_TIMEZONE
@@ -177,6 +181,44 @@ router.get('/collaborators', async (_req, res, next) => {
        ORDER BY lower(c.name), c.id`,
     )
     res.json({ collaborators: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/foremen', requireAuth, async (_req, res, next) => {
+  try {
+    const result = await pool.query<{
+      id: string
+      name: string
+      nickname: string
+      phone_ciphertext: string | null
+    }>(
+      `SELECT c.id::text AS id, c.name, c.nickname, c.phone_ciphertext
+       FROM collaborators c
+       WHERE (c.termination_date IS NULL OR c.termination_date > CURRENT_DATE)
+         AND c.role = 'encarregado'
+       ORDER BY lower(c.name), c.id`,
+    )
+
+    const foremen = result.rows.map((row) => {
+      let phone = ''
+      if (row.phone_ciphertext) {
+        try {
+          phone = decryptPersonalData(row.phone_ciphertext, 'phone')
+        } catch {
+          phone = ''
+        }
+      }
+      return {
+        id: row.id,
+        name: row.name,
+        nickname: row.nickname,
+        phone,
+      }
+    })
+
+    res.json({ foremen })
   } catch (error) {
     next(error)
   }
@@ -995,6 +1037,172 @@ router.delete('/:id', async (req, res, next) => {
     next(error)
   } finally {
     client.release()
+  }
+})
+
+const sendProgrammingWhatsappSchema = z.object({
+  date: dateSchema.optional(),
+  programmingType: programmingTypeSchema,
+  collaboratorId: z.coerce.number().int().positive().optional(),
+  recipientName: z.string().trim().max(160).optional(),
+  targetOverride: z.string().trim().max(120).optional(),
+})
+
+router.post('/whatsapp/send', requireAuth, async (req, res, next) => {
+  const parsed = sendProgrammingWhatsappSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Parâmetros inválidos para envio da programação.' })
+    return
+  }
+
+  const programmingType = parsed.data.programmingType
+  const targetDate = parsed.data.date || getTodayDateString()
+
+  try {
+    const settings = await getWhatsAppSettings()
+    if (!settings.apiUrl || !settings.apiKey || !settings.instanceName) {
+      res.status(400).json({
+        error: 'A Evolution API não está totalmente configurada. Acesse Configurações para informar a URL, Chave e Instância.',
+      })
+      return
+    }
+
+    if (programmingType === 'foreman') {
+      const data = await fetchDailyProgrammingData(targetDate, 'foreman')
+      const foremenWithAppointments = data.collaborators.filter((c) => c.appointments.length > 0)
+      const foremenToSend = foremenWithAppointments.length > 0 ? foremenWithAppointments : data.collaborators
+
+      if (foremenToSend.length === 0) {
+        res.status(400).json({ error: 'Nenhum encarregado encontrado no sistema para esta data.' })
+        return
+      }
+
+      const results: Array<{ name: string; phone: string; success: boolean; error?: string }> = []
+
+      for (const foreman of foremenToSend) {
+        const target = foreman.phone || settings.foremanPhoneNumber
+        const name = foreman.nickname || foreman.name
+
+        if (!target) {
+          results.push({ name, phone: '', success: false, error: 'Telefone não cadastrado' })
+          continue
+        }
+
+        try {
+          const { buffer, fileName, caption } = await generateSchedulePdf({
+            date: targetDate,
+            programmingType: 'foreman',
+            collaboratorId: foreman.id,
+            recipientName: name,
+          })
+
+          await sendWhatsAppPdfDocument({
+            target,
+            pdfBuffer: buffer,
+            fileName,
+            caption,
+          })
+
+          results.push({ name, phone: target, success: true })
+        } catch (err: unknown) {
+          results.push({
+            name,
+            phone: target,
+            success: false,
+            error: err instanceof Error ? err.message : 'Falha no envio',
+          })
+        }
+      }
+
+      const successCount = results.filter((r) => r.success).length
+      const failureCount = results.filter((r) => !r.success).length
+
+      if (successCount === 0 && failureCount > 0) {
+        res.status(500).json({
+          error: `Não foi possível enviar para os encarregados: ${results.map((r) => `${r.name} (${r.error})`).join(', ')}`,
+          results,
+        })
+        return
+      }
+
+      const namesList = results.filter((r) => r.success).map((r) => r.name).join(', ')
+      const message = failureCount === 0
+        ? `Programação enviada com sucesso para ${successCount === 1 ? 'o encarregado' : `${successCount} encarregados`}: ${namesList}!`
+        : `Programação enviada para ${successCount} encarregado(s): ${namesList}. (${failureCount} com telefone pendente ou falha).`
+
+      await recordAuditLog({
+        actorUserId: req.session.user!.id,
+        actorName: req.session.user!.displayName,
+        action: 'programming_whatsapp_dispatch',
+        resourceType: 'ticket_programming',
+        resourceId: `foreman:${targetDate}`,
+        summary: message,
+        metadata: {
+          programmingType: 'foreman',
+          date: targetDate,
+          results,
+          successCount,
+        },
+      })
+
+      res.json({
+        success: true,
+        message,
+        results,
+        successCount,
+      })
+      return
+    }
+
+    // Programação Geral
+    const target = settings.programmingGroupJid
+    if (!target) {
+      res.status(400).json({
+        error: 'O JID do grupo de WhatsApp para a Programação Geral não está configurado. Cadastre-o na tela de Configurações.',
+      })
+      return
+    }
+
+    const { buffer, fileName, caption, totalEvents, scheduledStaffCount } = await generateSchedulePdf({
+      date: targetDate,
+      programmingType: 'general',
+    })
+
+    await sendWhatsAppPdfDocument({
+      target,
+      pdfBuffer: buffer,
+      fileName,
+      caption,
+    })
+
+    const message = 'Programação geral enviada com sucesso para o grupo de WhatsApp!'
+
+    await recordAuditLog({
+      actorUserId: req.session.user!.id,
+      actorName: req.session.user!.displayName,
+      action: 'programming_whatsapp_dispatch',
+      resourceType: 'ticket_programming',
+      resourceId: `general:${targetDate}`,
+      summary: `Enviou a programação geral de ${targetDate} via WhatsApp para o grupo ${target}.`,
+      metadata: {
+        programmingType: 'general',
+        date: targetDate,
+        target,
+        totalEvents,
+        scheduledStaffCount,
+      },
+    })
+
+    res.json({
+      success: true,
+      message,
+      fileName,
+      totalEvents,
+      scheduledStaffCount,
+      target,
+    })
+  } catch (error) {
+    next(error)
   }
 })
 

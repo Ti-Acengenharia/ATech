@@ -30,8 +30,9 @@ router.get('/notifications', async (req, res, next) => {
     const allowedPages = new Set(accessResult.rows.map((r) => r.page_key))
     const canTickets = user.role === 'admin' || allowedPages.has('tickets')
     const canLegal = user.role === 'admin' || allowedPages.has('legal-processes')
+    const canStock = user.role === 'admin' || allowedPages.has('stock-units')
 
-    const [ticketNotifs, ticketUnread, legalNotifs, legalUnread] = await Promise.all([
+    const [ticketNotifs, ticketUnread, legalNotifs, legalUnread, stockNotifs, stockUnread] = await Promise.all([
       canTickets
         ? pool.query<{
             id: string
@@ -112,6 +113,44 @@ router.get('/notifications', async (req, res, next) => {
             [user.id],
           ).then((r) => Number(r.rows[0]?.count ?? 0))
         : Promise.resolve(0),
+
+      canStock
+        ? pool.query<{
+            id: string
+            stock_unit_id: string
+            enterprise_name: string
+            block_name: string | null
+            unit_name: string
+            old_status: string | null
+            new_status: string
+            message: string
+            created_at: Date
+            read_at: Date | null
+          }>(
+            `SELECT ('stock:' || n.id::text) AS id,
+                    n.stock_unit_id::text AS stock_unit_id,
+                    n.enterprise_name,
+                    n.block_name,
+                    n.unit_name,
+                    n.old_status,
+                    n.new_status,
+                    n.message,
+                    n.created_at,
+                    n.read_at
+             FROM stock_unit_notifications n
+             WHERE n.user_id = $1
+             ORDER BY n.created_at DESC, n.id DESC
+             LIMIT 40`,
+            [user.id],
+          ).then((r) => r.rows)
+        : Promise.resolve([]),
+
+      canStock
+        ? pool.query<{ count: string }>(
+            'SELECT count(*)::text AS count FROM stock_unit_notifications WHERE user_id = $1 AND read_at IS NULL',
+            [user.id],
+          ).then((r) => Number(r.rows[0]?.count ?? 0))
+        : Promise.resolve(0),
     ])
 
     const combined = [
@@ -120,6 +159,7 @@ router.get('/notifications', async (req, res, next) => {
         source: 'ticket' as const,
         ticket_id: n.ticket_id,
         process_id: null,
+        stock_unit_id: null,
         protocol: n.protocol,
         process_number: null,
         comment_id: n.comment_id,
@@ -134,6 +174,7 @@ router.get('/notifications', async (req, res, next) => {
         source: 'legal-process' as const,
         ticket_id: null,
         process_id: n.process_id,
+        stock_unit_id: null,
         protocol: n.process_number || n.process_title,
         process_number: n.process_number || n.process_title,
         comment_id: n.comment_id,
@@ -143,11 +184,26 @@ router.get('/notifications', async (req, res, next) => {
         read_at: n.read_at ? n.read_at.toISOString() : null,
         actor_name: n.actor_name,
       })),
+      ...stockNotifs.map((n) => ({
+        id: n.id,
+        source: 'stock-unit' as const,
+        ticket_id: null,
+        process_id: null,
+        stock_unit_id: n.stock_unit_id,
+        protocol: `${n.enterprise_name} · ${n.block_name ? n.block_name + ' - ' : ''}${n.unit_name}`,
+        process_number: null,
+        comment_id: null,
+        kind: 'stock_status_change',
+        message: n.message,
+        created_at: n.created_at.toISOString(),
+        read_at: n.read_at ? n.read_at.toISOString() : null,
+        actor_name: 'Estoque CV CRM',
+      })),
     ].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50)
 
     res.json({
       notifications: combined,
-      unreadCount: ticketUnread + legalUnread,
+      unreadCount: ticketUnread + legalUnread + stockUnread,
     })
   } catch (error) {
     next(error)
@@ -166,6 +222,10 @@ router.patch('/notifications/read-all', async (req, res, next) => {
         'UPDATE legal_process_comment_mentions SET read_at = now() WHERE user_id = $1 AND read_at IS NULL',
         [userId],
       ),
+      pool.query(
+        'UPDATE stock_unit_notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL',
+        [userId],
+      ),
     ])
     res.status(204).end()
   } catch (error) {
@@ -178,6 +238,27 @@ router.patch('/notifications/:id/read', async (req, res, next) => {
   const userId = req.session.user!.id
 
   try {
+    if (rawId.startsWith('stock:')) {
+      const notifId = z.coerce.number().int().positive().safeParse(rawId.slice('stock:'.length))
+      if (!notifId.success) {
+        res.status(400).json({ error: 'Notificação inválida.' })
+        return
+      }
+      const result = await pool.query(
+        `UPDATE stock_unit_notifications
+         SET read_at = COALESCE(read_at, now())
+         WHERE id = $1 AND user_id = $2
+         RETURNING id`,
+        [notifId.data, userId],
+      )
+      if (!result.rowCount) {
+        res.status(404).json({ error: 'Notificação não encontrada.' })
+        return
+      }
+      res.status(204).end()
+      return
+    }
+
     if (rawId.startsWith('legal:')) {
       const commentId = z.coerce.number().int().positive().safeParse(rawId.slice('legal:'.length))
       if (!commentId.success) {

@@ -21,8 +21,13 @@ import homeRoutes from './routes/home.js'
 import syncRoutes from './routes/sync.js'
 import settingsRoutes from './routes/settings.js'
 import calendarRoutes from './routes/calendar.js'
+import stockUnitsRoutes from './routes/stock-units.js'
 import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, syncCvcrmTickets } from './services/cvcrm.js'
+import { getWhatsAppSettings, sendWhatsAppPdfDocument } from './services/evolution-api.js'
+import { fetchDailyProgrammingData, generateSchedulePdf } from './services/schedule-pdf.js'
+import { syncStockUnitsFromCvcrm } from './services/stock-units.js'
 import { initPostgresSyncListener } from './services/sync-events.js'
+import { getNextWorkingDay } from './services/working-days.js'
 
 const app = express()
 const PgSession = connectPgSimple(session)
@@ -206,6 +211,7 @@ app.use('/api/home', homeRoutes)
 app.use('/api/sync', syncRoutes)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/calendar', calendarRoutes)
+app.use('/api/stock-units', stockUnitsRoutes)
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Endpoint da API não encontrado.' })
@@ -354,6 +360,8 @@ if (cvcrmIsConfigured()) {
     hourCycle: 'h23',
   })
   let lastSyncSlot = ''
+  let lastStockWeeklySyncDay = ''
+  let lastWhatsappProgrammingDay = ''
 
   const checkAndRunSync = async () => {
     const parts = Object.fromEntries(
@@ -361,8 +369,117 @@ if (cvcrmIsConfigured()) {
         .filter((part) => part.type !== 'literal')
         .map((part) => [part.type, part.value]),
     )
+    const hour = Number(parts.hour)
     const minute = Number(parts.minute)
-    const minuteOfDay = Number(parts.hour) * 60 + minute
+    const minuteOfDay = hour * 60 + minute
+    const todayKey = `${parts.year}-${parts.month}-${parts.day}`
+
+    // Envio automático da programação do dia útil seguinte via WhatsApp (Evolution API): diariamente às 17:00
+    if (hour === 17 && minute < 5 && lastWhatsappProgrammingDay !== todayKey) {
+      lastWhatsappProgrammingDay = todayKey
+      try {
+        const prevSetting = await pool.query<{ val: string }>(
+          `SELECT setting_value #>> '{}' AS val FROM application_settings WHERE setting_key = 'whatsapp_programming_last_auto_dispatch'`,
+        )
+        if (prevSetting.rows[0]?.val !== todayKey) {
+          await pool.query(
+            `INSERT INTO application_settings (setting_key, setting_value, updated_at)
+             VALUES ('whatsapp_programming_last_auto_dispatch', to_jsonb($1::text), now())
+             ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = now()`,
+            [todayKey],
+          )
+
+          const wsSettings = await getWhatsAppSettings()
+          if (wsSettings.autoDispatchEnabled && wsSettings.apiUrl && wsSettings.apiKey && wsSettings.instanceName) {
+            const nextWorkingDay = await getNextWorkingDay(todayKey)
+            console.log(`[WhatsApp] Iniciando disparo automático da programação de ${nextWorkingDay} às 17h...`)
+
+            // 1. Programação Geral -> Grupo do WhatsApp
+            if (wsSettings.programmingGroupJid) {
+              try {
+                const generalPdf = await generateSchedulePdf({
+                  date: nextWorkingDay,
+                  programmingType: 'general',
+                })
+                await sendWhatsAppPdfDocument({
+                  target: wsSettings.programmingGroupJid,
+                  pdfBuffer: generalPdf.buffer,
+                  fileName: generalPdf.fileName,
+                  caption: generalPdf.caption,
+                })
+                console.log(`[WhatsApp] Programação geral (${nextWorkingDay}) enviada com sucesso para o grupo ${wsSettings.programmingGroupJid}`)
+              } catch (err: unknown) {
+                console.error('[WhatsApp] Falha ao enviar programação geral para o grupo:', err instanceof Error ? err.message : err)
+              }
+            }
+
+            // 2. Programação de Encarregados -> Envia individualmente para o número de cada encarregado
+            try {
+              const foremanData = await fetchDailyProgrammingData(nextWorkingDay, 'foreman')
+              const foremenWithAppointments = foremanData.collaborators.filter((c) => c.appointments.length > 0)
+              const foremenToSend = foremenWithAppointments.length > 0 ? foremenWithAppointments : foremanData.collaborators
+
+              for (const foreman of foremenToSend) {
+                const target = foreman.phone || wsSettings.foremanPhoneNumber
+                const name = foreman.nickname || foreman.name
+                if (!target) {
+                  console.warn(`[WhatsApp] Encarregado ${name} sem telefone para disparo automático de ${nextWorkingDay}.`)
+                  continue
+                }
+
+                try {
+                  const foremanPdf = await generateSchedulePdf({
+                    date: nextWorkingDay,
+                    programmingType: 'foreman',
+                    collaboratorId: foreman.id,
+                    recipientName: name,
+                  })
+                  await sendWhatsAppPdfDocument({
+                    target,
+                    pdfBuffer: foremanPdf.buffer,
+                    fileName: foremanPdf.fileName,
+                    caption: foremanPdf.caption,
+                  })
+                  console.log(`[WhatsApp] Programação do encarregado ${name} (${nextWorkingDay}) enviada com sucesso para ${target}`)
+                } catch (collabErr: unknown) {
+                  console.error(`[WhatsApp] Falha ao enviar para o encarregado ${name}:`, collabErr instanceof Error ? collabErr.message : collabErr)
+                }
+              }
+            } catch (err: unknown) {
+              console.error('[WhatsApp] Falha ao processar programações de encarregados:', err instanceof Error ? err.message : err)
+            }
+          }
+        }
+      } catch (err: unknown) {
+        lastWhatsappProgrammingDay = ''
+        console.error('[WhatsApp] Erro no envio automático das 17h:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    // Sincronização semanal automática das unidades em estoque: toda segunda-feira às 07:00
+    const dayOfWeek = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 12, 0, 0)).getUTCDay()
+    if (dayOfWeek === 1 && hour === 7 && lastStockWeeklySyncDay !== todayKey) {
+      lastStockWeeklySyncDay = todayKey
+      try {
+        const prevSetting = await pool.query<{ val: string }>(
+          `SELECT setting_value #>> '{}' AS val FROM application_settings WHERE setting_key = 'stock_units_last_weekly_sync'`,
+        )
+        if (prevSetting.rows[0]?.val !== todayKey) {
+          await pool.query(
+            `INSERT INTO application_settings (setting_key, setting_value, updated_at)
+             VALUES ('stock_units_last_weekly_sync', to_jsonb($1::text), now())
+             ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = now()`,
+            [todayKey],
+          )
+          const stockSyncRes = await syncStockUnitsFromCvcrm()
+          console.log(`[CVCRM] Sincronização semanal de estoque (segunda-feira 07h) concluída: ${stockSyncRes.totalInStock} unidades em ${stockSyncRes.enterprisesWithStock} obras.`)
+        }
+      } catch (err: unknown) {
+        lastStockWeeklySyncDay = ''
+        console.error('[CVCRM] Falha na sincronização semanal de estoque:', err instanceof Error ? err.message : 'erro desconhecido')
+      }
+    }
+
     if ((minute !== 0 && minute !== 30) || minuteOfDay < 450 || minuteOfDay >= 1080) {
       return
     }

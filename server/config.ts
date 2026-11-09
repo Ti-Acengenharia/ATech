@@ -36,6 +36,26 @@ const envSchema = z.object({
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().min(10).optional(),
   ),
+  EVOLUTION_API_URL: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  EVOLUTION_API_KEY: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
+  EVOLUTION_INSTANCE_NAME: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
+  EVOLUTION_PROGRAMMING_GROUP_JID: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
+  EVOLUTION_FOREMAN_PHONE_NUMBER: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
 })
 
 const parsedEnv = envSchema.safeParse(process.env)

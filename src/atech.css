@@ -3373,8 +3373,13 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .enterprise-card-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 13px; border-bottom: 1px solid #eaf0f5; }
 .enterprise-card-icon { width: 37px; height: 37px; display: grid; flex: 0 0 auto; place-items: center; color: #2875a8; background: #edf5fb; border-radius: 9px; }
 .enterprise-card-heading > div { min-width: 0; }
+.enterprise-card-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 3px; }
+.enterprise-card-title-row h2 { margin: 0; }
 .enterprise-card-heading h2 { margin: 0 0 3px; color: #26445e; font-family: var(--display); font-size: 14px; }
 .enterprise-card-heading > div > span { color: #8092a2; font-size: 9px; }
+.enterprise-work-status-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 8px; font-weight: 700; border-radius: 999px; letter-spacing: .03em; text-transform: uppercase; }
+.enterprise-work-status-tag.is-finished { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.enterprise-work-status-tag.is-in-progress { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
 .enterprise-edit-button { min-height: 34px; margin-left: auto; padding: 0 9px; font-size: 9px; white-space: nowrap; }
 .enterprise-contacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 13px 0; }
 .enterprise-contact { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 10px; background: #f8fafc; border: 1px solid #edf1f5; border-radius: 7px; }
@@ -3405,6 +3410,15 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .enterprise-form-section textarea { width: 100%; min-width: 0; padding: 8px; color: #314e66; background: #fff; border: 1px solid #dbe5ed; border-radius: 5px; font: inherit; font-size: 10px; resize: vertical; }
 .enterprise-form-section .enterprise-address-field { grid-column: 1 / -1; }
 .enterprise-form-section input:focus { outline: 0; border-color: #72a4cb; box-shadow: 0 0 0 3px rgba(62, 130, 184, .1); }
+.enterprise-status-form { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid #eaf0f5; }
+.enterprise-status-options { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.enterprise-status-option { display: flex !important; flex-direction: row !important; align-items: flex-start !important; gap: 9px !important; padding: 10px 12px; background: #f8fafc; border: 1px solid #dbe5ed; border-radius: 6px; cursor: pointer; transition: all .15s ease; }
+.enterprise-status-option:hover { background: #edf5fb; border-color: #72a4cb; }
+.enterprise-status-option.is-selected { background: #f0fdf4; border-color: #86efac; box-shadow: 0 0 0 1px #86efac; }
+.enterprise-status-option input[type="radio"] { width: 15px; height: 15px; margin: 2px 0 0 0; flex-shrink: 0; cursor: pointer; }
+.enterprise-status-option div { display: flex; flex-direction: column; gap: 2px; }
+.enterprise-status-option strong { font-size: 10px; color: #26445e; font-weight: 700; }
+.enterprise-status-option small { font-size: 8px; color: #667e93; font-weight: normal; line-height: 1.3; }
 .enterprise-edit-form footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; padding-top: 4px; }
 .enterprise-edit-form footer .primary-button, .enterprise-edit-form footer .secondary-button { min-height: 35px; font-size: 9px; }
 
@@ -4485,6 +4499,24 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .footer-version-btn:hover {
   color: #1d4ed8;
 }
+
+.whatsapp-send-button {
+  background-color: #f0fdf4 !important;
+  border-color: #a7f3d0 !important;
+  color: #065f46 !important;
+  font-weight: 600;
+}
+
+.whatsapp-send-button:hover:not(:disabled) {
+  background-color: #dcfce7 !important;
+  border-color: #86efac !important;
+  color: #047857 !important;
+}
+
+.whatsapp-send-button:disabled {
+  opacity: 0.6;
+}
+
 
 
 

@@ -7,6 +7,7 @@ import {
   Ban,
   Bell,
   BriefcaseBusiness,
+  Building2,
   CalendarClock,
   CalendarDays,
   Check,
@@ -38,7 +39,7 @@ import './atech.css'
 
 type UserRole = 'admin' | 'member'
 type UserStatus = 'invited' | 'active' | 'suspended'
-type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities' | 'logs' | 'work-calendar'
+type AdminPage = 'home' | 'tickets' | 'letter-filling' | 'schedule' | 'collaborators' | 'inventory' | 'information' | 'accesses' | 'api-validation' | 'warranties' | 'legal-processes' | 'personal-activities' | 'logs' | 'work-calendar' | 'stock-units'
 type AppPage = AdminPage | 'not-found'
 
 interface SessionUser {
@@ -67,12 +68,13 @@ interface SessionResponse {
 
 interface UserNotification {
   id: string
-  source?: 'ticket' | 'legal-process'
+  source?: 'ticket' | 'legal-process' | 'stock-unit'
   ticket_id: string | null
   process_id?: string | null
+  stock_unit_id?: string | null
   protocol: string
   process_number?: string | null
-  kind: 'mention' | 'mention_reply' | 'legal_mention'
+  kind: 'mention' | 'mention_reply' | 'legal_mention' | 'stock_status_change'
   message: string
   actor_name: string
   created_at: string
@@ -113,15 +115,17 @@ const LegalProcessesPage = lazy(() => import('./LegalProcessesPage'))
 const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 const HomepageTicketsFilterSettings = lazy(() => import('./HomepageTicketsFilterSettings'))
 const SessionTimeoutSettings = lazy(() => import('./SessionTimeoutSettings'))
+const WhatsAppSettings = lazy(() => import('./WhatsAppSettings'))
 const AuditLogsPage = lazy(() => import('./AuditLogsPage'))
 const CalendarManagementPage = lazy(() => import('./CalendarManagementPage'))
+const StockUnitsPage = lazy(() => import('./StockUnitsPage'))
 const VersionHistoryModal = lazy(() => import('./VersionHistoryModal'))
 const NotFoundPage = lazy(() => import('./NotFoundPage'))
 const PrivacyPolicyModal = lazy(() => import('./PrivacyPolicyModal'))
 
 const allAdminPages: AdminPage[] = [
   'home', 'tickets', 'letter-filling', 'schedule', 'collaborators', 'inventory',
-  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities', 'logs', 'work-calendar',
+  'information', 'accesses', 'api-validation', 'warranties', 'legal-processes', 'personal-activities', 'logs', 'work-calendar', 'stock-units',
 ]
 
 function readPageFromLocation(): AppPage {
@@ -574,6 +578,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   const [initialTicketId, setInitialTicketId] = useState<string | null>(null)
   const [initialProcessId, setInitialProcessId] = useState<string | null>(null)
   const [initialCollaboratorId, setInitialCollaboratorId] = useState<string | null>(null)
+  const [initialStockUnitId, setInitialStockUnitId] = useState<string | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [showVersionModal, setShowVersionModal] = useState(false)
   const [showPrivacyModal, setShowPrivacyModal] = useState(false)
@@ -591,6 +596,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'schedule', label: 'Programação' },
     { key: 'collaborators', label: 'Colaboradores' },
     { key: 'inventory', label: 'Estoque' },
+    { key: 'stock-units', label: 'Unidades em estoque' },
     { key: 'information', label: 'Informações' },
     { key: 'api-validation', label: 'Validação da API' },
     { key: 'warranties', label: 'Prazos de garantia' },
@@ -614,6 +620,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     if (nextPage !== 'tickets') url.searchParams.delete('ticketId')
     if (nextPage !== 'legal-processes') url.searchParams.delete('processId')
     if (nextPage !== 'collaborators') url.searchParams.delete('collaboratorId')
+    if (nextPage !== 'stock-units') url.searchParams.delete('unitId')
     const target = `${url.pathname}${url.search}${url.hash}`
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) {
       window.history.pushState({ page: nextPage }, '', target)
@@ -706,6 +713,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   const clearInitialTicket = useCallback(() => setInitialTicketId(null), [])
   const clearInitialProcess = useCallback(() => setInitialProcessId(null), [])
   const clearInitialCollaborator = useCallback(() => setInitialCollaboratorId(null), [])
+  const clearInitialStockUnit = useCallback(() => setInitialStockUnitId(null), [])
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadNotifications(), 0)
@@ -724,6 +732,11 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
       if ((notification.source === 'legal-process' || notification.process_id) && canAccessPage('legal-processes')) {
         setInitialProcessId(notification.process_id ?? null)
         openPage('legal-processes')
+        return
+      }
+      if ((notification.source === 'stock-unit' || notification.stock_unit_id) && canAccessPage('stock-units')) {
+        setInitialStockUnitId(notification.stock_unit_id ?? null)
+        openPage('stock-units')
         return
       }
       if (notification.ticket_id && canAccessPage('tickets')) {
@@ -905,6 +918,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     'legal-processes': 'Processos Jurídicos',
     'personal-activities': 'Atividades pessoais',
     inventory: 'Gestão de estoque',
+    'stock-units': 'Unidades em estoque',
     logs: 'Auditoria & Logs',
     'work-calendar': 'Expediente e Calendário',
   }
@@ -941,6 +955,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           {canAccessPage('schedule') && <button type="button" title="Programação" aria-label="Ir para programação" className={`nav-item ${page === 'schedule' ? 'nav-item-active' : ''}`} onClick={() => setPage('schedule')}><CalendarDays size={17} /><span>Programação</span></button>}
           {canAccessPage('collaborators') && <button type="button" title="Colaboradores" aria-label="Ir para colaboradores" className={`nav-item ${page === 'collaborators' ? 'nav-item-active' : ''}`} onClick={() => setPage('collaborators')}><ContactRound size={17} /><span>Colaboradores</span></button>}
           {canAccessPage('inventory') && <button type="button" title="Gestão de estoque" aria-label="Ir para gestão de estoque" className={`nav-item ${page === 'inventory' ? 'nav-item-active' : ''}`} onClick={() => setPage('inventory')}><Package size={17} /><span>Estoque</span></button>}
+          {canAccessPage('stock-units') && <button type="button" title="Unidades em estoque" aria-label="Ir para unidades em estoque" className={`nav-item ${page === 'stock-units' ? 'nav-item-active' : ''}`} onClick={() => setPage('stock-units')}><Building2 size={17} /><span>Unidades em estoque</span></button>}
           {canAccessPage('api-validation') && <button type="button" title="Validação da API" aria-label="Ir para validação da API" className={`nav-item ${page === 'api-validation' ? 'nav-item-active' : ''}`} onClick={() => setPage('api-validation')}><Zap size={17} /><span>Validação API</span></button>}
           {canAccessPage('warranties') && <button type="button" title="Prazos de garantia" aria-label="Ir para prazos de garantia" className={`nav-item ${page === 'warranties' ? 'nav-item-active' : ''}`} onClick={() => setPage('warranties')}><ShieldCheck size={17} /><span>Garantias</span></button>}
           {canAccessPage('legal-processes') && <button type="button" title="Processos Jurídicos" aria-label="Ir para processos jurídicos" className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`} onClick={() => setPage('legal-processes')}><BriefcaseBusiness size={17} /><span>Processos Jurídicos</span></button>}
@@ -1018,7 +1033,9 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                             <span>
                               {notification.source === 'legal-process'
                                 ? `Jurídico · ${notification.protocol}`
-                                : `#${notification.protocol}`}
+                                : notification.source === 'stock-unit'
+                                  ? `Estoque · ${notification.protocol}`
+                                  : `#${notification.protocol}`}
                               {' · '}
                               {notification.actor_name}
                             </span>
@@ -1072,6 +1089,12 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
             />
           ) : page === 'inventory' && canAccessPage('inventory') ? (
             <InventoryPage />
+          ) : page === 'stock-units' && canAccessPage('stock-units') ? (
+            <StockUnitsPage
+              currentUser={user}
+              initialUnitId={initialStockUnitId}
+              onUnitOpened={clearInitialStockUnit}
+            />
           ) : page === 'information' && canAccessPage('information') ? (
             <EnterpriseInformationPage />
           ) : page === 'warranties' && canAccessPage('warranties') ? (
@@ -1106,6 +1129,10 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
 
           <Suspense fallback={null}>
             <SessionTimeoutSettings />
+          </Suspense>
+
+          <Suspense fallback={null}>
+            <WhatsAppSettings />
           </Suspense>
 
           <section className="metrics" aria-label="Resumo de acessos">
@@ -1336,6 +1363,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
     inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
+    'stock-units': { title: 'Unidades em estoque', description: 'Controle de vistorias e unidades não vendidas via CV CRM.', icon: Building2 },
     logs: { title: 'Auditoria & Logs', description: 'Trilha de auditoria e segurança do sistema.', icon: History },
     'work-calendar': { title: 'Expediente e Calendário', description: 'Feriados, sábados trabalhados e jornada da assistência técnica.', icon: CalendarClock },
   }[page]

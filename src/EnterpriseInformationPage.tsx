@@ -6,6 +6,7 @@ interface EnterpriseInformation {
   enterprise_key: string
   enterprise_name: string
   ticket_count: number
+  work_status?: 'finished' | 'in_progress'
   syndic_name: string | null
   syndic_phone: string | null
   syndic_email: string | null
@@ -20,6 +21,7 @@ interface EnterpriseInformation {
 
 interface EnterpriseForm {
   enterpriseName: string
+  workStatus: 'finished' | 'in_progress'
   syndicName: string
   syndicPhone: string
   syndicEmail: string
@@ -58,6 +60,7 @@ function deliveredDuration(value: string | null, now: number) {
 function formFromEnterprise(enterprise: EnterpriseInformation): EnterpriseForm {
   return {
     enterpriseName: enterprise.enterprise_name,
+    workStatus: enterprise.work_status === 'finished' ? 'finished' : 'in_progress',
     syndicName: enterprise.syndic_name ?? '',
     syndicPhone: enterprise.syndic_phone ?? '',
     syndicEmail: enterprise.syndic_email ?? '',
@@ -90,6 +93,7 @@ function ContactLine({ label, name, phone, email }: { label: string; name: strin
 function emptyEnterpriseForm(): EnterpriseForm {
   return {
     enterpriseName: '',
+    workStatus: 'in_progress',
     syndicName: '',
     syndicPhone: '',
     syndicEmail: '',
@@ -115,6 +119,7 @@ export default function EnterpriseInformationPage() {
   const [now, setNow] = useState(() => Date.now())
   const [search, setSearch] = useState('')
   const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'planned' | 'missing'>('all')
+  const [workStatusFilter, setWorkStatusFilter] = useState<'all' | 'finished' | 'in_progress'>('all')
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
@@ -201,7 +206,8 @@ export default function EnterpriseInformationPage() {
       (deliveryFilter === 'missing' && !deliveryDate) ||
       (deliveryFilter === 'planned' && deliveryDate > today) ||
       (deliveryFilter === 'delivered' && Boolean(deliveryDate) && deliveryDate <= today)
-    return matchesSearch && matchesDelivery
+    const matchesWorkStatus = workStatusFilter === 'all' || (enterprise.work_status ?? 'in_progress') === workStatusFilter
+    return matchesSearch && matchesDelivery && matchesWorkStatus
   })
 
   return (
@@ -219,6 +225,11 @@ export default function EnterpriseInformationPage() {
       </article>}
       {!loading && enterprises.length > 0 && <div className="enterprise-filters">
         <label className="search-box"><Search size={15} /><input type="search" placeholder="Buscar empreendimento, síndico, supervisor ou contato" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <label><span>Situação da obra</span><select value={workStatusFilter} onChange={(event) => setWorkStatusFilter(event.target.value as typeof workStatusFilter)}>
+          <option value="all">Todas as situações</option>
+          <option value="finished">Obra Finalizada</option>
+          <option value="in_progress">Em Andamento</option>
+        </select></label>
         <label><span>Entrega do condomínio</span><select value={deliveryFilter} onChange={(event) => setDeliveryFilter(event.target.value as typeof deliveryFilter)}>
           <option value="all">Todas as datas</option>
           <option value="delivered">Já entregue</option>
@@ -226,7 +237,7 @@ export default function EnterpriseInformationPage() {
           <option value="missing">Sem data informada</option>
         </select></label>
         <span className="enterprise-filter-count">{filteredEnterprises.length} de {enterprises.length}</span>
-        <button className="filter-clear-button" type="button" disabled={!search && deliveryFilter === 'all'} onClick={() => { setSearch(''); setDeliveryFilter('all') }}><X size={14} /> Limpar filtros</button>
+        <button className="filter-clear-button" type="button" disabled={!search && deliveryFilter === 'all' && workStatusFilter === 'all'} onClick={() => { setSearch(''); setDeliveryFilter('all'); setWorkStatusFilter('all') }}><X size={14} /> Limpar filtros</button>
       </div>}
       {loading ? <div className="enterprise-empty-state">Carregando empreendimentos...</div> : enterprises.length === 0 ? (
         <div className="enterprise-empty-state"><Building2 size={28} /><strong>Nenhum empreendimento encontrado</strong><span>Os empreendimentos serão listados assim que estiverem presentes nos chamados.</span></div>
@@ -239,7 +250,15 @@ export default function EnterpriseInformationPage() {
               <article className={`enterprise-card ${isEditing ? 'enterprise-card-editing' : ''}`} key={enterprise.enterprise_key}>
                 <header className="enterprise-card-heading">
                   <span className="enterprise-card-icon"><Building2 size={18} /></span>
-                  <div><h2>{enterprise.enterprise_name}</h2><span>{enterprise.ticket_count} {enterprise.ticket_count === 1 ? 'chamado registrado' : 'chamados registrados'}</span></div>
+                  <div>
+                    <div className="enterprise-card-title-row">
+                      <h2>{enterprise.enterprise_name}</h2>
+                      <span className={`enterprise-work-status-tag ${enterprise.work_status === 'finished' ? 'is-finished' : 'is-in-progress'}`}>
+                        {enterprise.work_status === 'finished' ? 'Obra Finalizada' : 'Em Andamento'}
+                      </span>
+                    </div>
+                    <span>{enterprise.ticket_count} {enterprise.ticket_count === 1 ? 'chamado registrado' : 'chamados registrados'}</span>
+                  </div>
                   {!isEditing && <button className="secondary-button enterprise-edit-button" type="button" onClick={() => startEdit(enterprise)}><Pencil size={14} /> Atualizar dados</button>}
                 </header>
                 {isEditing && form ? (
@@ -303,6 +322,37 @@ function EnterpriseEditForm({
         <h3>Datas do empreendimento</h3>
         <label><span>Emissão do habite-se</span><input type="date" value={form.occupancyPermitDate} onChange={(event) => onUpdate('occupancyPermitDate', event.target.value)} /></label>
         <label><span>Entrega do condomínio</span><input type="date" value={form.condominiumDeliveryDate} onChange={(event) => onUpdate('condominiumDeliveryDate', event.target.value)} /></label>
+      </div>
+      <div className="enterprise-form-section enterprise-status-form">
+        <h3>Situação da obra (Controle de Estoque e Vistorias)</h3>
+        <div className="enterprise-status-options">
+          <label className={`enterprise-status-option ${form.workStatus === 'finished' ? 'is-selected' : ''}`}>
+            <input
+              type="radio"
+              name="workStatus"
+              value="finished"
+              checked={form.workStatus === 'finished'}
+              onChange={() => onUpdate('workStatus', 'finished')}
+            />
+            <div>
+              <strong>Obra Finalizada / Concluída</strong>
+              <small>Considerada entregue no estoque para controle de vistorias técnicas periódicas</small>
+            </div>
+          </label>
+          <label className={`enterprise-status-option ${form.workStatus === 'in_progress' ? 'is-selected' : ''}`}>
+            <input
+              type="radio"
+              name="workStatus"
+              value="in_progress"
+              checked={form.workStatus === 'in_progress'}
+              onChange={() => onUpdate('workStatus', 'in_progress')}
+            />
+            <div>
+              <strong>Obra em Andamento</strong>
+              <small>Empreendimento ainda em fase de obras ou construção</small>
+            </div>
+          </label>
+        </div>
       </div>
       <footer><button className="secondary-button" type="button" onClick={onCancel}>Cancelar</button><button className="primary-button" type="submit" disabled={saving}><Save size={14} />{saving ? 'Salvando...' : creating ? 'Cadastrar empreendimento' : 'Salvar informações'}</button></footer>
     </form>
