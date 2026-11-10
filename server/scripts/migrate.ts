@@ -74,6 +74,8 @@ try {
     '052_stock_units_and_inspections.sql',
     '053_stock_unit_notifications_and_delivery.sql',
     '054_enterprise_work_status.sql',
+    '055_whatsapp_settings.sql',
+    '056_clean_api_validation_access.sql',
   ]
 
   let newlyAppliedCount = 0

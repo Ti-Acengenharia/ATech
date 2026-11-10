@@ -27,7 +27,6 @@ const apiValidationPaths = new Set([
   '/integration/toggle-auto-sync',
   '/integration/test-protocol',
   '/integration/import-all',
-  '/by-protocol',
   '/import-csv',
   '/sync',
 ])
@@ -84,8 +83,11 @@ const ticketTagAssignmentSchema = z.object({
 
 router.use(requireAuth)
 router.use((req, res, next) => {
-  const pageKey = apiValidationPaths.has(req.path) ? 'api-validation' : 'tickets'
-  requirePageAccess(pageKey)(req, res, next)
+  if (apiValidationPaths.has(req.path)) {
+    requireAdmin(req, res, next)
+    return
+  }
+  requirePageAccess('tickets')(req, res, next)
 })
 
 router.get('/integration', async (_req, res, next) => {

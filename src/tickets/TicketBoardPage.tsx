@@ -732,7 +732,7 @@ export default function TicketBoardPage({
             <Plus size={15} /> Novo chamado por protocolo
           </button>
           <button type="button" className="secondary-button" onClick={() => setDashboardOpen(true)}><BarChart3 size={15} /> Dashboard</button>
-          {onOpenValidation && (
+          {canManageIntegration && onOpenValidation && (
             <button
               type="button"
               className="secondary-button"
@@ -742,9 +742,11 @@ export default function TicketBoardPage({
               <Zap size={14} /> Validação da API
             </button>
           )}
-          <span className={`cvcrm-connection ${configured ? 'is-connected' : 'is-unconfigured'}`}>
-            <i />{configured ? 'CVCRM configurado' : 'CVCRM pendente'}
-          </span>
+          {canManageIntegration && (
+            <span className={`cvcrm-connection ${configured ? 'is-connected' : 'is-unconfigured'}`}>
+              <i />{configured ? 'CVCRM configurado' : 'CVCRM pendente'}
+            </span>
+          )}
           {canManageIntegration && (
             <button
               className="secondary-button"

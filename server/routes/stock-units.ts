@@ -1,7 +1,7 @@
 /// <reference path="../types/express-session.d.ts" />
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth } from '../auth.js'
+import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
 import { syncStockUnitsFromCvcrm } from '../services/stock-units.js'
@@ -18,6 +18,7 @@ export const MANDATORY_INSPECTION_ITEMS = [
 ] as const
 
 const router = Router()
+router.use(requireAuth, requirePageAccess('stock-units'))
 
 // GET /api/stock-units - Lista unidades em estoque com agrupamento e estatísticas
 router.get('/', requireAuth, async (req, res, next) => {
@@ -264,8 +265,8 @@ router.get('/', requireAuth, async (req, res, next) => {
   }
 })
 
-// POST /api/stock-units/sync - Dispara sincronização com o CV CRM
-router.post('/sync', requireAuth, async (_req, res, next) => {
+// POST /api/stock-units/sync - Dispara sincronização com o CV CRM (restrito a administradores)
+router.post('/sync', requireAdmin, async (_req, res, next) => {
   try {
     const result = await syncStockUnitsFromCvcrm()
     res.json({

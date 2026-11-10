@@ -598,12 +598,11 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'inventory', label: 'Estoque' },
     { key: 'stock-units', label: 'Unidades em estoque' },
     { key: 'information', label: 'Informações' },
-    { key: 'api-validation', label: 'Validação da API' },
     { key: 'warranties', label: 'Prazos de garantia' },
     { key: 'legal-processes', label: 'Processos Jurídicos' },
     { key: 'personal-activities', label: 'Atividades pessoais' },
   ]
-  const canAccessPage = useCallback((key: AdminPage) => (key === 'accesses' || key === 'logs' || key === 'work-calendar')
+  const canAccessPage = useCallback((key: AdminPage) => (key === 'accesses' || key === 'logs' || key === 'work-calendar' || key === 'api-validation')
     ? user.role === 'admin'
     : user.role === 'admin' || pageAccess.includes(key), [pageAccess, user.role])
   const isForbidden = pageState !== 'not-found' && !canAccessPage(pageState)
@@ -1073,7 +1072,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           ) : page === 'tickets' && canAccessPage('tickets') ? (
             <TicketBoardPage
               canManageIntegration={user.role === 'admin'}
-              onOpenValidation={() => setPage('api-validation')}
+              onOpenValidation={user.role === 'admin' ? () => setPage('api-validation') : undefined}
               currentUser={{ id: user.id, role: user.role, displayName: user.displayName }}
               initialTicketId={initialTicketId}
               onTicketOpened={clearInitialTicket}

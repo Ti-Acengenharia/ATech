@@ -721,16 +721,18 @@ export default function StockUnitsPage({ currentUser, initialUnitId, onUnitOpene
               <strong>{new Date(summary.last_sync).toLocaleString('pt-BR')}</strong>
             </span>
           )}
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleSyncCvcrm()}
-            disabled={syncing}
-            title="Atualizar lista com o Construtor de Vendas"
-          >
-            <RefreshCw size={15} className={syncing ? 'is-spinning' : ''} />
-            <span>{syncing ? 'Sincronizando...' : 'Sincronizar CV CRM'}</span>
-          </button>
+          {currentUser?.role === 'admin' && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleSyncCvcrm()}
+              disabled={syncing}
+              title="Atualizar lista com o Construtor de Vendas"
+            >
+              <RefreshCw size={15} className={syncing ? 'is-spinning' : ''} />
+              <span>{syncing ? 'Sincronizando...' : 'Sincronizar CV CRM'}</span>
+            </button>
+          )}
         </div>
       </div>
 

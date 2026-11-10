@@ -920,38 +920,34 @@ export default function HomeDashboard({
           </div>
         </div>
 
-        {/* Grupo 3: Administração & Integrações (exibido apenas para administradores ou usuários com permissão) */}
-        {(user.role === 'admin' || canAccess('api-validation')) && (
+        {/* Grupo 3: Administração & Integrações (exibido apenas para administradores) */}
+        {user.role === 'admin' && (
           <div className="home-modules-category-group">
             <span className="home-modules-cat-label">
               <ShieldAlert size={13} /> Administração & Integrações
             </span>
             <div className="home-modules-grid">
-              {user.role === 'admin' && (
-                <div className="home-module-card" onClick={() => onOpenPage('accesses')}>
-                  <div className="home-module-icon-wrap home-mod-slate">
-                    <UserCheck size={18} />
-                  </div>
-                  <div className="home-module-content">
-                    <strong>Controle de Acessos</strong>
-                    <small>Gestão de permissões de páginas e contas da equipe</small>
-                  </div>
-                  <ChevronRight size={15} className="home-module-arrow" />
+              <div className="home-module-card" onClick={() => onOpenPage('accesses')}>
+                <div className="home-module-icon-wrap home-mod-slate">
+                  <UserCheck size={18} />
                 </div>
-              )}
+                <div className="home-module-content">
+                  <strong>Controle de Acessos</strong>
+                  <small>Gestão de permissões de páginas e contas da equipe</small>
+                </div>
+                <ChevronRight size={15} className="home-module-arrow" />
+              </div>
 
-              {canAccess('api-validation') && (
-                <div className="home-module-card" onClick={() => onOpenPage('api-validation')}>
-                  <div className="home-module-icon-wrap home-mod-amber">
-                    <Zap size={18} />
-                  </div>
-                  <div className="home-module-content">
-                    <strong>Validação da API</strong>
-                    <small>Sincronização CVCRM, carga CSV e diagnóstico</small>
-                  </div>
-                  <ChevronRight size={15} className="home-module-arrow" />
+              <div className="home-module-card" onClick={() => onOpenPage('api-validation')}>
+                <div className="home-module-icon-wrap home-mod-amber">
+                  <Zap size={18} />
                 </div>
-              )}
+                <div className="home-module-content">
+                  <strong>Validação da API</strong>
+                  <small>Sincronização CVCRM, carga CSV e diagnóstico</small>
+                </div>
+                <ChevronRight size={15} className="home-module-arrow" />
+              </div>
             </div>
           </div>
         )}
