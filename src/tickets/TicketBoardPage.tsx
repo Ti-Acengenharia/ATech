@@ -818,7 +818,7 @@ export default function TicketBoardPage({
       )}
 
       {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" aria-label="Fechar aviso" onClick={() => setNotice(null)}>×</button></div>}
-      {!configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
+      {currentUser.role === 'admin' && !configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
       {syncState?.last_finished_at && <p className="ticket-sync-meta">Última sincronização: {formatDate(syncState.last_finished_at)} · {syncState.imported_count} ativos{syncState.last_success === false && syncState.error_message ? ` · ${syncState.error_message}` : ''}</p>}
 
       <section className="ticket-filter-panel">

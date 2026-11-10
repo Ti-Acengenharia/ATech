@@ -20,9 +20,7 @@ import {
 } from '../services/cvcrm.js'
 
 const router = Router()
-const apiValidationPaths = new Set([
-  '/integration',
-  '/integration/status',
+const adminOnlyPaths = new Set([
   '/integration/validate',
   '/integration/toggle-auto-sync',
   '/integration/test-protocol',
@@ -83,7 +81,7 @@ const ticketTagAssignmentSchema = z.object({
 
 router.use(requireAuth)
 router.use((req, res, next) => {
-  if (apiValidationPaths.has(req.path)) {
+  if (adminOnlyPaths.has(req.path)) {
     requireAdmin(req, res, next)
     return
   }
@@ -181,7 +179,7 @@ router.post('/import-csv', requireAdmin, async (req, res) => {
   }
 })
 
-router.post('/sync', async (_req, res, next) => {
+router.post('/sync', requireAdmin, async (_req, res, next) => {
   try {
     const result = await syncCvcrmTickets()
     invalidateFilterOptionsCache()
