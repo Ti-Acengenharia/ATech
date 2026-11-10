@@ -94,7 +94,11 @@ export async function initPostgresSyncListener(): Promise<void> {
 
     listenerClient.on('error', (err) => {
       console.warn('[sync-events] PostgreSQL listener client error, reconnecting in 5s:', err)
-      listenerClient.release()
+      try {
+        listenerClient.release(true)
+      } catch {
+        // ignore
+      }
       isListening = false
       setTimeout(() => void initPostgresSyncListener(), 5000)
     })

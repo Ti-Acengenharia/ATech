@@ -730,6 +730,7 @@ router.get('/dashboard', async (req, res, next) => {
       canceled_this_month: number
       balance_this_month: number
       average_days: number | null
+      average_days_this_month: number | null
       last_updated: Date | null
       active_by_enterprise: Array<{ enterprise: string; clients: number; condominiums: number; total: number }>
       status_summary: Array<{ enterprise: string; status: string; count: number }>
@@ -745,7 +746,11 @@ router.get('/dashboard', async (req, res, next) => {
                   ELSE NULL
                 END AS ticket_type
          FROM tickets t
-         WHERE t.opened_at >= make_date($8::int, 1, 1)
+         WHERE (
+           t.opened_at >= make_date($8::int, 1, 1)
+           OR (NOT t.source_active AND t.source_modified_at >= make_date($8::int, 1, 1))
+           OR ($9::text IS NOT NULL AND $9::text <> '' AND NOT t.source_active AND t.source_modified_at >= ($9::text || '-01')::date)
+         )
            AND (cardinality($1::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($1::text[]))
            AND (cardinality($2::text[]) = 0 OR lower(btrim(t.block)) = ANY($2::text[]))
            AND (cardinality($3::text[]) = 0 OR lower(btrim(t.unit)) = ANY($3::text[]))
@@ -779,7 +784,6 @@ router.get('/dashboard', async (req, res, next) => {
          FROM ticket_activity_history h
          JOIN selected_tickets t ON t.source_id = h.ticket_id
          WHERE h.event_type = 'stage_changed'
-           AND h.created_at >= make_date($8::int, 1, 1)
            AND lower(COALESCE(h.details->>'to', '')) ~ '(finalizad[oa]|cancelad[oa])'
            AND lower(COALESCE(h.details->>'from', '')) !~ '(finalizad[oa]|cancelad[oa])'
        ),
@@ -871,12 +875,12 @@ router.get('/dashboard', async (req, res, next) => {
          SELECT
            count(*) FILTER (WHERE e.is_completed AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month')::int AS completed_this_month,
            count(*) FILTER (WHERE e.is_canceled AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month')::int AS canceled_this_month,
-           avg(extract(epoch FROM (e.event_at - e.opened_at)) / 86400) FILTER (
-             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at
+           avg(GREATEST(0, extract(epoch FROM (e.event_at - e.opened_at)) / 86400)) FILTER (
+             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at - interval '1 day'
                AND e.event_at >= c.month_start AND e.event_at < c.month_start + interval '1 month'
            )::float AS average_days_this_month,
-           avg(extract(epoch FROM (e.event_at - e.opened_at)) / 86400) FILTER (
-             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at
+           avg(GREATEST(0, extract(epoch FROM (e.event_at - e.opened_at)) / 86400)) FILTER (
+             WHERE e.is_completed AND e.opened_at IS NOT NULL AND e.event_at >= e.opened_at - interval '1 day'
            )::float AS average_days
          FROM current_month c
          CROSS JOIN closures e

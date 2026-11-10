@@ -9,9 +9,56 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.4.3'
+export const APP_CURRENT_VERSION = 'v2.4.4'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.4.4',
+    date: '10/11/2026',
+    title: 'Submenus, Deep Linking de Dashboards, Blindagem de Alta Concorrência e Máscara Monetária',
+    tagline: 'Menu lateral reestruturado em submenus, URLs dedicadas persistentes, proteção contra sobrecarga em VPS, concorrência robusta no backend e formatação financeira inteligente.',
+    changes: [
+      {
+        category: 'Design & UX',
+        items: [
+          'Reestruturação completa do menu lateral em submenus agrupados (Início, Minhas atividades, Chamados, Processos Jurídicos, Administração e Configurações), com recolhimento animado e persistência no navegador.',
+          'Renomeação da seção "Informações" para "Informações de empreendimentos".',
+          'Barra de rolagem horizontal personalizada e suave no menu de abas internas dos Processos Jurídicos, com suporte a mouse wheel e flex-shrink, mantendo acesso a todas as seções mesmo com o menu lateral expandido.',
+          'Formatação monetária progressiva em tempo real nos campos "Valor da causa" e "Lançamentos financeiros": pontuação automática de milhares, suporte a centavos com vírgula ou teclado numérico (ponto), auto-completar de casas decimais ao sair do campo e sanitização de Ctrl+V.',
+          'Atalhos de teclado e seleção automática do valor monetário ao focar no campo para digitação ágil.',
+        ],
+      },
+      {
+        category: 'Funcionalidade',
+        items: [
+          'URLs dedicadas e persistência de navegação (Deep Linking) para o Dashboard de Chamados (?page=tickets&view=dashboard) e Dashboard Jurídico (?page=legal-processes&view=dashboard ou alias ?page=legal-dashboard), preservando a visualização ao recarregar a página e integrando com o histórico do navegador.',
+          'Acompanhamento dinâmico de filtros no indicador de Prazo Médio de Finalização do Dashboard de Chamados.',
+          'Tabelas de Resumo por Empreendimento e Situações do CVCRM com percentuais relativos calculados automaticamente (peso de clientes/condomínio e representatividade em relação ao total da construtora).',
+          'Gráfico de Evolução Mensal exibindo por padrão o ano corrente com recurso interativo de drilldown para seleção e comparação de anos anteriores.',
+          'Correção na seleção de permissões de usuários para a tela de "Unidades em estoque" na gestão de acessos.',
+          'Controle de visualização de botões sensíveis: botões de "Validação API" e "Sincronizar CV" agora ficam ocultos para usuários não-administradores, prevenindo requisições excessivas ao CVCRM sem bloquear a consulta de chamados.',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Resolução definitiva de quedas do backend sob requisições simultâneas: eliminação de chamadas concorrentes client.query em uma mesma conexão física no módulo de atividades pessoais (DeprecationWarning / Unexpected EOF corrigidos).',
+          'Remoção de transações e bloqueios de linha exclusivos (BEGIN / SELECT FOR UPDATE) em rotas puramente de consulta, liberando o banco de dados para leituras paralelas sem fila de espera.',
+          'Dimensionamento do pool de conexões do PostgreSQL expandido para 40 conexões simultâneas com timeout ampliado para 10 segundos.',
+          'Descarte seguro de sockets em erros de streaming SSE (listenerClient.release(true)), garantindo que conexões mortas não retornem ao pool.',
+          'Blindagem contra encerramento inesperado do Node.js: registro de listeners globais de uncaughtException, unhandledRejection, pool.on("error") e sessionStore.on("error").',
+          'Rate Limiter inteligente por usuário autenticado (resolveClientKey): colaboradores na mesma rede corporativa não consomem mais a cota uns dos outros; cota geral expandida para 5.000 requisições/15min com isenção para rotas de tempo real (SSE) e health check.',
+        ],
+      },
+      {
+        category: 'Segurança',
+        items: [
+          'Priorização rigorosa de credenciais e chaves de API sensíveis via variáveis de ambiente (.env), sem armazenamento indevido de senhas de integração em tabelas do banco.',
+          'Controle de ativação/desativação do disparo automático diário de mensagens às 17h.',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.4.3',
     date: '09/11/2026',

@@ -220,9 +220,52 @@
 .legal-detail-title-input:focus, .legal-detail-title-label input:focus { border-color: #176ca6; outline: 0; box-shadow: 0 0 0 3px rgba(23, 108, 166, 0.12); background: #fafcff; }
 
 /* Abas internas do processo */
-.legal-detail-tabs-bar { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 5px; background: #edf3f8; border: 1px solid #dce6ef; border-radius: 10px; scrollbar-width: none; }
-.legal-detail-tabs-bar::-webkit-scrollbar { display: none; }
-.legal-detail-tab-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 14px; color: #526f86; background: transparent; border: 0; border-radius: 7px; font: 600 12px var(--sans); white-space: nowrap; cursor: pointer; transition: all .15s ease; }
+.legal-detail-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px 8px 8px;
+  background: #edf3f8;
+  border: 1px solid #dce6ef;
+  border-radius: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #9cb5c9 #edf3f8;
+  -webkit-overflow-scrolling: touch;
+}
+.legal-detail-tabs-bar::-webkit-scrollbar {
+  height: 6px;
+  display: block;
+}
+.legal-detail-tabs-bar::-webkit-scrollbar-track {
+  background: #e2ecf5;
+  border-radius: 6px;
+}
+.legal-detail-tabs-bar::-webkit-scrollbar-thumb {
+  background: #9cb5c9;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+.legal-detail-tabs-bar::-webkit-scrollbar-thumb:hover {
+  background: #6f8fa8;
+}
+.legal-detail-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px;
+  color: #526f86;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font: 600 12px var(--sans);
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all .15s ease;
+}
 .legal-detail-tab-btn:hover:not(.is-active) { color: #1e4564; background: #e3ecf3; }
 .legal-detail-tab-btn.is-active { color: #16466c; background: #fff; box-shadow: 0 2px 8px rgba(25, 55, 82, .09); font-weight: 700; }
 .tab-pill { padding: 2px 7px; font-size: 10px; font-weight: 700; border-radius: 10px; background: #edf4fa; color: #21547b; }

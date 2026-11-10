@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowDown,
@@ -99,9 +99,67 @@ interface TicketSubtask {
 }
 
 type TicketCardField = 'customer' | 'description' | 'warranty' | 'age' | 'counts' | 'tags'
-type TicketViewMode = 'kanban' | 'list'
+export type TicketViewMode = 'kanban' | 'list'
+export type TicketActiveView = 'kanban' | 'list' | 'dashboard'
 type TicketSortField = 'id' | 'protocol' | 'status' | 'enterprise' | 'openedAt'
 type TicketSortDirection = 'asc' | 'desc'
+
+export function resolveInitialTicketView(savedViewMode: TicketViewMode): {
+  activeView: TicketActiveView
+  viewMode: TicketViewMode
+  dashboardOpen: boolean
+} {
+  if (typeof window === 'undefined') {
+    return { activeView: savedViewMode, viewMode: savedViewMode, dashboardOpen: false }
+  }
+  const params = new URLSearchParams(window.location.search)
+  const viewParam = params.get('view')?.toLowerCase()
+  const pageParam = params.get('page')?.toLowerCase()
+  const pathname = window.location.pathname.toLowerCase()
+
+  // 1. Checa indicação explícita de dashboard (via query view=dashboard, alias page=ticket-dashboard ou rota /ticket-dashboard)
+  if (
+    viewParam === 'dashboard' ||
+    pageParam === 'ticket-dashboard' ||
+    pathname.includes('/ticket-dashboard') ||
+    pathname.includes('/tickets/dashboard')
+  ) {
+    return { activeView: 'dashboard', viewMode: savedViewMode, dashboardOpen: true }
+  }
+
+  // 2. Checa se é lista
+  if (viewParam === 'list') {
+    return { activeView: 'list', viewMode: 'list', dashboardOpen: false }
+  }
+
+  // 3. Checa se é quadro / kanban
+  if (viewParam === 'kanban' || viewParam === 'board' || viewParam === 'quadro') {
+    return { activeView: 'kanban', viewMode: 'kanban', dashboardOpen: false }
+  }
+
+  // 4. Se a URL não tiver parâmetro view, recuperar preferência salva no localStorage
+  try {
+    const savedActive = localStorage.getItem('atech.ticket-active-view')
+    if (savedActive === 'dashboard') {
+      return { activeView: 'dashboard', viewMode: savedViewMode, dashboardOpen: true }
+    }
+    if (savedActive === 'list') {
+      return { activeView: 'list', viewMode: 'list', dashboardOpen: false }
+    }
+    if (savedActive === 'kanban') {
+      return { activeView: 'kanban', viewMode: 'kanban', dashboardOpen: false }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 5. Fallback para o viewMode salvo no cookie
+  return {
+    activeView: savedViewMode,
+    viewMode: savedViewMode,
+    dashboardOpen: false,
+  }
+}
 
 interface SavedTicketFilters {
   search: string
@@ -304,7 +362,8 @@ export default function TicketBoardPage({
   const [subjectFilter, setSubjectFilter] = useState<string[]>(savedFilters.subject)
   const [subsubjectFilter, setSubsubjectFilter] = useState<string[]>(savedFilters.subsubject)
   const [includeInactive, setIncludeInactive] = useState(savedFilters.includeInactive)
-  const [viewMode, setViewMode] = useState<TicketViewMode>(savedFilters.viewMode)
+  const [initialViewState] = useState(() => resolveInitialTicketView(savedFilters.viewMode))
+  const [viewMode, setViewMode] = useState<TicketViewMode>(initialViewState.viewMode)
   const [cardFields, setCardFields] = useState<TicketCardField[]>(savedFilters.cardFields)
   const [sortField, setSortField] = useState<TicketSortField>(savedFilters.sortField)
   const [sortDirection, setSortDirection] = useState<TicketSortDirection>(savedFilters.sortDirection)
@@ -326,7 +385,79 @@ export default function TicketBoardPage({
     }
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
   }, [selected, requestedTicketId])
-  const [dashboardOpen, setDashboardOpen] = useState(false)
+  const [dashboardOpen, setDashboardOpen] = useState(initialViewState.dashboardOpen)
+
+  const applyViewChange = useCallback((nextView: TicketActiveView, historyAction: 'push' | 'replace' = 'push') => {
+    if (typeof window === 'undefined') return
+
+    if (nextView === 'dashboard') {
+      setDashboardOpen(true)
+      setSelected(null)
+    } else {
+      setDashboardOpen(false)
+      setViewMode(nextView)
+    }
+
+    try {
+      localStorage.setItem('atech.ticket-active-view', nextView)
+    } catch {
+      // ignore
+    }
+
+    const url = new URL(window.location.href)
+    url.searchParams.set('page', 'tickets')
+    url.searchParams.set('view', nextView)
+    if (nextView === 'dashboard') {
+      url.searchParams.delete('ticketId')
+    }
+
+    const target = `${url.pathname}${url.search}${url.hash}`
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    if (current !== target) {
+      if (historyAction === 'replace') {
+        window.history.replaceState({ page: 'tickets', view: nextView }, '', target)
+      } else {
+        window.history.pushState({ page: 'tickets', view: nextView }, '', target)
+      }
+    }
+
+    window.dispatchEvent(new CustomEvent('atech:ticket-view-changed', { detail: { view: nextView } }))
+  }, [])
+
+  // Sincroniza a URL no primeiro carregamento para garantir que &view= esteja explícito
+  useEffect(() => {
+    const active: TicketActiveView = dashboardOpen ? 'dashboard' : viewMode
+    const currentParam = new URLSearchParams(window.location.search).get('view')?.toLowerCase()
+    if (currentParam !== active) {
+      applyViewChange(active, 'replace')
+    }
+  }, [])
+
+  // Ouvinte para histórico do navegador (Voltar/Avançar) e eventos externos
+  useEffect(() => {
+    function handlePopState() {
+      const resolved = resolveInitialTicketView(savedFilters.viewMode)
+      setDashboardOpen(resolved.dashboardOpen)
+      setViewMode(resolved.viewMode)
+      const currentUrlTicketId = new URLSearchParams(window.location.search).get('ticketId')
+      setUrlTicketId(currentUrlTicketId)
+      if (!currentUrlTicketId && selected) {
+        setSelected(null)
+      }
+    }
+    function handleNavigate(event: Event) {
+      const detail = (event as CustomEvent<{ view?: TicketActiveView }>).detail
+      if (detail?.view) {
+        applyViewChange(detail.view, 'push')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    window.addEventListener('atech:ticket-view-navigate', handleNavigate)
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('atech:ticket-view-navigate', handleNavigate)
+    }
+  }, [savedFilters.viewMode, selected, applyViewChange])
   const [termTicket, setTermTicket] = useState<TicketSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -698,7 +829,12 @@ export default function TicketBoardPage({
   }, [showProtocolModal])
 
   if (dashboardOpen) {
-    return <TicketDashboardPage onBack={() => setDashboardOpen(false)} />
+    return (
+      <TicketDashboardPage
+        onBack={() => applyViewChange(viewMode, 'push')}
+        onSelectView={(view) => applyViewChange(view, 'push')}
+      />
+    )
   }
 
   if (selected) {
@@ -731,7 +867,7 @@ export default function TicketBoardPage({
           >
             <Plus size={15} /> Novo chamado por protocolo
           </button>
-          <button type="button" className="secondary-button" onClick={() => setDashboardOpen(true)}><BarChart3 size={15} /> Dashboard</button>
+          <button type="button" className="secondary-button" onClick={() => applyViewChange('dashboard', 'push')}><BarChart3 size={15} /> Dashboard</button>
           {canManageIntegration && onOpenValidation && (
             <button
               type="button"
@@ -867,8 +1003,27 @@ export default function TicketBoardPage({
               {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
             </button>
             <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
-              <button type="button" className={viewMode === 'kanban' ? 'is-active' : ''} onClick={() => setViewMode('kanban')}><LayoutGrid size={14} /> Quadro</button>
-              <button type="button" className={viewMode === 'list' ? 'is-active' : ''} onClick={() => setViewMode('list')}><List size={14} /> Lista</button>
+              <button
+                type="button"
+                className={!dashboardOpen && viewMode === 'kanban' ? 'is-active' : ''}
+                onClick={() => applyViewChange('kanban', 'push')}
+              >
+                <LayoutGrid size={14} /> Quadro
+              </button>
+              <button
+                type="button"
+                className={!dashboardOpen && viewMode === 'list' ? 'is-active' : ''}
+                onClick={() => applyViewChange('list', 'push')}
+              >
+                <List size={14} /> Lista
+              </button>
+              <button
+                type="button"
+                className={dashboardOpen ? 'is-active' : ''}
+                onClick={() => applyViewChange('dashboard', 'push')}
+              >
+                <BarChart3 size={14} /> Dashboard
+              </button>
             </div>
           </div>
         </div>

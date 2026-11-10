@@ -142,21 +142,20 @@ async function canonicalizeTagNames(client: PoolClient, userId: number, tags: st
 }
 
 router.get('/', async (req, res, next) => {
-  const client = await pool.connect()
   try {
     const userId = await getOwnerId(req, res)
     if (userId === null) return
-    await client.query('BEGIN')
-    const owner = await client.query<{ display_name: string }>(
-      `SELECT display_name FROM users WHERE id = $1 FOR UPDATE`,
+
+    const owner = await pool.query<{ display_name: string }>(
+      `SELECT display_name FROM users WHERE id = $1`,
       [userId],
     )
     if (!owner.rowCount) {
-      await client.query('ROLLBACK')
       res.status(404).json({ error: 'Usuário não encontrado.' })
       return
     }
-    await client.query(
+
+    await pool.query(
       `INSERT INTO personal_activity_columns (user_id, name, position)
        SELECT $1, defaults.name, defaults.position
        FROM (VALUES
@@ -170,13 +169,14 @@ router.get('/', async (req, res, next) => {
        )`,
       [userId],
     )
+
     const [columns, activities, tags] = await Promise.all([
-      client.query<{ id: string; name: string; position: number }>(
+      pool.query<{ id: string; name: string; position: number }>(
         `SELECT id, name, position FROM personal_activity_columns
          WHERE user_id = $1 ORDER BY position, id`,
         [userId],
       ),
-      client.query<{
+      pool.query<{
         id: string; column_id: string; title: string; description: string; priority: string; start_date: string | null; due_date: string | null; tags: string[]; comments_count: number; attachments_count: number; checklist_total: number; checklist_done: number
       }>(
         `SELECT a.id, a.column_id, a.title, a.description, COALESCE(a.priority, 'medium') AS priority,
@@ -188,13 +188,13 @@ router.get('/', async (req, res, next) => {
          FROM personal_activities a WHERE a.user_id = $1 ORDER BY a.created_at, a.id`,
         [userId],
       ),
-      client.query<{ id: string; name: string }>(
+      pool.query<{ id: string; name: string }>(
         `SELECT id, name FROM personal_activity_tags
          WHERE user_id = $1 ORDER BY lower(name), id`,
         [userId],
       ),
     ])
-    await client.query('COMMIT')
+
     res.json({
       userId,
       userName: owner.rows[0].display_name,
@@ -216,10 +216,7 @@ router.get('/', async (req, res, next) => {
       })),
     })
   } catch (error) {
-    await client.query('ROLLBACK')
     next(error)
-  } finally {
-    client.release()
   }
 })
 

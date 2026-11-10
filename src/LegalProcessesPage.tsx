@@ -42,6 +42,13 @@ import SearchableMultiSelect from './SearchableMultiSelect'
 import TicketProgrammingForm from './tickets/TicketProgrammingForm'
 import { ATechLoading } from './ATechLoading'
 import type { LegalProcessOption } from './tickets/types'
+import {
+  formatCurrencyOnBlur,
+  formatCurrencyRealtime,
+  formatToBrl,
+  normalizePastedCurrency,
+  parseCurrencyToNumber,
+} from './utils/currency'
 import './LegalProcessesPage.css'
 
 interface LegalStatus { id: number; name: string; position: number; color: string }
@@ -258,7 +265,7 @@ function toDraft(process: ProcessDetail): ProcessDraft {
   return {
     title: process.title, processNumber: formatCnjProcessNumber(process.processNumber), statusId: process.statusId, enterpriseKey: process.enterpriseKey ?? '', startDate: dateInput(process.startDate),
     endDate: dateInput(process.endDate), description: process.description,
-    caseValue: process.caseValue ?? '', claimant: process.claimant, driveUrl: process.driveUrl,
+    caseValue: process.caseValue ? formatToBrl(process.caseValue) : '', claimant: process.claimant, driveUrl: process.driveUrl,
     notebookUrl: process.notebookUrl, distributionDate: dateInput(process.distributionDate),
     assigneeIds: process.assigneeIds,
     children: process.children.map((c) => ({ ...c, processNumber: formatCnjProcessNumber(c.processNumber) })),
@@ -372,6 +379,46 @@ function loadSavedLegalDashboardFilters(): SavedLegalDashboardFilters {
   }
 }
 
+export function resolveInitialLegalTab(): MainTab {
+  if (typeof window === 'undefined') return 'board'
+  const params = new URLSearchParams(window.location.search)
+  const viewParam = params.get('view')?.toLowerCase()
+  const pageParam = params.get('page')?.toLowerCase()
+  const pathname = window.location.pathname.toLowerCase()
+
+  // 1. Checa indicação explícita na URL para dashboard (view=dashboard, alias page=legal-dashboard ou rotas dedicadas)
+  if (
+    viewParam === 'dashboard' ||
+    pageParam === 'legal-dashboard' ||
+    pathname.includes('/legal-dashboard') ||
+    pathname.includes('/legal-processes/dashboard')
+  ) {
+    return 'dashboard'
+  }
+
+  // 2. Checa se é lista
+  if (viewParam === 'list') {
+    return 'list'
+  }
+
+  // 3. Checa se é quadro / board
+  if (viewParam === 'board' || viewParam === 'kanban' || viewParam === 'quadro') {
+    return 'board'
+  }
+
+  // 4. Se a URL não tiver parâmetro view, recuperar preferência salva no localStorage
+  try {
+    const saved = localStorage.getItem('atech-legal-active-tab')
+    if (saved === 'list' || saved === 'dashboard' || saved === 'board') {
+      return saved
+    }
+  } catch {
+    // ignore
+  }
+
+  return 'board'
+}
+
 export default function LegalProcessesPage({
   currentUser,
   initialProcessId = null,
@@ -393,15 +440,8 @@ export default function LegalProcessesPage({
   const [today] = useState(getTodayIso)
   const [inSevenDays] = useState(getInSevenDaysIso)
 
-  // Unificação de abas principais com persistência
-  const [activeTab, setActiveTab] = useState<MainTab>(() => {
-    try {
-      const saved = localStorage.getItem('atech-legal-active-tab')
-      return saved === 'list' || saved === 'dashboard' ? saved : 'board'
-    } catch {
-      return 'board'
-    }
-  })
+  // Unificação de abas principais com suporte a URL e persistência
+  const [activeTab, setActiveTab] = useState<MainTab>(resolveInitialLegalTab)
 
   // Aba interna do detalhe do processo
   const [detailTab, setDetailTab] = useState<DetailTab>('general')
@@ -548,14 +588,67 @@ export default function LegalProcessesPage({
 
   const selectedProcessId = selected?.id ?? null
 
-  const handleTabChange = (tab: MainTab) => {
+  const handleTabChange = useCallback((tab: MainTab, historyAction: 'push' | 'replace' = 'push') => {
     setActiveTab(tab)
     try {
       localStorage.setItem('atech-legal-active-tab', tab)
     } catch {
       // Ignora erro de localStorage
     }
-  }
+
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    url.searchParams.set('page', 'legal-processes')
+    url.searchParams.set('view', tab)
+
+    if (tab === 'dashboard') {
+      url.searchParams.delete('processId')
+    }
+
+    const target = `${url.pathname}${url.search}${url.hash}`
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    if (current !== target) {
+      if (historyAction === 'replace') {
+        window.history.replaceState({ page: 'legal-processes', view: tab }, '', target)
+      } else {
+        window.history.pushState({ page: 'legal-processes', view: tab }, '', target)
+      }
+    }
+
+    window.dispatchEvent(new CustomEvent('atech:legal-view-changed', { detail: { view: tab } }))
+  }, [])
+
+  // Sincroniza a URL no primeiro carregamento para garantir que &view= esteja explícito
+  useEffect(() => {
+    const currentParam = new URLSearchParams(window.location.search).get('view')?.toLowerCase()
+    if (currentParam !== activeTab) {
+      handleTabChange(activeTab, 'replace')
+    }
+  }, [])
+
+  // Ouvinte para histórico do navegador (Voltar/Avançar) e eventos externos
+  useEffect(() => {
+    function handlePopState() {
+      const tab = resolveInitialLegalTab()
+      setActiveTab(tab)
+      const queryProcessId = new URLSearchParams(window.location.search).get('processId')
+      if (!queryProcessId && selected) {
+        setSelected(null)
+      }
+    }
+    function handleNavigate(event: Event) {
+      const detail = (event as CustomEvent<{ view?: MainTab }>).detail
+      if (detail?.view) {
+        handleTabChange(detail.view, 'push')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    window.addEventListener('atech:legal-view-navigate', handleNavigate)
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('atech:legal-view-navigate', handleNavigate)
+    }
+  }, [selected, handleTabChange])
 
   const copyToClipboard = (text: string, key: string) => {
     if (!text) return
@@ -1151,7 +1244,7 @@ export default function LegalProcessesPage({
           setAutoSaveError('Preencha a descrição dos itens existentes antes de salvar.')
           return false
         }
-        const caseValue = job.draft.caseValue.trim() ? Number(job.draft.caseValue) : null
+        const caseValue = job.draft.caseValue.trim() ? parseCurrencyToNumber(job.draft.caseValue) : null
         if (caseValue !== null && !Number.isFinite(caseValue)) {
           setAutoSaveState('error')
           setAutoSaveError('Informe um valor válido para a causa.')
@@ -1491,14 +1584,19 @@ export default function LegalProcessesPage({
 
   async function addPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!selected || !paymentDraft.description.trim() || paymentDraft.amount === '') return
+    if (!selected || !paymentDraft.description.trim() || !paymentDraft.amount.trim()) return
+    const amountNumber = parseCurrencyToNumber(paymentDraft.amount)
+    if (amountNumber === null || amountNumber <= 0) {
+      setNotice({ kind: 'error', text: 'Informe um valor válido maior que zero para o pagamento.' })
+      return
+    }
     setSavingPayment(true)
     try {
       const created = await apiRequest<{ id: number }>(`/api/legal-processes/${selected.id}/payments`, {
         method: 'POST',
         body: JSON.stringify({
           ...paymentDraft,
-          amount: Number(paymentDraft.amount),
+          amount: amountNumber,
           dueDate: paymentDraft.dueDate || null,
         }),
       })
@@ -1531,7 +1629,7 @@ export default function LegalProcessesPage({
         method: 'PATCH',
         body: JSON.stringify({
           description: next.description,
-          amount: Number(next.amount),
+          amount: parseCurrencyToNumber(next.amount) ?? 0,
           dueDate: next.dueDate,
           isPaid: next.isPaid,
         }),
@@ -1778,7 +1876,7 @@ export default function LegalProcessesPage({
   }
 
   // Cálculos financeiros do processo selecionado
-  const detailCaseValue = draft?.caseValue ? Number(draft.caseValue) : null
+  const detailCaseValue = draft?.caseValue ? parseCurrencyToNumber(draft.caseValue) : null
   const detailPaidTotal = selected ? Number(selected.paidTotal || 0) : 0
   const detailPendingTotal = selected ? Number(selected.pendingPaymentTotal || 0) : 0
   const detailBalance = detailCaseValue !== null ? detailCaseValue - detailPaidTotal : null
@@ -2790,13 +2888,25 @@ export default function LegalProcessesPage({
               </div>
 
               {/* Barra de abas internas do processo */}
-              <div className="legal-detail-tabs-bar" role="tablist">
+              <div
+                className="legal-detail-tabs-bar"
+                role="tablist"
+                aria-label="Seções do processo"
+                onWheel={(event) => {
+                  if (event.deltaY !== 0 && event.currentTarget.scrollWidth > event.currentTarget.clientWidth) {
+                    event.currentTarget.scrollLeft += event.deltaY
+                  }
+                }}
+              >
                 <button
                   type="button"
                   role="tab"
                   aria-selected={detailTab === 'general'}
                   className={`legal-detail-tab-btn ${detailTab === 'general' ? 'is-active' : ''}`}
-                  onClick={() => setDetailTab('general')}
+                  onClick={(event) => {
+                    setDetailTab('general')
+                    ;(event.currentTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+                  }}
                 >
                   <FileText size={15} /> Dados & Descrição
                 </button>
@@ -2805,7 +2915,10 @@ export default function LegalProcessesPage({
                   role="tab"
                   aria-selected={detailTab === 'tasks'}
                   className={`legal-detail-tab-btn ${detailTab === 'tasks' ? 'is-active' : ''}`}
-                  onClick={() => setDetailTab('tasks')}
+                  onClick={(event) => {
+                    setDetailTab('tasks')
+                    ;(event.currentTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+                  }}
                 >
                   <CheckSquare size={15} /> Checklist & Tarefas
                   {draft.items.length > 0 && <span className="tab-pill">{completedChecklistCount}/{draft.items.length}</span>}
@@ -2815,7 +2928,10 @@ export default function LegalProcessesPage({
                   role="tab"
                   aria-selected={detailTab === 'children'}
                   className={`legal-detail-tab-btn ${detailTab === 'children' ? 'is-active' : ''}`}
-                  onClick={() => setDetailTab('children')}
+                  onClick={(event) => {
+                    setDetailTab('children')
+                    ;(event.currentTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+                  }}
                 >
                   <Layers size={15} /> Incidentes & Filhos
                   {draft.children.length > 0 && <span className="tab-pill">{draft.children.length}</span>}
@@ -2825,7 +2941,10 @@ export default function LegalProcessesPage({
                   role="tab"
                   aria-selected={detailTab === 'finances'}
                   className={`legal-detail-tab-btn ${detailTab === 'finances' ? 'is-active' : ''}`}
-                  onClick={() => setDetailTab('finances')}
+                  onClick={(event) => {
+                    setDetailTab('finances')
+                    ;(event.currentTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+                  }}
                 >
                   <Coins size={15} /> Financeiro & Pagamentos
                   {selected && selected.payments.length > 0 && <span className="tab-pill">{selected.payments.length}</span>}
@@ -2835,7 +2954,10 @@ export default function LegalProcessesPage({
                   role="tab"
                   aria-selected={detailTab === 'comments'}
                   className={`legal-detail-tab-btn ${detailTab === 'comments' ? 'is-active' : ''}`}
-                  onClick={() => setDetailTab('comments')}
+                  onClick={(event) => {
+                    setDetailTab('comments')
+                    ;(event.currentTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+                  }}
                 >
                   <MessageCircle size={15} /> Comentários & Histórico
                   {selected && selected.comments.length > 0 && <span className="tab-pill">{selected.comments.length}</span>}
@@ -2860,12 +2982,23 @@ export default function LegalProcessesPage({
                         <div className="legal-input-group">
                           <span className="legal-input-addon">R$</span>
                           <input
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            type="text"
+                            inputMode="numeric"
                             placeholder="0,00"
                             value={draft.caseValue}
-                            onChange={(event) => setDraft({ ...draft, caseValue: event.target.value })}
+                            onChange={(event) => setDraft({ ...draft, caseValue: formatCurrencyRealtime(event.target.value) })}
+                            onBlur={() => {
+                              if (draft.caseValue) {
+                                setDraft({ ...draft, caseValue: formatCurrencyOnBlur(draft.caseValue) })
+                              }
+                            }}
+                            onFocus={(event) => event.target.select()}
+                            onPaste={(event) => {
+                              event.preventDefault()
+                              const text = event.clipboardData.getData('text')
+                              const formatted = normalizePastedCurrency(text)
+                              if (formatted) setDraft({ ...draft, caseValue: formatted })
+                            }}
                           />
                         </div>
                       </label>
@@ -3182,15 +3315,29 @@ export default function LegalProcessesPage({
                         </label>
                         <label className="legal-field">
                           <span>Valor (R$) *</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={paymentDraft.amount}
-                            onChange={(event) => setPaymentDraft({ ...paymentDraft, amount: event.target.value })}
-                            placeholder="0,00"
-                            required
-                          />
+                          <div className="legal-input-group">
+                            <span className="legal-input-addon">R$</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={paymentDraft.amount}
+                              onChange={(event) => setPaymentDraft({ ...paymentDraft, amount: formatCurrencyRealtime(event.target.value) })}
+                              onBlur={() => {
+                                if (paymentDraft.amount) {
+                                  setPaymentDraft({ ...paymentDraft, amount: formatCurrencyOnBlur(paymentDraft.amount) })
+                                }
+                              }}
+                              onFocus={(event) => event.target.select()}
+                              onPaste={(event) => {
+                                event.preventDefault()
+                                const text = event.clipboardData.getData('text')
+                                const formatted = normalizePastedCurrency(text)
+                                if (formatted) setPaymentDraft({ ...paymentDraft, amount: formatted })
+                              }}
+                              placeholder="0,00"
+                              required
+                            />
+                          </div>
                         </label>
                         <label className="legal-field">
                           <span>Data para pagamento / vencimento</span>

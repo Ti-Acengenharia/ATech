@@ -838,7 +838,7 @@ export default function HomeDashboard({
                   <Info size={18} />
                 </div>
                 <div className="home-module-content">
-                  <strong>Informações</strong>
+                  <strong>Informações de empreendimentos</strong>
                   <small>Dados cadastrais, síndicos e habite-se de empreendimentos</small>
                 </div>
                 <ChevronRight size={15} className="home-module-arrow" />
@@ -911,7 +911,7 @@ export default function HomeDashboard({
                   <ListTodo size={18} />
                 </div>
                 <div className="home-module-content">
-                  <strong>Atividades Pessoais</strong>
+                  <strong>Minhas atividades</strong>
                   <small>Seu quadro privado de tarefas e acompanhamentos</small>
                 </div>
                 <ChevronRight size={15} className="home-module-arrow" />

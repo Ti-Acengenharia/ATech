@@ -32,6 +32,24 @@ import { getNextWorkingDay } from './services/working-days.js'
 const app = express()
 const PgSession = connectPgSimple(session)
 
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught exception capturada:', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] Unhandled rejection capturada:', reason)
+})
+
+const sessionStore = new PgSession({
+  pool,
+  tableName: 'user_sessions',
+  createTableIfMissing: true,
+})
+
+sessionStore.on('error', (err) => {
+  console.error('[Session Store] Erro na sessão PostgreSQL:', err instanceof Error ? err.message : err)
+})
+
 app.set('trust proxy', 1)
 app.disable('x-powered-by')
 
@@ -50,11 +68,7 @@ app.use(express.json({ limit: '8mb' }))
 app.use(
   session({
     name: 'atech.sid',
-    store: new PgSession({
-      pool,
-      tableName: 'user_sessions',
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
@@ -70,9 +84,17 @@ app.use(
 const resolveClientIp = (req: express.Request) =>
   ipKeyGenerator(req.ip || req.socket.remoteAddress || '127.0.0.1')
 
+const resolveClientKey = (req: express.Request) => {
+  const user = req.session?.user
+  if (user?.id) {
+    return `user_${user.id}`
+  }
+  return resolveClientIp(req)
+}
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: 25,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: resolveClientIp,
@@ -90,19 +112,22 @@ const pinLimiter = rateLimit({
 
 const heavyMutationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: 60,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: resolveClientIp,
+  keyGenerator: resolveClientKey,
   message: { error: 'Muitas operações pesadas em sequência. Aguarde alguns minutos e tente novamente.' },
 })
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 800,
+  limit: 5000,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: resolveClientIp,
+  keyGenerator: resolveClientKey,
+  skip: (req) => {
+    return req.path === '/sync/events' || req.path === '/health'
+  },
   message: { error: 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.' },
 })
 

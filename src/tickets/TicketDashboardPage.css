@@ -266,6 +266,81 @@
 .ticket-dashboard-empty { padding: 22px !important; color: #7b8d9d !important; text-align: center !important; }
 .ticket-dashboard-footnote { margin: 0; padding: 0 14px 13px; color: #7e8e9d; font-size: 10px; line-height: 1.5; }
 
+/* Percentuais nas tabelas */
+.ticket-dashboard-pct {
+  margin-left: 5px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #64748b;
+  letter-spacing: -0.2px;
+}
+
+/* Drilldown por pílulas de ano */
+.panel-year-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.panel-year-pill {
+  padding: 2px 7px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.panel-year-pill:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.panel-year-pill.is-active {
+  background: #0f3b99;
+  border-color: #0f3b99;
+  color: #ffffff;
+}
+
+.ticket-dashboard-row-selected {
+  background: #eff6ff !important;
+}
+
+.ticket-dashboard-row-selected td {
+  color: #1e3a8a !important;
+}
+
+.ticket-dashboard-badge-active-month {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  background: #3b82f6;
+  color: #ffffff;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+@media (min-width: 621px) {
+  .panel-inline-select-mobile {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .panel-year-pills {
+    display: none;
+  }
+  .panel-inline-select-mobile {
+    display: inline-block;
+  }
+}
+
 /* Responsividade */
 @media (max-width: 900px) {
   .ticket-dashboard-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }

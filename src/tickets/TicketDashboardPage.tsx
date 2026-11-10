@@ -13,6 +13,8 @@ import {
   Clock3,
   Download,
   Filter,
+  LayoutGrid,
+  List,
   RefreshCw,
   Search,
   Ticket,
@@ -73,6 +75,7 @@ interface TicketDashboardData {
 
 const countFormat = new Intl.NumberFormat('pt-BR')
 const decimalFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
+const percentFormat = new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 1 })
 const monthFormat = new Intl.DateTimeFormat('pt-BR', { month: 'long' })
 const dateTimeFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 const monthNames = Array.from({ length: 12 }, (_, index) => monthFormat.format(new Date(2020, index, 1)))
@@ -143,7 +146,13 @@ type SortOrder = 'asc' | 'desc'
 type StatusSortField = 'status' | 'total'
 type MonthSortField = 'date' | 'created' | 'completed' | 'canceled' | 'closedTotal' | 'balance'
 
-export default function TicketDashboardPage({ onBack }: { onBack: () => void }) {
+export default function TicketDashboardPage({
+  onBack,
+  onSelectView,
+}: {
+  onBack: () => void
+  onSelectView?: (view: 'kanban' | 'list') => void
+}) {
   const [options, setOptions] = useState<DashboardOptions>({
     enterprises: [],
     blocks: [],
@@ -182,7 +191,8 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
   const [statusSortOrder, setStatusSortOrder] = useState<SortOrder>('desc')
 
   // Controles da Tabela de Evolução Mensal
-  const [monthlyYearFilter, setMonthlyYearFilter] = useState<string>('all')
+  const currentYear = new Date().getFullYear()
+  const [monthlyYearFilter, setMonthlyYearFilter] = useState<string>(() => String(currentYear))
   const [monthSortField, setMonthSortField] = useState<MonthSortField>('date')
   const [monthSortOrder, setMonthSortOrder] = useState<SortOrder>('desc')
 
@@ -384,6 +394,14 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
     return map
   }, [statusSummary])
 
+  const enterpriseTotalsByName = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const entry of activeByEnterprise ?? []) {
+      map.set(entry.enterprise, entry.total)
+    }
+    return map
+  }, [activeByEnterprise])
+
   const filteredAndSortedStatuses = useMemo(() => {
     let list = [...new Set(statusSummary?.map((entry) => entry.status) ?? [])]
     if (statusSearch.trim()) {
@@ -407,9 +425,11 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
 
   // Processamento e ordenação da Tabela 3: Movimentação Mensal
   const availableMovementYears = useMemo(() => {
-    if (!months) return []
-    return [...new Set(months.map((m) => m.year))].sort((a, b) => b - a)
-  }, [months])
+    if (!months) return [currentYear]
+    const years = [...new Set(months.map((m) => m.year))]
+    if (!years.includes(currentYear)) years.push(currentYear)
+    return years.sort((a, b) => b - a)
+  }, [months, currentYear])
 
   const filteredAndSortedMonths = useMemo(() => {
     if (!months) return []
@@ -451,6 +471,8 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
     )
   }, [activeByEnterprise])
 
+  const totalActiveTickets = data?.active_total ?? enterpriseTotals.total
+
   function toggleType(type: string) {
     setTypes((current) => (current.includes(type) ? current.filter((entry) => entry !== type) : [...current, type]))
   }
@@ -467,6 +489,7 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
     const defaultYear = options.years[0] ?? new Date().getFullYear()
     setFromYear(defaultYear)
     setReferenceMonth('')
+    setMonthlyYearFilter(String(new Date().getFullYear()))
     try {
       localStorage.removeItem(TICKET_DASHBOARD_STORAGE_KEY)
     } catch {
@@ -547,6 +570,29 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
               {typeof data.query_ms === 'number' && ` · ${data.query_ms}ms`}
             </span>
           )}
+          <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              onClick={() => (onSelectView ? onSelectView('kanban') : onBack())}
+              title="Alternar para visão em Quadro"
+            >
+              <LayoutGrid size={14} /> Quadro
+            </button>
+            <button
+              type="button"
+              onClick={() => (onSelectView ? onSelectView('list') : onBack())}
+              title="Alternar para visão em Lista"
+            >
+              <List size={14} /> Lista
+            </button>
+            <button
+              type="button"
+              className="is-active"
+              title="Dashboard ativo"
+            >
+              <BarChart3 size={14} /> Dashboard
+            </button>
+          </div>
           <button
             type="button"
             className="secondary-button"
@@ -697,9 +743,7 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                   <strong>
                     {data?.average_days_this_month != null
                       ? `${decimalFormat.format(data.average_days_this_month)} dias`
-                      : data?.average_days != null
-                        ? `${decimalFormat.format(data.average_days)} dias (geral)`
-                        : '—'}
+                      : '—'}
                   </strong>
                 </span>
               </div>
@@ -883,16 +927,38 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAndSortedEnterprises.map((entry) => (
-                    <tr key={entry.enterprise}>
-                      <td>{entry.enterprise}</td>
-                      {showClientsCol && <td>{countFormat.format(entry.clients)}</td>}
-                      {showCondoCol && <td>{countFormat.format(entry.condominiums)}</td>}
-                      <td>
-                        <strong>{countFormat.format(entry.total)}</strong>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredAndSortedEnterprises.map((entry) => {
+                    const clientsPct = entry.total > 0 ? entry.clients / entry.total : 0
+                    const condoPct = entry.total > 0 ? entry.condominiums / entry.total : 0
+                    const totalPct = enterpriseTotals.total > 0 ? entry.total / enterpriseTotals.total : 0
+                    return (
+                      <tr key={entry.enterprise}>
+                        <td>{entry.enterprise}</td>
+                        {showClientsCol && (
+                          <td>
+                            {countFormat.format(entry.clients)}
+                            <span className="ticket-dashboard-pct" title={`${percentFormat.format(clientsPct)} de clientes neste empreendimento`}>
+                              ({percentFormat.format(clientsPct)})
+                            </span>
+                          </td>
+                        )}
+                        {showCondoCol && (
+                          <td>
+                            {countFormat.format(entry.condominiums)}
+                            <span className="ticket-dashboard-pct" title={`${percentFormat.format(condoPct)} de condomínio neste empreendimento`}>
+                              ({percentFormat.format(condoPct)})
+                            </span>
+                          </td>
+                        )}
+                        <td>
+                          <strong>{countFormat.format(entry.total)}</strong>
+                          <span className="ticket-dashboard-pct" title={`${percentFormat.format(totalPct)} do total de chamados ativos`}>
+                            ({percentFormat.format(totalPct)} do total)
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
                   {!filteredAndSortedEnterprises.length && (
                     <tr>
                       <td colSpan={2 + (showClientsCol ? 1 : 0) + (showCondoCol ? 1 : 0)} className="ticket-dashboard-empty">
@@ -904,8 +970,22 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                 <tfoot>
                   <tr>
                     <th>Total</th>
-                    {showClientsCol && <th>{countFormat.format(enterpriseTotals.clients)}</th>}
-                    {showCondoCol && <th>{countFormat.format(enterpriseTotals.condominiums)}</th>}
+                    {showClientsCol && (
+                      <th>
+                        {countFormat.format(enterpriseTotals.clients)}
+                        <span className="ticket-dashboard-pct">
+                          ({percentFormat.format(enterpriseTotals.total > 0 ? enterpriseTotals.clients / enterpriseTotals.total : 0)})
+                        </span>
+                      </th>
+                    )}
+                    {showCondoCol && (
+                      <th>
+                        {countFormat.format(enterpriseTotals.condominiums)}
+                        <span className="ticket-dashboard-pct">
+                          ({percentFormat.format(enterpriseTotals.total > 0 ? enterpriseTotals.condominiums / enterpriseTotals.total : 0)})
+                        </span>
+                      </th>
+                    )}
                     <th>{countFormat.format(enterpriseTotals.total)}</th>
                   </tr>
                 </tfoot>
@@ -1002,21 +1082,42 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAndSortedStatuses.map((status) => (
-                    <tr key={status}>
-                      <td>{status}</td>
-                      {enterpriseNames.map((enterprise) => (
-                        <td key={enterprise}>
-                          {statusByEnterprise.get(`${status}\u0000${enterprise}`)
-                            ? countFormat.format(statusByEnterprise.get(`${status}\u0000${enterprise}`)!)
-                            : '—'}
+                  {filteredAndSortedStatuses.map((status) => {
+                    const rowTotal = statusTotals.get(status) ?? 0
+                    const rowPct = totalActiveTickets > 0 ? rowTotal / totalActiveTickets : 0
+                    return (
+                      <tr key={status}>
+                        <td>{status}</td>
+                        {enterpriseNames.map((enterprise) => {
+                          const count = statusByEnterprise.get(`${status}\u0000${enterprise}`)
+                          const entTotal = enterpriseTotalsByName.get(enterprise) ?? 0
+                          const pct = entTotal > 0 && count ? count / entTotal : 0
+                          return (
+                            <td key={enterprise}>
+                              {count ? (
+                                <>
+                                  {countFormat.format(count)}
+                                  <span className="ticket-dashboard-pct" title={`${percentFormat.format(pct)} dos chamados de ${enterprise}`}>
+                                    ({percentFormat.format(pct)})
+                                  </span>
+                                </>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          )
+                        })}
+                        <td>
+                          <strong>{countFormat.format(rowTotal)}</strong>
+                          {rowTotal > 0 && (
+                            <span className="ticket-dashboard-pct" title={`${percentFormat.format(rowPct)} do total geral de chamados ativos`}>
+                              ({percentFormat.format(rowPct)} do total)
+                            </span>
+                          )}
                         </td>
-                      ))}
-                      <td>
-                        <strong>{countFormat.format(statusTotals.get(status) ?? 0)}</strong>
-                      </td>
-                    </tr>
-                  ))}
+                      </tr>
+                    )
+                  })}
                   {!filteredAndSortedStatuses.length && (
                     <tr>
                       <td colSpan={enterpriseNames.length + 2} className="ticket-dashboard-empty">
@@ -1029,14 +1130,21 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                   <tfoot>
                     <tr>
                       <th>Total</th>
-                      {enterpriseNames.map((enterprise) => (
-                        <th key={enterprise}>
-                          {countFormat.format(
-                            data?.active_by_enterprise.find((entry) => entry.enterprise === enterprise)?.total ?? 0,
-                          )}
-                        </th>
-                      ))}
-                      <th>{countFormat.format(data?.active_total ?? 0)}</th>
+                      {enterpriseNames.map((enterprise) => {
+                        const entTotal = enterpriseTotalsByName.get(enterprise) ?? 0
+                        const entPct = totalActiveTickets > 0 ? entTotal / totalActiveTickets : 0
+                        return (
+                          <th key={enterprise}>
+                            {countFormat.format(entTotal)}
+                            {entTotal > 0 && (
+                              <span className="ticket-dashboard-pct" title={`${percentFormat.format(entPct)} do total de chamados ativos`}>
+                                ({percentFormat.format(entPct)})
+                              </span>
+                            )}
+                          </th>
+                        )
+                      })}
+                      <th>{countFormat.format(totalActiveTickets)}</th>
                     </tr>
                   </tfoot>
                 )}
@@ -1056,17 +1164,37 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                 <div className="panel-inline-filter">
                   <Filter size={13} />
                   <span>Ano exibido:</span>
+                  <div className="panel-year-pills" role="group" aria-label="Filtrar ano da evolução mensal">
+                    {availableMovementYears.map((yr) => (
+                      <button
+                        key={yr}
+                        type="button"
+                        className={`panel-year-pill ${monthlyYearFilter === String(yr) ? 'is-active' : ''}`}
+                        onClick={() => setMonthlyYearFilter(String(yr))}
+                      >
+                        {yr === currentYear ? `${yr} (atual)` : yr}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={`panel-year-pill ${monthlyYearFilter === 'all' ? 'is-active' : ''}`}
+                      onClick={() => setMonthlyYearFilter('all')}
+                    >
+                      Todos os anos
+                    </button>
+                  </div>
                   <select
                     value={monthlyYearFilter}
                     onChange={(e) => setMonthlyYearFilter(e.target.value)}
-                    className="panel-inline-select"
+                    className="panel-inline-select panel-inline-select-mobile"
+                    aria-label="Selecionar ano exibido"
                   >
-                    <option value="all">Todos os anos ({fromYear} em diante)</option>
                     {availableMovementYears.map((yr) => (
                       <option key={yr} value={String(yr)}>
-                        Apenas {yr}
+                        Ano {yr} {yr === currentYear ? '(atual)' : ''}
                       </option>
                     ))}
+                    <option value="all">Todos os anos ({fromYear} em diante)</option>
                   </select>
                 </div>
 
@@ -1185,20 +1313,38 @@ export default function TicketDashboardPage({ onBack }: { onBack: () => void }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAndSortedMonths.map((m) => (
-                    <tr key={`${m.year}-${m.month}`}>
-                      <td>
-                        <strong>{m.year}</strong> · {formatMonth(m.month)}
-                      </td>
-                      <td>{countFormat.format(m.created)}</td>
-                      <td>{countFormat.format(m.completed)}</td>
-                      <td>{countFormat.format(m.canceled)}</td>
-                      <td>{countFormat.format(m.completed + m.canceled)}</td>
-                      <td style={{ color: m.balance < 0 ? '#10b981' : m.balance > 0 ? '#ea580c' : undefined }}>
-                        <strong>{countFormat.format(m.balance)}</strong>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredAndSortedMonths.map((m) => {
+                    const monthKey = m.month.slice(0, 7)
+                    const isSelected = referenceMonth === monthKey
+                    return (
+                      <tr
+                        key={`${m.year}-${m.month}`}
+                        className={isSelected ? 'ticket-dashboard-row-selected' : ''}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          setReferenceMonth(isSelected ? '' : monthKey)
+                          window.scrollTo({ top: 0, behavior: 'smooth' })
+                        }}
+                        title={
+                          isSelected
+                            ? 'Clique para desmarcar este mês'
+                            : `Clique para filtrar os indicadores pelo mês de ${formatMonth(m.month)}/${m.year}`
+                        }
+                      >
+                        <td>
+                          <strong>{m.year}</strong> · {formatMonth(m.month)}
+                          {isSelected && <span className="ticket-dashboard-badge-active-month">Filtrado</span>}
+                        </td>
+                        <td>{countFormat.format(m.created)}</td>
+                        <td>{countFormat.format(m.completed)}</td>
+                        <td>{countFormat.format(m.canceled)}</td>
+                        <td>{countFormat.format(m.completed + m.canceled)}</td>
+                        <td style={{ color: m.balance < 0 ? '#10b981' : m.balance > 0 ? '#ea580c' : undefined }}>
+                          <strong>{countFormat.format(m.balance)}</strong>
+                        </td>
+                      </tr>
+                    )
+                  })}
                   {!filteredAndSortedMonths.length && (
                     <tr>
                       <td colSpan={6} className="ticket-dashboard-empty">

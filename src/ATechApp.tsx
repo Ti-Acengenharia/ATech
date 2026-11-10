@@ -6,11 +6,14 @@ import {
   ArrowUpRight,
   Ban,
   Bell,
+  Briefcase,
   BriefcaseBusiness,
   Building2,
   CalendarClock,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   Clock3,
   ContactRound,
@@ -28,6 +31,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings,
   ShieldCheck,
   UsersRound,
   Zap,
@@ -132,6 +136,12 @@ function readPageFromLocation(): AppPage {
   if (typeof window === 'undefined') return 'home'
   const queryPage = new URLSearchParams(window.location.search).get('page')
   if (queryPage) {
+    if (queryPage === 'ticket-dashboard') {
+      return 'tickets'
+    }
+    if (queryPage === 'legal-dashboard') {
+      return 'legal-processes'
+    }
     if (allAdminPages.includes(queryPage as AdminPage)) {
       return queryPage as AdminPage
     }
@@ -139,6 +149,12 @@ function readPageFromLocation(): AppPage {
   }
   const pathSegment = window.location.pathname.replace(/^\/+|\/+$/g, '')
   if (pathSegment) {
+    if (pathSegment === 'ticket-dashboard' || pathSegment === 'tickets/dashboard') {
+      return 'tickets'
+    }
+    if (pathSegment === 'legal-dashboard' || pathSegment === 'legal-processes/dashboard') {
+      return 'legal-processes'
+    }
     if (allAdminPages.includes(pathSegment as AdminPage)) {
       return pathSegment as AdminPage
     }
@@ -564,7 +580,52 @@ function Brand() {
 
 function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; canViewOtherPersonalActivities: boolean; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
   const [pageState, setPageState] = useState<AppPage>(readPageFromLocation)
+  const [ticketView, setTicketView] = useState<'kanban' | 'list' | 'dashboard'>(() => {
+    if (typeof window === 'undefined') return 'kanban'
+    const viewParam = new URLSearchParams(window.location.search).get('view')?.toLowerCase()
+    const pageParam = new URLSearchParams(window.location.search).get('page')?.toLowerCase()
+    const pathname = window.location.pathname.toLowerCase()
+    if (
+      viewParam === 'dashboard' ||
+      pageParam === 'ticket-dashboard' ||
+      pathname.includes('/ticket-dashboard') ||
+      pathname.includes('/tickets/dashboard')
+    ) {
+      return 'dashboard'
+    }
+    if (viewParam === 'list') return 'list'
+    return 'kanban'
+  })
+  const [legalView, setLegalView] = useState<'board' | 'list' | 'dashboard'>(() => {
+    if (typeof window === 'undefined') return 'board'
+    const viewParam = new URLSearchParams(window.location.search).get('view')?.toLowerCase()
+    const pageParam = new URLSearchParams(window.location.search).get('page')?.toLowerCase()
+    const pathname = window.location.pathname.toLowerCase()
+    if (
+      viewParam === 'dashboard' ||
+      pageParam === 'legal-dashboard' ||
+      pathname.includes('/legal-dashboard') ||
+      pathname.includes('/legal-processes/dashboard')
+    ) {
+      return 'dashboard'
+    }
+    if (viewParam === 'list') return 'list'
+    return 'board'
+  })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('atech.sidebar-collapsed') === 'true')
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('atech.sidebar-open-menus')
+      if (saved) return JSON.parse(saved)
+    } catch {
+      // fallback
+    }
+    return {
+      chamados: true,
+      administracao: true,
+      configuracoes: true,
+    }
+  })
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([])
   const [search, setSearch] = useState('')
@@ -597,10 +658,10 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     { key: 'collaborators', label: 'Colaboradores' },
     { key: 'inventory', label: 'Estoque' },
     { key: 'stock-units', label: 'Unidades em estoque' },
-    { key: 'information', label: 'Informações' },
+    { key: 'information', label: 'Informações de empreendimentos' },
     { key: 'warranties', label: 'Prazos de garantia' },
     { key: 'legal-processes', label: 'Processos Jurídicos' },
-    { key: 'personal-activities', label: 'Atividades pessoais' },
+    { key: 'personal-activities', label: 'Minhas atividades' },
   ]
   const canAccessPage = useCallback((key: AdminPage) => (key === 'accesses' || key === 'logs' || key === 'work-calendar' || key === 'api-validation')
     ? user.role === 'admin'
@@ -616,8 +677,15 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     } else if (nextPage !== 'not-found') {
       url.searchParams.set('page', nextPage)
     }
-    if (nextPage !== 'tickets') url.searchParams.delete('ticketId')
-    if (nextPage !== 'legal-processes') url.searchParams.delete('processId')
+    if (nextPage !== 'tickets') {
+      url.searchParams.delete('ticketId')
+    }
+    if (nextPage !== 'legal-processes') {
+      url.searchParams.delete('processId')
+    }
+    if (nextPage !== 'tickets' && nextPage !== 'legal-processes') {
+      url.searchParams.delete('view')
+    }
     if (nextPage !== 'collaborators') url.searchParams.delete('collaboratorId')
     if (nextPage !== 'stock-units') url.searchParams.delete('unitId')
     const target = `${url.pathname}${url.search}${url.hash}`
@@ -630,12 +698,58 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   }
 
   useEffect(() => {
+    function handleTicketViewChanged(event: Event) {
+      const detail = (event as CustomEvent<{ view?: 'kanban' | 'list' | 'dashboard' }>).detail
+      if (detail?.view) {
+        setTicketView(detail.view)
+      }
+    }
+    function handleLegalViewChanged(event: Event) {
+      const detail = (event as CustomEvent<{ view?: 'board' | 'list' | 'dashboard' }>).detail
+      if (detail?.view) {
+        setLegalView(detail.view)
+      }
+    }
     function handlePopState() {
       const next = readPageFromLocation()
       setPageState(next)
+      const viewParam = new URLSearchParams(window.location.search).get('view')?.toLowerCase()
+      const pageParam = new URLSearchParams(window.location.search).get('page')?.toLowerCase()
+      const pathname = window.location.pathname.toLowerCase()
+      if (
+        viewParam === 'dashboard' ||
+        pageParam === 'ticket-dashboard' ||
+        pathname.includes('/ticket-dashboard') ||
+        pathname.includes('/tickets/dashboard')
+      ) {
+        setTicketView('dashboard')
+      } else if (viewParam === 'list') {
+        setTicketView('list')
+      } else {
+        setTicketView('kanban')
+      }
+
+      if (
+        viewParam === 'dashboard' ||
+        pageParam === 'legal-dashboard' ||
+        pathname.includes('/legal-dashboard') ||
+        pathname.includes('/legal-processes/dashboard')
+      ) {
+        setLegalView('dashboard')
+      } else if (viewParam === 'list') {
+        setLegalView('list')
+      } else {
+        setLegalView('board')
+      }
     }
+    window.addEventListener('atech:ticket-view-changed', handleTicketViewChanged)
+    window.addEventListener('atech:legal-view-changed', handleLegalViewChanged)
     window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
+    return () => {
+      window.removeEventListener('atech:ticket-view-changed', handleTicketViewChanged)
+      window.removeEventListener('atech:legal-view-changed', handleLegalViewChanged)
+      window.removeEventListener('popstate', handlePopState)
+    }
   }, [])
 
   const closeCommandPalette = useCallback(() => {
@@ -794,6 +908,37 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     localStorage.setItem('atech.sidebar-collapsed', String(sidebarCollapsed))
   }, [sidebarCollapsed])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('atech.sidebar-open-menus', JSON.stringify(openMenus))
+    } catch {
+      // Ignora erro se localStorage indisponível
+    }
+  }, [openMenus])
+
+  useEffect(() => {
+    const chamadosPages: AdminPage[] = ['tickets', 'letter-filling']
+    const administracaoPages: AdminPage[] = ['schedule', 'collaborators', 'inventory', 'stock-units', 'warranties', 'information']
+    const configuracoesPages: AdminPage[] = ['api-validation', 'work-calendar', 'accesses', 'logs']
+
+    if (chamadosPages.includes(page as AdminPage)) {
+      setOpenMenus((prev) => prev.chamados ? prev : { ...prev, chamados: true })
+    } else if (administracaoPages.includes(page as AdminPage)) {
+      setOpenMenus((prev) => prev.administracao ? prev : { ...prev, administracao: true })
+    } else if (configuracoesPages.includes(page as AdminPage)) {
+      setOpenMenus((prev) => prev.configuracoes ? prev : { ...prev, configuracoes: true })
+    }
+  }, [page])
+
+  const toggleSubmenu = (menuKey: 'chamados' | 'administracao' | 'configuracoes') => {
+    if (sidebarCollapsed) {
+      setSidebarCollapsed(false)
+      setOpenMenus((prev) => ({ ...prev, [menuKey]: true }))
+    } else {
+      setOpenMenus((prev) => ({ ...prev, [menuKey]: !prev[menuKey] }))
+    }
+  }
+
   async function inviteUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitting(true)
@@ -910,12 +1055,12 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     'letter-filling': 'Preenchimento de cartas',
     schedule: 'Programação',
     collaborators: 'Colaboradores',
-    information: 'Informações',
+    information: 'Informações de empreendimentos',
     accesses: 'Acessos',
     'api-validation': 'Validação da API',
     warranties: 'Prazos de garantia',
     'legal-processes': 'Processos Jurídicos',
-    'personal-activities': 'Atividades pessoais',
+    'personal-activities': 'Minhas atividades',
     inventory: 'Gestão de estoque',
     'stock-units': 'Unidades em estoque',
     logs: 'Auditoria & Logs',
@@ -925,12 +1070,23 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     ? 'Página não encontrada'
     : isForbidden
       ? 'Acesso restrito'
-      : pageTitles[page]
+      : page === 'tickets' && ticketView === 'dashboard'
+        ? 'Dashboard de chamados'
+        : page === 'legal-processes' && legalView === 'dashboard'
+          ? 'Dashboard Jurídico'
+          : pageTitles[page]
 
-  const allNavigablePages: { key: AdminPage; label: string }[] = [
+  const allNavigablePages: { key: AdminPage; label: string; view?: 'kanban' | 'list' | 'dashboard' | 'board' }[] = [
     ...availablePages,
+    ...(canAccessPage('tickets')
+      ? [{ key: 'tickets' as const, label: 'Dashboard de chamados', view: 'dashboard' as const }]
+      : []),
+    ...(canAccessPage('legal-processes')
+      ? [{ key: 'legal-processes' as const, label: 'Dashboard Jurídico', view: 'dashboard' as const }]
+      : []),
     ...(user.role === 'admin'
       ? [
+          { key: 'api-validation' as const, label: 'Validação API' },
           { key: 'work-calendar' as const, label: 'Expediente e Calendário' },
           { key: 'accesses' as const, label: 'Acessos e Configurações' },
           { key: 'logs' as const, label: 'Auditoria & Logs' },
@@ -942,27 +1098,285 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     ? allNavigablePages.filter((entry) => entry.label.toLowerCase().includes(commandQuery.trim().toLowerCase()))
     : allNavigablePages
 
+  const hasChamadosAccess = canAccessPage('tickets') || canAccessPage('letter-filling')
+  const isChamadosActive = page === 'tickets' || page === 'letter-filling'
+
+  const hasAdminGroupAccess = canAccessPage('schedule') || canAccessPage('collaborators') || canAccessPage('stock-units') || canAccessPage('inventory') || canAccessPage('warranties') || canAccessPage('information')
+  const isAdminGroupActive = (['schedule', 'collaborators', 'inventory', 'stock-units', 'warranties', 'information'] as AdminPage[]).includes(page as AdminPage)
+
+  const hasConfigAccess = canAccessPage('api-validation') || canAccessPage('work-calendar') || canAccessPage('accesses') || canAccessPage('logs')
+  const isConfigActive = (['api-validation', 'work-calendar', 'accesses', 'logs'] as AdminPage[]).includes(page as AdminPage)
+
   return (
     <main className={`workspace-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-header"><Brand /><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'} title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
         <div className="sidebar-label nav-label">MENU PRINCIPAL</div>
         <nav className="sidebar-nav" aria-label="Navegação principal">
-          {canAccessPage('home') && <button type="button" title="Início" aria-label="Ir para início" className={`nav-item ${page === 'home' ? 'nav-item-active' : ''}`} onClick={() => setPage('home')}><LayoutDashboard size={17} /><span>Início</span></button>}
-          {canAccessPage('tickets') && <button type="button" title="Chamados" aria-label="Ir para chamados" className={`nav-item ${page === 'tickets' ? 'nav-item-active' : ''}`} onClick={() => setPage('tickets')}><ClipboardList size={17} /><span>Chamados</span></button>}
-          {canAccessPage('letter-filling') && <button type="button" title="Preenchimento de cartas" aria-label="Ir para preenchimento de cartas" className={`nav-item ${page === 'letter-filling' ? 'nav-item-active' : ''}`} onClick={() => setPage('letter-filling')}><FileText size={17} /><span>Preenchimento de cartas</span></button>}
-          {canAccessPage('schedule') && <button type="button" title="Programação" aria-label="Ir para programação" className={`nav-item ${page === 'schedule' ? 'nav-item-active' : ''}`} onClick={() => setPage('schedule')}><CalendarDays size={17} /><span>Programação</span></button>}
-          {canAccessPage('collaborators') && <button type="button" title="Colaboradores" aria-label="Ir para colaboradores" className={`nav-item ${page === 'collaborators' ? 'nav-item-active' : ''}`} onClick={() => setPage('collaborators')}><ContactRound size={17} /><span>Colaboradores</span></button>}
-          {canAccessPage('inventory') && <button type="button" title="Gestão de estoque" aria-label="Ir para gestão de estoque" className={`nav-item ${page === 'inventory' ? 'nav-item-active' : ''}`} onClick={() => setPage('inventory')}><Package size={17} /><span>Estoque</span></button>}
-          {canAccessPage('stock-units') && <button type="button" title="Unidades em estoque" aria-label="Ir para unidades em estoque" className={`nav-item ${page === 'stock-units' ? 'nav-item-active' : ''}`} onClick={() => setPage('stock-units')}><Building2 size={17} /><span>Unidades em estoque</span></button>}
-          {canAccessPage('api-validation') && <button type="button" title="Validação da API" aria-label="Ir para validação da API" className={`nav-item ${page === 'api-validation' ? 'nav-item-active' : ''}`} onClick={() => setPage('api-validation')}><Zap size={17} /><span>Validação API</span></button>}
-          {canAccessPage('warranties') && <button type="button" title="Prazos de garantia" aria-label="Ir para prazos de garantia" className={`nav-item ${page === 'warranties' ? 'nav-item-active' : ''}`} onClick={() => setPage('warranties')}><ShieldCheck size={17} /><span>Garantias</span></button>}
-          {canAccessPage('legal-processes') && <button type="button" title="Processos Jurídicos" aria-label="Ir para processos jurídicos" className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`} onClick={() => setPage('legal-processes')}><BriefcaseBusiness size={17} /><span>Processos Jurídicos</span></button>}
-          {canAccessPage('personal-activities') && <button type="button" title="Atividades pessoais" aria-label="Ir para atividades pessoais" className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`} onClick={() => setPage('personal-activities')}><ListTodo size={17} /><span>Atividades pessoais</span></button>}
-          {canAccessPage('information') && <button type="button" title="Informações" aria-label="Ir para informações" className={`nav-item ${page === 'information' ? 'nav-item-active' : ''}`} onClick={() => setPage('information')}><Info size={17} /><span>Informações</span></button>}
-          {user.role === 'admin' && <button type="button" title="Expediente e Calendário" aria-label="Ir para expediente e calendário" className={`nav-item ${page === 'work-calendar' ? 'nav-item-active' : ''}`} onClick={() => setPage('work-calendar')}><CalendarClock size={17} /><span>Expediente</span></button>}
-          {user.role === 'admin' && <button type="button" title="Acessos" aria-label="Ir para acessos" className={`nav-item ${page === 'accesses' ? 'nav-item-active' : ''}`} onClick={() => setPage('accesses')}><UsersRound size={17} /><span>Acessos</span></button>}
-          {user.role === 'admin' && <button type="button" title="Auditoria & Logs" aria-label="Ir para auditoria e logs" className={`nav-item ${page === 'logs' ? 'nav-item-active' : ''}`} onClick={() => setPage('logs')}><History size={17} /><span>Auditoria & Logs</span></button>}
+          {/* 1. Início */}
+          {canAccessPage('home') && (
+            <button
+              type="button"
+              title="Início"
+              aria-label="Ir para início"
+              className={`nav-item ${page === 'home' ? 'nav-item-active' : ''}`}
+              onClick={() => setPage('home')}
+            >
+              <LayoutDashboard size={17} />
+              <span>Início</span>
+            </button>
+          )}
+
+          {/* 2. Minhas atividades */}
+          {canAccessPage('personal-activities') && (
+            <button
+              type="button"
+              title="Minhas atividades"
+              aria-label="Ir para minhas atividades"
+              className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`}
+              onClick={() => setPage('personal-activities')}
+            >
+              <ListTodo size={17} />
+              <span>Minhas atividades</span>
+            </button>
+          )}
+
+          {/* 3. Chamados (Submenu) */}
+          {hasChamadosAccess && (
+            <div className="nav-group">
+              <button
+                type="button"
+                className={`nav-group-header ${isChamadosActive ? 'nav-group-active' : ''}`}
+                onClick={() => toggleSubmenu('chamados')}
+                title="Chamados"
+                aria-expanded={openMenus.chamados}
+              >
+                <ClipboardList size={17} />
+                <span className="nav-group-label">Chamados</span>
+                <span className="nav-group-chevron">
+                  {openMenus.chamados ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+              </button>
+              {openMenus.chamados && (
+                <div className="nav-subitems">
+                  {canAccessPage('tickets') && (
+                    <button
+                      type="button"
+                      title="Chamados"
+                      aria-label="Ir para chamados"
+                      className={`nav-item nav-subitem ${page === 'tickets' ? 'nav-item-active' : ''}`}
+                      onClick={() => {
+                        setPage('tickets')
+                        if (ticketView === 'dashboard') {
+                          window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
+                        }
+                      }}
+                    >
+                      <ClipboardList size={15} />
+                      <span>Chamados</span>
+                    </button>
+                  )}
+                  {canAccessPage('letter-filling') && (
+                    <button
+                      type="button"
+                      title="Preenchimento de cartas"
+                      aria-label="Ir para preenchimento de cartas"
+                      className={`nav-item nav-subitem ${page === 'letter-filling' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('letter-filling')}
+                    >
+                      <FileText size={15} />
+                      <span>Preenchimento de Cartas</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 4. Processos Jurídicos */}
+          {canAccessPage('legal-processes') && (
+            <button
+              type="button"
+              title="Processos Jurídicos"
+              aria-label="Ir para processos jurídicos"
+              className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`}
+              onClick={() => {
+                setPage('legal-processes')
+                if (legalView === 'dashboard') {
+                  window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: 'board' } }))
+                }
+              }}
+            >
+              <BriefcaseBusiness size={17} />
+              <span>Processos Jurídicos</span>
+            </button>
+          )}
+
+          {/* 5. Administração (Submenu) */}
+          {hasAdminGroupAccess && (
+            <div className="nav-group">
+              <button
+                type="button"
+                className={`nav-group-header ${isAdminGroupActive ? 'nav-group-active' : ''}`}
+                onClick={() => toggleSubmenu('administracao')}
+                title="Administração"
+                aria-expanded={openMenus.administracao}
+              >
+                <Briefcase size={17} />
+                <span className="nav-group-label">Administração</span>
+                <span className="nav-group-chevron">
+                  {openMenus.administracao ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+              </button>
+              {openMenus.administracao && (
+                <div className="nav-subitems">
+                  {canAccessPage('schedule') && (
+                    <button
+                      type="button"
+                      title="Programação"
+                      aria-label="Ir para programação"
+                      className={`nav-item nav-subitem ${page === 'schedule' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('schedule')}
+                    >
+                      <CalendarDays size={15} />
+                      <span>Programação</span>
+                    </button>
+                  )}
+                  {canAccessPage('collaborators') && (
+                    <button
+                      type="button"
+                      title="Colaboradores"
+                      aria-label="Ir para colaboradores"
+                      className={`nav-item nav-subitem ${page === 'collaborators' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('collaborators')}
+                    >
+                      <ContactRound size={15} />
+                      <span>Colaboradores</span>
+                    </button>
+                  )}
+                  {canAccessPage('stock-units') && (
+                    <button
+                      type="button"
+                      title="Unidades em estoque"
+                      aria-label="Ir para unidades em estoque"
+                      className={`nav-item nav-subitem ${page === 'stock-units' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('stock-units')}
+                    >
+                      <Building2 size={15} />
+                      <span>Unidades em estoque</span>
+                    </button>
+                  )}
+                  {canAccessPage('inventory') && (
+                    <button
+                      type="button"
+                      title="Estoque"
+                      aria-label="Ir para estoque"
+                      className={`nav-item nav-subitem ${page === 'inventory' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('inventory')}
+                    >
+                      <Package size={15} />
+                      <span>Estoque</span>
+                    </button>
+                  )}
+                  {canAccessPage('warranties') && (
+                    <button
+                      type="button"
+                      title="Garantias"
+                      aria-label="Ir para garantias"
+                      className={`nav-item nav-subitem ${page === 'warranties' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('warranties')}
+                    >
+                      <ShieldCheck size={15} />
+                      <span>Garantias</span>
+                    </button>
+                  )}
+                  {canAccessPage('information') && (
+                    <button
+                      type="button"
+                      title="Informações de empreendimentos"
+                      aria-label="Ir para informações de empreendimentos"
+                      className={`nav-item nav-subitem ${page === 'information' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('information')}
+                    >
+                      <Info size={15} />
+                      <span>Informações de empreendimentos</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 6. Configurações (Submenu) */}
+          {hasConfigAccess && (
+            <div className="nav-group">
+              <button
+                type="button"
+                className={`nav-group-header ${isConfigActive ? 'nav-group-active' : ''}`}
+                onClick={() => toggleSubmenu('configuracoes')}
+                title="Configurações"
+                aria-expanded={openMenus.configuracoes}
+              >
+                <Settings size={17} />
+                <span className="nav-group-label">Configurações</span>
+                <span className="nav-group-chevron">
+                  {openMenus.configuracoes ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+              </button>
+              {openMenus.configuracoes && (
+                <div className="nav-subitems">
+                  {canAccessPage('api-validation') && (
+                    <button
+                      type="button"
+                      title="Validação API"
+                      aria-label="Ir para validação da API"
+                      className={`nav-item nav-subitem ${page === 'api-validation' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('api-validation')}
+                    >
+                      <Zap size={15} />
+                      <span>Validação API</span>
+                    </button>
+                  )}
+                  {canAccessPage('work-calendar') && (
+                    <button
+                      type="button"
+                      title="Expediente"
+                      aria-label="Ir para expediente"
+                      className={`nav-item nav-subitem ${page === 'work-calendar' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('work-calendar')}
+                    >
+                      <CalendarClock size={15} />
+                      <span>Expediente</span>
+                    </button>
+                  )}
+                  {canAccessPage('accesses') && (
+                    <button
+                      type="button"
+                      title="Acessos"
+                      aria-label="Ir para acessos"
+                      className={`nav-item nav-subitem ${page === 'accesses' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('accesses')}
+                    >
+                      <UsersRound size={15} />
+                      <span>Acessos</span>
+                    </button>
+                  )}
+                  {canAccessPage('logs') && (
+                    <button
+                      type="button"
+                      title="Auditoria & Logs"
+                      aria-label="Ir para auditoria e logs"
+                      className={`nav-item nav-subitem ${page === 'logs' ? 'nav-item-active' : ''}`}
+                      onClick={() => setPage('logs')}
+                    >
+                      <History size={15} />
+                      <span>Auditoria & Logs</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-security"><ShieldCheck size={16} /><span><strong>Acesso protegido</strong><small>Domínio @{domain}</small></span></div>
@@ -1309,11 +1723,18 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                   {matchingNavPages.map((entry) => (
                     <button
                       type="button"
-                      key={entry.key}
+                      key={`${entry.key}-${entry.view || 'default'}`}
                       className="command-palette-item"
                       onClick={() => {
                         closeCommandPalette()
                         openPage(entry.key)
+                        if (entry.view) {
+                          if (entry.key === 'tickets') {
+                            window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: entry.view } }))
+                          } else if (entry.key === 'legal-processes') {
+                            window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: entry.view } }))
+                          }
+                        }
                       }}
                     >
                       <span className="command-palette-badge is-page">Página</span>
@@ -1353,12 +1774,12 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     tickets: { title: 'Chamados', description: 'Atendimentos técnicos e solicitações em um só lugar.', icon: ClipboardList },
     'letter-filling': { title: 'Preenchimento de cartas', description: 'Geração de notificações e termos a partir dos chamados.', icon: FileText },
     schedule: { title: 'Programação', description: 'Agenda de serviços e atividades da equipe.', icon: CalendarDays },
-    information: { title: 'Informações', description: 'Referências e dados úteis para a operação técnica.', icon: Info },
+    information: { title: 'Informações de empreendimentos', description: 'Dados cadastrais, síndicos e habite-se de empreendimentos.', icon: Info },
     accesses: { title: 'Acessos', description: 'Contas administrativas e convites.', icon: UsersRound },
     'api-validation': { title: 'Validação da API', description: 'Painel de testes e controle da API CVCRM.', icon: Zap },
     warranties: { title: 'Prazos de garantia', description: 'Gestão dos prazos de garantia por subassunto.', icon: ShieldCheck },
     'legal-processes': { title: 'Processos Jurídicos', description: 'Gestão de processos, fases, responsáveis e pagamentos.', icon: BriefcaseBusiness },
-    'personal-activities': { title: 'Atividades pessoais', description: 'Seu quadro privado para organizar atividades.', icon: ListTodo },
+    'personal-activities': { title: 'Minhas atividades', description: 'Seu quadro privado para organizar atividades.', icon: ListTodo },
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
     inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
