@@ -899,9 +899,8 @@ export default function TicketBoardPage({
             className="primary-button highlight-action-btn"
             onClick={() => { setShowProtocolModal(true); setProtocolError('') }}
           >
-            <Plus size={15} /> Novo chamado por protocolo
+            <Plus size={15} /> <span>Novo chamado</span><span className="desktop-only-text"> por protocolo</span>
           </button>
-          <button type="button" className="secondary-button" onClick={() => applyViewChange('dashboard', 'push')}><BarChart3 size={15} /> Dashboard</button>
           {canManageIntegration && onOpenValidation && (
             <button
               type="button"
@@ -1017,36 +1016,8 @@ export default function TicketBoardPage({
         }
 
         return (
-          <section className={`ticket-filter-panel ${filtersExpanded ? 'is-expanded' : 'is-collapsed'}`}>
-            <div className="ticket-filter-panel-top">
-              <div className="ticket-filter-panel-left">
-                <button
-                  className={`ticket-filter-toggle ${activeFiltersCount > 0 ? 'has-active' : ''}`}
-                  type="button"
-                  aria-expanded={filtersExpanded}
-                  onClick={() => setFiltersExpanded((expanded) => !expanded)}
-                >
-                  <ChevronDown size={15} />
-                  <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
-                  {activeFiltersCount > 0 && <span className="ticket-filter-badge">{activeFiltersCount} filtro(s)</span>}
-                </button>
-
-                <span className="ticket-filter-count">
-                  <Clock3 size={13} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}
-                </span>
-
-                {activeFiltersCount > 0 && (
-                  <button
-                    className="filter-clear-button ticket-quick-clear-btn"
-                    type="button"
-                    onClick={clearAllFilters}
-                    title="Limpar todos os filtros"
-                  >
-                    <X size={13} /> Limpar
-                  </button>
-                )}
-              </div>
-
+          <>
+            <div className="ticket-view-toggle-bar">
               <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
                 <button
                   type="button"
@@ -1071,6 +1042,37 @@ export default function TicketBoardPage({
                 </button>
               </div>
             </div>
+
+            <section className={`ticket-filter-panel ${filtersExpanded ? 'is-expanded' : 'is-collapsed'}`}>
+              <div className="ticket-filter-panel-top">
+                <div className="ticket-filter-panel-left">
+                  <button
+                    className={`ticket-filter-toggle ${activeFiltersCount > 0 ? 'has-active' : ''}`}
+                    type="button"
+                    aria-expanded={filtersExpanded}
+                    onClick={() => setFiltersExpanded((expanded) => !expanded)}
+                  >
+                    <ChevronDown size={15} />
+                    <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
+                    {activeFiltersCount > 0 && <span className="ticket-filter-badge">{activeFiltersCount} filtro(s)</span>}
+                  </button>
+
+                  <span className="ticket-filter-count">
+                    <Clock3 size={13} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}
+                  </span>
+
+                  {activeFiltersCount > 0 && (
+                    <button
+                      className="filter-clear-button ticket-quick-clear-btn"
+                      type="button"
+                      onClick={clearAllFilters}
+                      title="Limpar todos os filtros"
+                    >
+                      <X size={13} /> Limpar
+                    </button>
+                  )}
+                </div>
+              </div>
 
             <div className="ticket-board-toolbar ticket-board-options">
               <label className="ticket-include-inactive">
@@ -1232,7 +1234,8 @@ export default function TicketBoardPage({
           </div>
         </div>}
           </section>
-        )
+        </>
+      )
       })()}
       {loading ? (
         <ATechLoading message="Carregando chamados..." subtitle="Sincronizando atendimentos e etapas..." />

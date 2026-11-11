@@ -3261,6 +3261,7 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .ticket-card-fields-panel > div { display: grid; gap: 12px; }
 .ticket-card-fields label, .ticket-tag-assignment label { display: flex; align-items: center; gap: 7px; color: #526a7f; font-size: 10px; cursor: pointer; }
 .ticket-card-fields input, .ticket-tag-assignment input { accent-color: #2e78b1; }
+.ticket-view-toggle-bar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .ticket-view-toggle { display: flex; align-items: center; padding: 3px; background: #edf3f8; border: 1px solid #d8e4ee; border-radius: 7px; }
 .ticket-view-toggle button { min-height: 35px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #60768a; background: transparent; border: 0; border-radius: 5px; font-size: 9px; font-weight: 700; cursor: pointer; }
 .ticket-view-toggle button.is-active { color: #245d89; background: #fff; box-shadow: 0 1px 3px #193a5b1c; }
@@ -4912,46 +4913,139 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
     padding: 6px 0 !important;
   }
 
+  /* Cabeçalho de Chamados Otimizado para Mobile */
+  .ticket-board-heading {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 8px !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .ticket-board-heading .eyebrow,
+  .ticket-board-heading p {
+    display: none !important;
+  }
+
+  .ticket-board-heading h1 {
+    font-size: 20px !important;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+  }
+
+  .ticket-board-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    justify-content: flex-end !important;
+    width: auto !important;
+  }
+
+  .ticket-board-actions .primary-button {
+    min-height: 34px !important;
+    height: 34px !important;
+    padding: 0 10px !important;
+    font-size: 11.5px !important;
+  }
+
+  .ticket-board-actions .secondary-button,
+  .ticket-board-actions .cvcrm-connection,
+  .desktop-only-text {
+    display: none !important;
+  }
+
+  .ticket-sync-meta {
+    display: none !important;
+  }
+
+  /* Barra de Modo de Visualização (Quadro / Lista / Dashboard) em 100% no mobile */
+  .ticket-view-toggle-bar {
+    width: 100% !important;
+    margin-bottom: 6px !important;
+    display: block !important;
+  }
+
+  .ticket-view-toggle {
+    display: flex !important;
+    width: 100% !important;
+    background: #edf3f8 !important;
+    border: 1px solid #d8e4ee !important;
+    border-radius: 8px !important;
+    padding: 3px !important;
+    box-sizing: border-box !important;
+    margin-left: 0 !important;
+  }
+
+  .ticket-view-toggle button {
+    flex: 1 1 0 !important;
+    min-height: 34px !important;
+    height: 34px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    padding: 0 6px !important;
+    font-size: 11.5px !important;
+    font-weight: 600 !important;
+    color: #60768a !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    transition: all 0.15s ease !important;
+  }
+
+  .ticket-view-toggle button.is-active {
+    background: #ffffff !important;
+    color: #175080 !important;
+    font-weight: 700 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12) !important;
+  }
+
   /* OTIMIZAÇÃO KANBAN: PAINEL DE FILTROS ULTRA COMPACTO QUANDO OCULTO */
   .ticket-filter-panel {
-    padding: 8px 10px !important;
+    width: 100% !important;
+    padding: 6px 10px !important;
     margin-bottom: 6px !important;
     gap: 6px !important;
-    border-radius: 10px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
   }
 
   .ticket-filter-panel-top {
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
-    flex-wrap: nowrap !important;
+    width: 100% !important;
+    min-height: auto !important;
     gap: 8px !important;
   }
 
   .ticket-filter-panel-left {
-    display: inline-flex !important;
+    display: flex !important;
     align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
     gap: 6px !important;
-    flex-wrap: nowrap !important;
-    min-width: 0 !important;
   }
 
   .ticket-filter-toggle {
     min-height: 32px !important;
     height: 32px !important;
-    padding: 0 9px !important;
-    font-size: 11px !important;
-    white-space: nowrap !important;
+    padding: 0 10px !important;
+    font-size: 11.5px !important;
     border-radius: 7px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
   }
 
   .ticket-filter-count {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 4px !important;
     font-size: 11px !important;
-    white-space: nowrap !important;
     color: #64748b !important;
+    white-space: nowrap !important;
+    margin-left: auto !important;
   }
 
   .ticket-quick-clear-btn {
@@ -4963,21 +5057,7 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
     background: #fef2f2 !important;
     border: 1px solid #fecaca !important;
     border-radius: 6px !important;
-  }
-
-  .ticket-view-toggle {
-    display: inline-flex !important;
-    flex-wrap: nowrap !important;
-    margin-left: auto !important;
-  }
-
-  .ticket-view-toggle button {
-    min-height: 32px !important;
-    height: 32px !important;
-    padding: 0 8px !important;
-    font-size: 11px !important;
-    gap: 4px !important;
-    white-space: nowrap !important;
+    flex-shrink: 0 !important;
   }
 
   /* Quando filtros estão recolhidos (is-collapsed): OCULTAR opções e filtros para abrir espaço aos cartões */
@@ -4997,17 +5077,52 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 
   /* OTIMIZAÇÃO KANBAN JURÍDICO MOBILE & TABLET */
   .legal-heading {
-    margin-bottom: 6px !important;
-    gap: 6px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 8px !important;
+    gap: 8px !important;
   }
 
-  .legal-board-page .legal-heading p {
+  .legal-heading .eyebrow,
+  .legal-heading p {
     display: none !important;
   }
 
-  .legal-board-page .legal-heading h1 {
-    font-size: 18px !important;
+  .legal-heading h1 {
+    font-size: 20px !important;
     margin: 0 !important;
+    line-height: 1.2 !important;
+  }
+
+  .legal-heading-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    width: auto !important;
+  }
+
+  .legal-heading-actions .primary-button {
+    min-height: 34px !important;
+    height: 34px !important;
+    padding: 0 10px !important;
+    font-size: 11.5px !important;
+  }
+
+  .legal-main-tabs {
+    width: 100% !important;
+    display: flex !important;
+    margin-bottom: 6px !important;
+  }
+
+  .legal-main-tabs button {
+    flex: 1 1 0 !important;
+    min-height: 34px !important;
+    height: 34px !important;
+    padding: 0 8px !important;
+    font-size: 11.5px !important;
+    justify-content: center !important;
   }
 
   .legal-toolbar {
@@ -5046,13 +5161,6 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
     background: #fef2f2 !important;
     border: 1px solid #fecaca !important;
     border-radius: 6px !important;
-  }
-
-  .legal-main-tabs button {
-    min-height: 32px !important;
-    height: 32px !important;
-    padding: 0 8px !important;
-    font-size: 11px !important;
   }
 
   .ticket-board-page.ticket-board-kanban .kanban-board-container,
