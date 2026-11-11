@@ -621,3 +621,57 @@
   .legal-dashboard-outcomes-grid { grid-template-columns: minmax(0, 1fr); }
   .legal-dashboard-bar-row { grid-template-columns: minmax(100px, 1fr) minmax(80px, 2fr) auto; }
 }
+
+@media (max-width: 768px) {
+  .legal-mobile-stage-selector {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 6px 0 10px !important;
+    margin-bottom: 8px !important;
+    scrollbar-width: none !important;
+    overscroll-behavior-x: contain !important;
+  }
+
+  .legal-mobile-stage-selector::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .legal-board-page .legal-board {
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    min-height: auto !important;
+  }
+
+  .legal-board-page .legal-column {
+    display: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-bottom: 16px !important;
+  }
+
+  .legal-board-page .legal-column.is-mobile-active {
+    display: flex !important;
+  }
+
+  .legal-board-page .legal-column-body {
+    overflow-y: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 12px 10px !important;
+  }
+
+  .legal-board-controls .desktop-kanban-hint {
+    display: none !important;
+  }
+
+  .legal-board-controls .mobile-kanban-stage-title {
+    display: inline-block !important;
+    margin-right: auto !important;
+    color: #475569 !important;
+    font-size: 12px !important;
+  }
+}

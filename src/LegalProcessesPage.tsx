@@ -1744,6 +1744,42 @@ export default function LegalProcessesPage({
     setValueFilter('all')
   }
 
+  const [mobileSelectedLegalStatusId, setMobileSelectedLegalStatusId] = useState<number | null>(null)
+
+  const visibleLegalStatuses = useMemo(() => {
+    return statuses.filter((status) => {
+      if (activeFiltersCount === 0) return true
+      return filtered.some((process) => process.status_id === status.id)
+    })
+  }, [statuses, activeFiltersCount, filtered])
+
+  useEffect(() => {
+    if (visibleLegalStatuses.length === 0) return
+    if (!mobileSelectedLegalStatusId || !visibleLegalStatuses.some((s) => s.id === mobileSelectedLegalStatusId)) {
+      const firstWithItems = visibleLegalStatuses.find((s) => filtered.some((p) => p.status_id === s.id))
+      setMobileSelectedLegalStatusId(firstWithItems?.id ?? visibleLegalStatuses[0].id)
+    }
+  }, [visibleLegalStatuses, filtered, mobileSelectedLegalStatusId])
+
+  function selectPrevMobileLegalStatus() {
+    const currentIndex = visibleLegalStatuses.findIndex((s) => s.id === mobileSelectedLegalStatusId)
+    if (currentIndex > 0) {
+      setMobileSelectedLegalStatusId(visibleLegalStatuses[currentIndex - 1].id)
+    }
+  }
+
+  function selectNextMobileLegalStatus() {
+    const currentIndex = visibleLegalStatuses.findIndex((s) => s.id === mobileSelectedLegalStatusId)
+    if (currentIndex >= 0 && currentIndex < visibleLegalStatuses.length - 1) {
+      setMobileSelectedLegalStatusId(visibleLegalStatuses[currentIndex + 1].id)
+    }
+  }
+
+  const mobileActiveLegalStatusName = useMemo(() => {
+    const match = visibleLegalStatuses.find((s) => s.id === mobileSelectedLegalStatusId)
+    return match ? match.name : ''
+  }, [visibleLegalStatuses, mobileSelectedLegalStatusId])
+
   // Render do cartão no Kanban
   function processCard(process: LegalProcess, compact = false) {
     const totalTasks = (process.items_count ?? 0) + (process.children_count ?? 0)
@@ -2278,10 +2314,58 @@ export default function LegalProcessesPage({
           ) : activeTab === 'board' ? (
             <>
               <div className="legal-board-controls" aria-label="Navegação das situações jurídicas">
-                <span>Deslize ou arraste horizontalmente para navegar entre as fases</span>
-                <button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveBoard(-1)}><ArrowLeft size={17} /></button>
-                <button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveBoard(1)}><ArrowRight size={17} /></button>
+                <span className="desktop-kanban-hint">Deslize ou arraste horizontalmente para navegar entre as fases</span>
+                <span className="mobile-kanban-stage-title">
+                  Fase: <strong>{mobileActiveLegalStatusName}</strong>
+                </span>
+                <div className="kanban-board-nav-buttons">
+                  <button
+                    type="button"
+                    aria-label="Mostrar situações anteriores"
+                    title="Mostrar situações anteriores"
+                    onClick={() => {
+                      moveBoard(-1)
+                      selectPrevMobileLegalStatus()
+                    }}
+                  >
+                    <ArrowLeft size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Mostrar próximas situações"
+                    title="Mostrar próximas situações"
+                    onClick={() => {
+                      moveBoard(1)
+                      selectNextMobileLegalStatus()
+                    }}
+                  >
+                    <ArrowRight size={17} />
+                  </button>
+                </div>
               </div>
+
+              {/* Seletor de Fases Mobile Jurídico (Pílulas touch-friendly) */}
+              <div className="mobile-stage-selector legal-mobile-stage-selector" role="tablist" aria-label="Fases do processo jurídico">
+                {visibleLegalStatuses.map((status) => {
+                  const statusItemsCount = filtered.filter((process) => process.status_id === status.id).length
+                  const isActive = mobileSelectedLegalStatusId === status.id
+                  return (
+                    <button
+                      key={status.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      className={`mobile-stage-pill ${isActive ? 'is-active' : ''}`}
+                      onClick={() => setMobileSelectedLegalStatusId(status.id)}
+                    >
+                      <span className="mobile-stage-dot" style={{ backgroundColor: status.color || '#2877b8' }} />
+                      <span className="mobile-stage-label">{status.name}</span>
+                      <span className="mobile-stage-badge">{statusItemsCount}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
               <div
                 className="legal-board"
                 ref={boardRef}
@@ -2297,20 +2381,17 @@ export default function LegalProcessesPage({
                   }
                 }}
               >
-                {statuses
-                  .filter((status) => {
-                    if (activeFiltersCount === 0) return true
-                    return filtered.some((process) => process.status_id === status.id)
-                  })
+                {visibleLegalStatuses
                   .map((status) => {
                   const items = filtered.filter((process) => process.status_id === status.id)
                   const visibleCount = visibleProcessCounts[String(status.id)] ?? kanbanPageSize
                   const itemsToShow = items.slice(0, visibleCount)
                   const columnTotalValue = items.reduce((sum, p) => sum + (p.case_value ? Number(p.case_value) : 0), 0)
+                  const isMobileActive = mobileSelectedLegalStatusId === status.id
 
                   return (
                     <section
-                      className="legal-column"
+                      className={`legal-column ${isMobileActive ? 'is-mobile-active' : ''}`}
                       key={status.id}
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={(event) => {

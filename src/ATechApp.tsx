@@ -942,6 +942,11 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     }
   }
 
+  const navigateToPage = (newPage: AppPage) => {
+    setPage(newPage)
+    setMobileMenuOpen(false)
+  }
+
   async function inviteUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitting(true)
@@ -1142,7 +1147,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               title="Início"
               aria-label="Ir para início"
               className={`nav-item ${page === 'home' ? 'nav-item-active' : ''}`}
-              onClick={() => setPage('home')}
+              onClick={() => navigateToPage('home')}
             >
               <LayoutDashboard size={17} />
               <span>Início</span>
@@ -1156,7 +1161,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               title="Minhas atividades"
               aria-label="Ir para minhas atividades"
               className={`nav-item ${page === 'personal-activities' ? 'nav-item-active' : ''}`}
-              onClick={() => setPage('personal-activities')}
+              onClick={() => navigateToPage('personal-activities')}
             >
               <ListTodo size={17} />
               <span>Minhas atividades</span>
@@ -1188,7 +1193,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       aria-label="Ir para chamados"
                       className={`nav-item nav-subitem ${page === 'tickets' ? 'nav-item-active' : ''}`}
                       onClick={() => {
-                        setPage('tickets')
+                        navigateToPage('tickets')
                         if (ticketView === 'dashboard') {
                           window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
                         }
@@ -1204,7 +1209,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Preenchimento de cartas"
                       aria-label="Ir para preenchimento de cartas"
                       className={`nav-item nav-subitem ${page === 'letter-filling' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('letter-filling')}
+                      onClick={() => navigateToPage('letter-filling')}
                     >
                       <FileText size={15} />
                       <span>Preenchimento de Cartas</span>
@@ -1223,7 +1228,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               aria-label="Ir para processos jurídicos"
               className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`}
               onClick={() => {
-                setPage('legal-processes')
+                navigateToPage('legal-processes')
                 if (legalView === 'dashboard') {
                   window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: 'board' } }))
                 }
@@ -1258,7 +1263,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Programação"
                       aria-label="Ir para programação"
                       className={`nav-item nav-subitem ${page === 'schedule' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('schedule')}
+                      onClick={() => navigateToPage('schedule')}
                     >
                       <CalendarDays size={15} />
                       <span>Programação</span>
@@ -1270,7 +1275,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Colaboradores"
                       aria-label="Ir para colaboradores"
                       className={`nav-item nav-subitem ${page === 'collaborators' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('collaborators')}
+                      onClick={() => navigateToPage('collaborators')}
                     >
                       <ContactRound size={15} />
                       <span>Colaboradores</span>
@@ -1282,7 +1287,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Unidades em estoque"
                       aria-label="Ir para unidades em estoque"
                       className={`nav-item nav-subitem ${page === 'stock-units' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('stock-units')}
+                      onClick={() => navigateToPage('stock-units')}
                     >
                       <Building2 size={15} />
                       <span>Unidades em estoque</span>
@@ -1294,7 +1299,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Estoque"
                       aria-label="Ir para estoque"
                       className={`nav-item nav-subitem ${page === 'inventory' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('inventory')}
+                      onClick={() => navigateToPage('inventory')}
                     >
                       <Package size={15} />
                       <span>Estoque</span>
@@ -1306,7 +1311,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Garantias"
                       aria-label="Ir para garantias"
                       className={`nav-item nav-subitem ${page === 'warranties' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('warranties')}
+                      onClick={() => navigateToPage('warranties')}
                     >
                       <ShieldCheck size={15} />
                       <span>Garantias</span>
@@ -1318,7 +1323,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Informações de empreendimentos"
                       aria-label="Ir para informações de empreendimentos"
                       className={`nav-item nav-subitem ${page === 'information' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('information')}
+                      onClick={() => navigateToPage('information')}
                     >
                       <Info size={15} />
                       <span>Informações de empreendimentos</span>
@@ -1353,7 +1358,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Validação API"
                       aria-label="Ir para validação da API"
                       className={`nav-item nav-subitem ${page === 'api-validation' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('api-validation')}
+                      onClick={() => navigateToPage('api-validation')}
                     >
                       <Zap size={15} />
                       <span>Validação API</span>
@@ -1365,7 +1370,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Expediente"
                       aria-label="Ir para expediente"
                       className={`nav-item nav-subitem ${page === 'work-calendar' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('work-calendar')}
+                      onClick={() => navigateToPage('work-calendar')}
                     >
                       <CalendarClock size={15} />
                       <span>Expediente</span>
@@ -1377,7 +1382,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Acessos"
                       aria-label="Ir para acessos"
                       className={`nav-item nav-subitem ${page === 'accesses' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('accesses')}
+                      onClick={() => navigateToPage('accesses')}
                     >
                       <UsersRound size={15} />
                       <span>Acessos</span>
@@ -1389,7 +1394,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       title="Auditoria & Logs"
                       aria-label="Ir para auditoria e logs"
                       className={`nav-item nav-subitem ${page === 'logs' ? 'nav-item-active' : ''}`}
-                      onClick={() => setPage('logs')}
+                      onClick={() => navigateToPage('logs')}
                     >
                       <History size={15} />
                       <span>Auditoria & Logs</span>
@@ -1714,6 +1719,90 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           )}
           </Suspense>
         </div>
+
+        {/* Barra de navegação inferior fixa para telas mobile (Thumb zone ergonomia) */}
+        <nav className="mobile-bottom-nav" aria-label="Navegação rápida">
+          {canAccessPage('home') && (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'home' ? 'is-active' : ''}`}
+              onClick={() => navigateToPage('home')}
+            >
+              <LayoutDashboard size={19} />
+              <span>Início</span>
+            </button>
+          )}
+          {canAccessPage('tickets') && (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'tickets' ? 'is-active' : ''}`}
+              onClick={() => {
+                navigateToPage('tickets')
+                if (ticketView === 'dashboard') {
+                  window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
+                }
+              }}
+            >
+              <ClipboardList size={19} />
+              <span>Chamados</span>
+            </button>
+          )}
+          {canAccessPage('schedule') && (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'schedule' ? 'is-active' : ''}`}
+              onClick={() => navigateToPage('schedule')}
+            >
+              <CalendarDays size={19} />
+              <span>Agenda</span>
+            </button>
+          )}
+          {canAccessPage('legal-processes') ? (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'legal-processes' ? 'is-active' : ''}`}
+              onClick={() => {
+                navigateToPage('legal-processes')
+                if (legalView === 'dashboard') {
+                  window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: 'board' } }))
+                }
+              }}
+            >
+              <BriefcaseBusiness size={19} />
+              <span>Jurídico</span>
+            </button>
+          ) : canAccessPage('inventory') ? (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'inventory' ? 'is-active' : ''}`}
+              onClick={() => navigateToPage('inventory')}
+            >
+              <Package size={19} />
+              <span>Estoque</span>
+            </button>
+          ) : canAccessPage('personal-activities') ? (
+            <button
+              type="button"
+              className={`mobile-bottom-nav-item ${page === 'personal-activities' ? 'is-active' : ''}`}
+              onClick={() => navigateToPage('personal-activities')}
+            >
+              <ListTodo size={19} />
+              <span>Atividades</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={`mobile-bottom-nav-item ${mobileMenuOpen ? 'is-active' : ''}`}
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            aria-label="Abrir menu de navegação completo"
+          >
+            <div className="mobile-bottom-nav-icon-wrap">
+              <Menu size={19} />
+              {unreadNotifications > 0 && <span className="mobile-bottom-nav-badge" />}
+            </div>
+            <span>Menu</span>
+          </button>
+        </nav>
       </section>
 
       {commandOpen && (

@@ -772,6 +772,39 @@ export default function TicketBoardPage({
   const visibleStages = orderedStages.filter((stage) => filteredStatusIds.has(stage.id))
   const unassignedTickets = filtered.filter((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId))
 
+  const [mobileSelectedStageKey, setMobileSelectedStageKey] = useState<string | number>('')
+
+  useEffect(() => {
+    if (visibleStages.length === 0) return
+    const stageExists = visibleStages.some((stage) => stage.id === mobileSelectedStageKey)
+    const isUnassignedValid = mobileSelectedStageKey === 'unassigned' && unassignedTickets.length > 0
+    if (!stageExists && !isUnassignedValid) {
+      setMobileSelectedStageKey(visibleStages[0].id)
+    }
+  }, [visibleStages, unassignedTickets.length, mobileSelectedStageKey])
+
+  function selectPrevMobileStage() {
+    const allKeys = [...visibleStages.map((s) => s.id), ...(unassignedTickets.length ? ['unassigned'] : [])]
+    const currentIndex = allKeys.indexOf(mobileSelectedStageKey as any)
+    if (currentIndex > 0) {
+      setMobileSelectedStageKey(allKeys[currentIndex - 1])
+    }
+  }
+
+  function selectNextMobileStage() {
+    const allKeys = [...visibleStages.map((s) => s.id), ...(unassignedTickets.length ? ['unassigned'] : [])]
+    const currentIndex = allKeys.indexOf(mobileSelectedStageKey as any)
+    if (currentIndex >= 0 && currentIndex < allKeys.length - 1) {
+      setMobileSelectedStageKey(allKeys[currentIndex + 1])
+    }
+  }
+
+  const mobileActiveStageName = useMemo(() => {
+    if (mobileSelectedStageKey === 'unassigned') return 'Sem situação'
+    const match = visibleStages.find((s) => s.id === mobileSelectedStageKey)
+    return match ? match.name : ''
+  }, [mobileSelectedStageKey, visibleStages])
+
   function moveKanban(direction: -1 | 1) {
     const board = kanbanBoardRef.current
     if (!board) return
@@ -1067,12 +1100,74 @@ export default function TicketBoardPage({
       ) : orderedStages.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Workflow ainda não carregado</strong><span>Configure a API e sincronize os atendimentos para trazer as etapas do CVCRM.</span></div> : filtered.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Nenhum chamado corresponde aos filtros.</strong></div> : (
         <div className="kanban-board-container">
           <div className="kanban-board-controls" aria-label="Navegação das situações">
-            <span>Deslize ou arraste para ver outras situações</span>
+            <span className="desktop-kanban-hint">Deslize ou arraste para ver outras situações</span>
+            <span className="mobile-kanban-stage-title">
+              Fase: <strong>{mobileActiveStageName}</strong>
+            </span>
             <div className="kanban-board-nav-buttons">
-              <button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveKanban(-1)}><ChevronLeft size={17} /></button>
-              <button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveKanban(1)}><ChevronRight size={17} /></button>
+              <button
+                type="button"
+                aria-label="Mostrar situações anteriores"
+                title="Mostrar situações anteriores"
+                onClick={() => {
+                  moveKanban(-1)
+                  selectPrevMobileStage()
+                }}
+              >
+                <ChevronLeft size={17} />
+              </button>
+              <button
+                type="button"
+                aria-label="Mostrar próximas situações"
+                title="Mostrar próximas situações"
+                onClick={() => {
+                  moveKanban(1)
+                  selectNextMobileStage()
+                }}
+              >
+                <ChevronRight size={17} />
+              </button>
             </div>
           </div>
+
+          {/* Seletor de Fases Mobile (Pílulas horizontais touch-friendly) */}
+          <div className="mobile-stage-selector" role="tablist" aria-label="Fases do chamado">
+            {visibleStages.map((stage) => {
+              const stageTicketsCount = filtered.filter((ticket) => ticket.statusId === stage.id).length
+              const isActive = mobileSelectedStageKey === stage.id
+              return (
+                <button
+                  key={stage.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`mobile-stage-pill ${isActive ? 'is-active' : ''}`}
+                  onClick={() => setMobileSelectedStageKey(stage.id)}
+                >
+                  <span
+                    className="mobile-stage-dot"
+                    style={{ backgroundColor: safeColor(stage.background_color, '#2877b8') }}
+                  />
+                  <span className="mobile-stage-label">{stage.name}</span>
+                  <span className="mobile-stage-badge">{stageTicketsCount}</span>
+                </button>
+              )
+            })}
+            {unassignedTickets.length > 0 && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobileSelectedStageKey === 'unassigned'}
+                className={`mobile-stage-pill ${mobileSelectedStageKey === 'unassigned' ? 'is-active' : ''}`}
+                onClick={() => setMobileSelectedStageKey('unassigned')}
+              >
+                <span className="mobile-stage-dot" style={{ backgroundColor: '#94a3b8' }} />
+                <span className="mobile-stage-label">Sem situação</span>
+                <span className="mobile-stage-badge">{unassignedTickets.length}</span>
+              </button>
+            )}
+          </div>
+
           <div
             className="kanban-board"
             aria-label="Quadro Kanban de chamados"
@@ -1093,7 +1188,8 @@ export default function TicketBoardPage({
               const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
               const visibleCount = visibleTicketCounts[String(stage.id)] ?? kanbanPageSize
               const ticketsToShow = stageTickets.slice(0, visibleCount)
-              return <section className="kanban-column" key={stage.id} data-stage-key={stage.id}>
+              const isMobileActive = mobileSelectedStageKey === stage.id
+              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={stage.id} data-stage-key={stage.id}>
                 <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
                 <div className="kanban-column-body">
                   {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
@@ -1105,7 +1201,8 @@ export default function TicketBoardPage({
               const key = 'unassigned'
               const visibleCount = visibleTicketCounts[key] ?? kanbanPageSize
               const ticketsToShow = unassignedTickets.slice(0, visibleCount)
-              return <section className="kanban-column" key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
+              const isMobileActive = mobileSelectedStageKey === 'unassigned'
+              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
             })()}
           </div>
         </div>
