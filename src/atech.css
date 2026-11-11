@@ -4901,7 +4901,7 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
     min-height: auto !important;
     overflow-y: visible !important;
     overflow-x: hidden !important;
-    padding: 10px 12px calc(76px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 8px 10px calc(76px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .ticket-board-page.ticket-board-kanban,
@@ -4909,7 +4909,150 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
     height: auto !important;
     min-height: auto !important;
     overflow: visible !important;
-    padding: 10px 0 !important;
+    padding: 6px 0 !important;
+  }
+
+  /* OTIMIZAÇÃO KANBAN: PAINEL DE FILTROS ULTRA COMPACTO QUANDO OCULTO */
+  .ticket-filter-panel {
+    padding: 8px 10px !important;
+    margin-bottom: 6px !important;
+    gap: 6px !important;
+    border-radius: 10px !important;
+  }
+
+  .ticket-filter-panel-top {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+
+  .ticket-filter-panel-left {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+    min-width: 0 !important;
+  }
+
+  .ticket-filter-toggle {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 9px !important;
+    font-size: 11px !important;
+    white-space: nowrap !important;
+    border-radius: 7px !important;
+  }
+
+  .ticket-filter-count {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    font-size: 11px !important;
+    white-space: nowrap !important;
+    color: #64748b !important;
+  }
+
+  .ticket-quick-clear-btn {
+    min-height: 28px !important;
+    height: 28px !important;
+    padding: 0 7px !important;
+    font-size: 11px !important;
+    color: #dc2626 !important;
+    background: #fef2f2 !important;
+    border: 1px solid #fecaca !important;
+    border-radius: 6px !important;
+  }
+
+  .ticket-view-toggle {
+    display: inline-flex !important;
+    flex-wrap: nowrap !important;
+    margin-left: auto !important;
+  }
+
+  .ticket-view-toggle button {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 8px !important;
+    font-size: 11px !important;
+    gap: 4px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Quando filtros estão recolhidos (is-collapsed): OCULTAR opções e filtros para abrir espaço aos cartões */
+  .ticket-filter-panel.is-collapsed .ticket-board-options {
+    display: none !important;
+  }
+
+  /* Quando filtros estão expandidos (is-expanded): exibir opções completas com separador */
+  .ticket-filter-panel.is-expanded .ticket-board-options {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin-top: 8px !important;
+    padding-top: 8px !important;
+    border-top: 1px solid #e2e8f0 !important;
+  }
+
+  /* OTIMIZAÇÃO KANBAN JURÍDICO MOBILE & TABLET */
+  .legal-heading {
+    margin-bottom: 6px !important;
+    gap: 6px !important;
+  }
+
+  .legal-board-page .legal-heading p {
+    display: none !important;
+  }
+
+  .legal-board-page .legal-heading h1 {
+    font-size: 18px !important;
+    margin: 0 !important;
+  }
+
+  .legal-toolbar {
+    padding: 6px 10px !important;
+    margin-bottom: 6px !important;
+    border-radius: 10px !important;
+  }
+
+  .legal-toolbar.is-collapsed .legal-toolbar-top {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: nowrap !important;
+    min-height: auto !important;
+    gap: 8px !important;
+  }
+
+  .legal-toolbar.is-collapsed .legal-face-menu-wrap {
+    display: none !important;
+  }
+
+  .legal-filter-toggle {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 9px !important;
+    font-size: 11px !important;
+    border-radius: 7px !important;
+  }
+
+  .legal-quick-clear-btn {
+    min-height: 28px !important;
+    height: 28px !important;
+    padding: 0 7px !important;
+    font-size: 11px !important;
+    color: #dc2626 !important;
+    background: #fef2f2 !important;
+    border: 1px solid #fecaca !important;
+    border-radius: 6px !important;
+  }
+
+  .legal-main-tabs button {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 8px !important;
+    font-size: 11px !important;
   }
 
   .ticket-board-page.ticket-board-kanban .kanban-board-container,
@@ -4925,50 +5068,58 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   }
 
   /* 2. Exibição da fase ativa a 100% de largura no mobile (sem esmagamento de colunas) */
-  .ticket-board-page.ticket-board-kanban .kanban-column {
+  .ticket-board-page.ticket-board-kanban .kanban-column,
+  .legal-board-page .legal-column {
     display: none !important;
     width: 100% !important;
     max-width: 100% !important;
-    margin-bottom: 16px !important;
+    margin-bottom: 10px !important;
     border-radius: 10px !important;
     box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05) !important;
   }
 
-  .ticket-board-page.ticket-board-kanban .kanban-column.is-mobile-active {
+  .ticket-board-page.ticket-board-kanban .kanban-column.is-mobile-active,
+  .legal-board-page .legal-column.is-mobile-active {
     display: flex !important;
   }
 
-  .ticket-board-page.ticket-board-kanban .kanban-column-body {
+  .ticket-board-page.ticket-board-kanban .kanban-column-body,
+  .legal-board-page .legal-column-body {
     overflow-y: visible !important;
     max-height: none !important;
     height: auto !important;
-    padding: 12px 10px !important;
-    gap: 10px !important;
+    padding: 8px 8px !important;
+    gap: 8px !important;
   }
 
   .desktop-kanban-hint {
     display: none !important;
   }
 
-  .mobile-kanban-stage-title {
-    display: inline-block !important;
-    margin-right: auto !important;
-    color: #475569 !important;
-    font-size: 12px !important;
+  .kanban-board-controls {
+    margin: 0 0 4px !important;
+    min-height: 28px !important;
   }
 
-  .mobile-kanban-stage-title strong {
-    color: #1e3a53 !important;
+  .mobile-kanban-stage-title {
+    display: none !important; /* O nome da fase já é exibido na pílula ativa e no topo da coluna */
+  }
+
+  .kanban-board-nav-buttons button {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
   }
 
   /* 3. Seletor de Etapas / Fases Touch-friendly */
   .mobile-stage-selector {
     display: flex !important;
-    gap: 6px !important;
+    gap: 5px !important;
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
-    padding: 4px 0 10px !important;
-    margin-bottom: 8px !important;
+    padding: 2px 0 6px !important;
+    margin-bottom: 4px !important;
     scrollbar-width: none !important;
     overscroll-behavior-x: contain !important;
   }
@@ -4980,14 +5131,15 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   .mobile-stage-pill {
     display: inline-flex !important;
     align-items: center !important;
-    gap: 6px !important;
-    min-height: 38px !important;
-    padding: 6px 12px !important;
+    gap: 5px !important;
+    min-height: 30px !important;
+    height: 30px !important;
+    padding: 2px 9px !important;
     background: #ffffff !important;
     border: 1px solid #dce5ee !important;
     border-radius: 9999px !important;
     color: #475569 !important;
-    font-size: 12px !important;
+    font-size: 11px !important;
     font-weight: 600 !important;
     white-space: nowrap !important;
     flex-shrink: 0 !important;
@@ -5009,20 +5161,20 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   }
 
   .mobile-stage-dot {
-    width: 8px !important;
-    height: 8px !important;
+    width: 7px !important;
+    height: 7px !important;
     border-radius: 50% !important;
     flex-shrink: 0 !important;
   }
 
   .mobile-stage-badge {
-    min-width: 18px !important;
-    height: 18px !important;
-    padding: 0 5px !important;
+    min-width: 16px !important;
+    height: 16px !important;
+    padding: 0 4px !important;
     border-radius: 9999px !important;
     background: #f1f5f9 !important;
     color: #64748b !important;
-    font-size: 10px !important;
+    font-size: 9.5px !important;
     font-family: var(--mono) !important;
     display: inline-flex !important;
     align-items: center !important;

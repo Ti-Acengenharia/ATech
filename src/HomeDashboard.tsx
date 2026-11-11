@@ -321,9 +321,9 @@ export default function HomeDashboard({
                 type="button"
                 className="home-quick-btn"
                 onClick={() => onOpenPage('schedule')}
-                title="Programar equipe técnica para atendimentos ou serviços"
+                title="Agendar equipe técnica para atendimentos ou serviços"
               >
-                <CalendarDays size={14} /> Programar equipe
+                <CalendarDays size={14} /> Agendar equipe
               </button>
             )}
 
@@ -496,7 +496,7 @@ export default function HomeDashboard({
               </div>
               <div>
                 <h3>Equipe em Campo Hoje</h3>
-                <small>SERVIÇOS E ROTAS PROGRAMADAS</small>
+                <small>SERVIÇOS E ROTAS AGENDADAS</small>
               </div>
             </div>
             {canAccessSchedule && (
@@ -826,7 +826,7 @@ export default function HomeDashboard({
                 </div>
                 <div className="home-module-content">
                   <strong>Programação</strong>
-                  <small>Programação de serviços técnicos e alocação de equipes</small>
+                  <small>Agenda de serviços técnicos e alocação de equipes</small>
                 </div>
                 <ChevronRight size={15} className="home-module-arrow" />
               </div>

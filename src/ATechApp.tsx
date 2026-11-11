@@ -1897,7 +1897,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
   const module = {
     tickets: { title: 'Chamados', description: 'Atendimentos técnicos e solicitações em um só lugar.', icon: ClipboardList },
     'letter-filling': { title: 'Preenchimento de cartas', description: 'Geração de notificações e termos a partir dos chamados.', icon: FileText },
-    schedule: { title: 'Programação', description: 'Programação de serviços e atividades da equipe.', icon: CalendarDays },
+    schedule: { title: 'Programação', description: 'Agenda de serviços e atividades da equipe.', icon: CalendarDays },
     information: { title: 'Informações de empreendimentos', description: 'Dados cadastrais, síndicos e habite-se de empreendimentos.', icon: Info },
     accesses: { title: 'Acessos', description: 'Contas administrativas e convites.', icon: UsersRound },
     'api-validation': { title: 'Validação da API', description: 'Painel de testes e controle da API CVCRM.', icon: Zap },

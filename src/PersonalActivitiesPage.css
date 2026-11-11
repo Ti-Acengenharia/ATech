@@ -1902,3 +1902,67 @@
     max-height: 320px;
   }
 }
+
+@media (max-width: 900px) {
+  .personal-header {
+    gap: 8px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .personal-heading-actions {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .personal-view-tabs button {
+    min-height: 32px !important;
+    height: 32px !important;
+    font-size: 11px !important;
+    padding: 0 8px !important;
+  }
+
+  .personal-search-wrap {
+    min-width: 130px !important;
+    height: 32px !important;
+  }
+
+  /* Barra de filtros de tarefas em linha única com scroll por toque */
+  .personal-filter-toolbar {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 6px 10px !important;
+    gap: 6px !important;
+    margin-bottom: 6px !important;
+    scrollbar-width: none !important;
+    border-radius: 8px !important;
+  }
+
+  .personal-filter-toolbar::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .personal-insight-chips,
+  .personal-tag-chips {
+    display: inline-flex !important;
+    flex-wrap: nowrap !important;
+    gap: 5px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .insight-chip,
+  .priority-filter-chip,
+  .tag-filter-chip {
+    height: 28px !important;
+    font-size: 11px !important;
+    padding: 0 8px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .filter-divider {
+    height: 18px !important;
+    flex-shrink: 0 !important;
+  }
+}

@@ -2103,27 +2103,29 @@ export default function LegalProcessesPage({
       {!detailPageOpen && activeTab !== 'dashboard' && (
         <>
           {/* Barra de Ferramentas e Filtros */}
-          <div className="legal-toolbar">
+          <div className={`legal-toolbar ${filtersExpanded ? 'is-expanded' : 'is-collapsed'}`}>
             <div className="legal-toolbar-top">
               <div className="legal-toolbar-left">
                 <button
                   type="button"
-                  className="legal-filter-toggle"
+                  className={`legal-filter-toggle ${activeFiltersCount > 0 ? 'has-active' : ''}`}
                   aria-expanded={filtersExpanded}
                   onClick={() => setFiltersExpanded((expanded) => !expanded)}
                 >
                   <ChevronDown size={15} className={`legal-filter-chevron ${filtersExpanded ? 'is-expanded' : ''}`} />
-                  {filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}
+                  <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
                   {activeFiltersCount > 0 && <span className="legal-filter-badge">{activeFiltersCount} ativo(s)</span>}
                 </button>
-                <button
-                  type="button"
-                  className="filter-clear-button"
-                  disabled={!activeFiltersCount}
-                  onClick={clearAllFilters}
-                >
-                  <X size={14} /> Limpar filtros
-                </button>
+                {activeFiltersCount > 0 && (
+                  <button
+                    type="button"
+                    className="filter-clear-button legal-quick-clear-btn"
+                    onClick={clearAllFilters}
+                    title="Limpar todos os filtros"
+                  >
+                    <X size={14} /> Limpar
+                  </button>
+                )}
               </div>
 
               <div className="legal-toolbar-actions">

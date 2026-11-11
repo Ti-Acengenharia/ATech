@@ -991,77 +991,219 @@ export default function TicketBoardPage({
       {currentUser.role === 'admin' && !configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
       {syncState?.last_finished_at && <p className="ticket-sync-meta">Última sincronização: {formatDate(syncState.last_finished_at)} · {syncState.imported_count} ativos{syncState.last_success === false && syncState.error_message ? ` · ${syncState.error_message}` : ''}</p>}
 
-      <section className="ticket-filter-panel">
-        <div className="ticket-filter-panel-top">
-          <div className="ticket-filter-panel-left">
-            <button className="ticket-filter-toggle" type="button" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded((expanded) => !expanded)}>
-              <ChevronDown size={15} />
-              {filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}
-              {[search, ...ticketTypes, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length > 0 && <span>{[search, ...ticketTypes, ...enterpriseFilters, ...blockFilter, ...unitFilter, customerNameFilter, ...subjectFilter, ...subsubjectFilter, includeInactive && 'inativos'].filter(Boolean).length} filtro(s)</span>}
-            </button>
-            <label className="ticket-include-inactive"><input type="checkbox" checked={includeInactive} onChange={(event) => setIncludeInactive(event.target.checked)} /><span>Mostrar finalizados e cancelados</span></label>
-            <button className="filter-clear-button" type="button" disabled={!search && !ticketTypes.length && !enterpriseFilters.length && !blockFilter.length && !unitFilter.length && !customerNameFilter && !subjectFilter.length && !subsubjectFilter.length && !includeInactive} onClick={() => {
-              setSearch('')
-              setTicketTypes([])
-              setEnterpriseFilters([])
-              setBlockFilter([])
-              setUnitFilter([])
-              setCustomerNameFilter('')
-              setSubjectFilter([])
-              setSubsubjectFilter([])
-              setIncludeInactive(false)
-            }}><X size={14} /> Limpar filtros</button>
-            <span className="ticket-filter-count"><Clock3 size={14} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}</span>
-          </div>
-          <div className="ticket-board-toolbar ticket-board-options">
-            {currentUser.role === 'admin' && <details className="ticket-tag-manager">
-              <summary><Tag size={14} /> Gerenciar tags</summary>
-              <div className="ticket-tag-manager-panel">
-                <header><strong>Gerenciar tags dos chamados</strong><button type="button" onClick={(event) => { const details = event.currentTarget.closest('details'); if (details) details.open = false }} aria-label="Fechar gerenciador de tags"><X size={16} /></button></header>
-                <form onSubmit={(event) => void createTag(event)}><input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} maxLength={60} placeholder="Nome da tag" required /><input aria-label="Cor da tag" type="color" value={newTagColor} onChange={(event) => setNewTagColor(event.target.value)} /><button className="primary-button" type="submit">Criar</button></form>
-                <div className="ticket-tag-manager-list">{tagOptions.map((tag) => <span className="ticket-tag-manager-item" key={tag.id}><i style={{ backgroundColor: tag.color }} />{tag.name}<button type="button" onClick={() => void deleteTag(tag)} aria-label={`Excluir tag ${tag.name}`}>×</button></span>)}</div>
+      {(() => {
+        const activeFiltersCount = [
+          search,
+          ...ticketTypes,
+          ...enterpriseFilters,
+          ...blockFilter,
+          ...unitFilter,
+          customerNameFilter,
+          ...subjectFilter,
+          ...subsubjectFilter,
+          includeInactive && 'inativos',
+        ].filter(Boolean).length
+
+        function clearAllFilters() {
+          setSearch('')
+          setTicketTypes([])
+          setEnterpriseFilters([])
+          setBlockFilter([])
+          setUnitFilter([])
+          setCustomerNameFilter('')
+          setSubjectFilter([])
+          setSubsubjectFilter([])
+          setIncludeInactive(false)
+        }
+
+        return (
+          <section className={`ticket-filter-panel ${filtersExpanded ? 'is-expanded' : 'is-collapsed'}`}>
+            <div className="ticket-filter-panel-top">
+              <div className="ticket-filter-panel-left">
+                <button
+                  className={`ticket-filter-toggle ${activeFiltersCount > 0 ? 'has-active' : ''}`}
+                  type="button"
+                  aria-expanded={filtersExpanded}
+                  onClick={() => setFiltersExpanded((expanded) => !expanded)}
+                >
+                  <ChevronDown size={15} />
+                  <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
+                  {activeFiltersCount > 0 && <span className="ticket-filter-badge">{activeFiltersCount} filtro(s)</span>}
+                </button>
+
+                <span className="ticket-filter-count">
+                  <Clock3 size={13} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}
+                </span>
+
+                {activeFiltersCount > 0 && (
+                  <button
+                    className="filter-clear-button ticket-quick-clear-btn"
+                    type="button"
+                    onClick={clearAllFilters}
+                    title="Limpar todos os filtros"
+                  >
+                    <X size={13} /> Limpar
+                  </button>
+                )}
               </div>
-            </details>}
-            {viewMode === 'kanban' && <details className="ticket-card-fields">
-              <summary>Campos do cartão</summary>
-              <div className="ticket-card-fields-panel"><header><strong>Campos exibidos no cartão</strong><button type="button" onClick={(event) => { const details = event.currentTarget.closest('details'); if (details) details.open = false }} aria-label="Fechar campos do cartão"><X size={16} /></button></header>{([
-                ['customer', 'Cliente'], ['description', 'Descrição'], ['warranty', 'Garantia'],
-                ['age', 'Tempo aberto'], ['counts', 'Comentários / subtarefas / programações'], ['tags', 'Tags'],
-              ] as [TicketCardField, string][]).map(([field, label]) => (
-                <label key={field}><input type="checkbox" checked={cardFields.includes(field)} onChange={() => setCardFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field])} /><span>{label}</span></label>
-              ))}</div>
-            </details>}
-            <label className="ticket-sort-control"><span>Ordenar por</span><select value={sortField} onChange={(event) => setSortField(event.target.value as TicketSortField)}>{ticketSortFields.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <button className="ticket-sort-direction" type="button" onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')} aria-label={`Ordenação ${sortDirection === 'asc' ? 'crescente' : 'decrescente'}; clique para inverter`}>
-              {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-              {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
-            </button>
-            <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
+
+              <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
+                <button
+                  type="button"
+                  className={!dashboardOpen && viewMode === 'kanban' ? 'is-active' : ''}
+                  onClick={() => applyViewChange('kanban', 'push')}
+                >
+                  <LayoutGrid size={14} /> Quadro
+                </button>
+                <button
+                  type="button"
+                  className={!dashboardOpen && viewMode === 'list' ? 'is-active' : ''}
+                  onClick={() => applyViewChange('list', 'push')}
+                >
+                  <List size={14} /> Lista
+                </button>
+                <button
+                  type="button"
+                  className={dashboardOpen ? 'is-active' : ''}
+                  onClick={() => applyViewChange('dashboard', 'push')}
+                >
+                  <BarChart3 size={14} /> Dashboard
+                </button>
+              </div>
+            </div>
+
+            <div className="ticket-board-toolbar ticket-board-options">
+              <label className="ticket-include-inactive">
+                <input
+                  type="checkbox"
+                  checked={includeInactive}
+                  onChange={(event) => setIncludeInactive(event.target.checked)}
+                />
+                <span>Mostrar finalizados e cancelados</span>
+              </label>
               <button
+                className="filter-clear-button"
                 type="button"
-                className={!dashboardOpen && viewMode === 'kanban' ? 'is-active' : ''}
-                onClick={() => applyViewChange('kanban', 'push')}
+                disabled={!activeFiltersCount}
+                onClick={clearAllFilters}
               >
-                <LayoutGrid size={14} /> Quadro
+                <X size={14} /> Limpar filtros
               </button>
+              {currentUser.role === 'admin' && (
+                <details className="ticket-tag-manager">
+                  <summary><Tag size={14} /> Gerenciar tags</summary>
+                  <div className="ticket-tag-manager-panel">
+                    <header>
+                      <strong>Gerenciar tags dos chamados</strong>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          const details = event.currentTarget.closest('details');
+                          if (details) details.open = false;
+                        }}
+                        aria-label="Fechar gerenciador de tags"
+                      >
+                        <X size={16} />
+                      </button>
+                    </header>
+                    <form onSubmit={(event) => void createTag(event)}>
+                      <input
+                        value={newTagName}
+                        onChange={(event) => setNewTagName(event.target.value)}
+                        maxLength={60}
+                        placeholder="Nome da tag"
+                        required
+                      />
+                      <input
+                        aria-label="Cor da tag"
+                        type="color"
+                        value={newTagColor}
+                        onChange={(event) => setNewTagColor(event.target.value)}
+                      />
+                      <button className="primary-button" type="submit">Criar</button>
+                    </form>
+                    <div className="ticket-tag-manager-list">
+                      {tagOptions.map((tag) => (
+                        <span className="ticket-tag-manager-item" key={tag.id}>
+                          <i style={{ backgroundColor: tag.color }} />
+                          {tag.name}
+                          <button
+                            type="button"
+                            onClick={() => void deleteTag(tag)}
+                            aria-label={`Excluir tag ${tag.name}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </details>
+              )}
+              {viewMode === 'kanban' && (
+                <details className="ticket-card-fields">
+                  <summary>Campos do cartão</summary>
+                  <div className="ticket-card-fields-panel">
+                    <header>
+                      <strong>Campos exibidos no cartão</strong>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          const details = event.currentTarget.closest('details');
+                          if (details) details.open = false;
+                        }}
+                        aria-label="Fechar campos do cartão"
+                      >
+                        <X size={16} />
+                      </button>
+                    </header>
+                    {([
+                      ['customer', 'Cliente'],
+                      ['description', 'Descrição'],
+                      ['warranty', 'Garantia'],
+                      ['age', 'Tempo aberto'],
+                      ['counts', 'Comentários / subtarefas / programações'],
+                      ['tags', 'Tags'],
+                    ] as [TicketCardField, string][]).map(([field, label]) => (
+                      <label key={field}>
+                        <input
+                          type="checkbox"
+                          checked={cardFields.includes(field)}
+                          onChange={() =>
+                            setCardFields((current) =>
+                              current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
+                            )
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              )}
+              <label className="ticket-sort-control">
+                <span>Ordenar por</span>
+                <select
+                  value={sortField}
+                  onChange={(event) => setSortField(event.target.value as TicketSortField)}
+                >
+                  {ticketSortFields.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
               <button
+                className="ticket-sort-direction"
                 type="button"
-                className={!dashboardOpen && viewMode === 'list' ? 'is-active' : ''}
-                onClick={() => applyViewChange('list', 'push')}
+                onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')}
+                aria-label={`Ordenação ${sortDirection === 'asc' ? 'crescente' : 'decrescente'}; clique para inverter`}
               >
-                <List size={14} /> Lista
-              </button>
-              <button
-                type="button"
-                className={dashboardOpen ? 'is-active' : ''}
-                onClick={() => applyViewChange('dashboard', 'push')}
-              >
-                <BarChart3 size={14} /> Dashboard
+                {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
               </button>
             </div>
-          </div>
-        </div>
-        {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
+
+            {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
           <label className="ticket-filter-field ticket-filter-search">
             <span>Busca geral</span>
             <div className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID, protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone" /></div>
@@ -1089,7 +1231,9 @@ export default function TicketBoardPage({
             </div>
           </div>
         </div>}
-      </section>
+          </section>
+        )
+      })()}
       {loading ? (
         <ATechLoading message="Carregando chamados..." subtitle="Sincronizando atendimentos e etapas..." />
       ) : viewMode === 'list' ? (
