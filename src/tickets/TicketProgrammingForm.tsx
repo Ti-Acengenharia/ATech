@@ -212,9 +212,10 @@ export default function TicketProgrammingForm({
   programmingType?: 'general' | 'foreman'
   allowMixedCollaborators?: boolean
   editingAppointment?: EditingAppointment
-  onSaved: () => void
+  onSaved: (savedDate?: string) => void
   onCancel?: () => void
 }) {
+  const isSubmittingRef = useRef(false)
   const selectedProgrammingType = editingAppointment?.programming_type ?? programmingType
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([])
   const [hiddenRoleKeys, setHiddenRoleKeys] = useState<Set<string>>(() => new Set())
@@ -572,6 +573,7 @@ export default function TicketProgrammingForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isSubmittingRef.current || saving) return
     if (!collaboratorIds.length) {
       setError('Selecione pelo menos um colaborador para a atividade.')
       return
@@ -584,6 +586,7 @@ export default function TicketProgrammingForm({
       setError('Selecione um processo jurídico para a atividade.')
       return
     }
+    isSubmittingRef.current = true
     setSaving(true)
     setError('')
     try {
@@ -661,11 +664,12 @@ export default function TicketProgrammingForm({
           }),
         })
       }
-      onSaved()
+      onSaved(startDate)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar a programação.')
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 

@@ -1253,7 +1253,7 @@ router.get('/:id/attachments', async (req, res, next) => {
   }
   try {
     const result = await pool.query(
-      `SELECT a.id, a.file_name, a.content_type, a.file_size, a.created_at,
+      `SELECT a.id, a.file_name, a.content_type, a.file_size, a.created_at, a.uploaded_by,
               COALESCE(u.display_name, 'Usuário removido') AS uploaded_by_name
        FROM ticket_attachments a
        LEFT JOIN users u ON u.id = a.uploaded_by
@@ -1376,6 +1376,55 @@ router.get('/:id/attachments/:attachmentId', async (req, res, next) => {
     res.send(attachment.content)
   } catch (error) {
     next(error)
+  }
+})
+
+router.delete('/:id/attachments/:attachmentId', async (req, res, next) => {
+  const ticketId = ticketIdSchema.safeParse(req.params.id)
+  const attachmentId = ticketIdSchema.safeParse(req.params.attachmentId)
+  if (!ticketId.success || !attachmentId.success) {
+    res.status(400).json({ error: 'Identificador inválido.' })
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query<{
+      file_name: string
+      uploaded_by: number | null
+    }>(
+      `SELECT file_name, uploaded_by
+       FROM ticket_attachments
+       WHERE id = $1 AND ticket_id = $2
+       FOR UPDATE`,
+      [attachmentId.data, ticketId.data],
+    )
+    const attachment = result.rows[0]
+    if (!attachment) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Anexo não encontrado.' })
+      return
+    }
+
+    if (req.session.user?.role !== 'admin' && attachment.uploaded_by !== req.session.user?.id) {
+      await client.query('ROLLBACK')
+      res.status(403).json({ error: 'Você só pode excluir anexos enviados por você.' })
+      return
+    }
+
+    await recordTicketActivity(client, ticketId.data, req.session.user!.id, 'attachment_deleted', `Excluiu o anexo "${attachment.file_name}".`, {
+      attachmentId: attachmentId.data,
+      fileName: attachment.file_name,
+    })
+    await client.query('DELETE FROM ticket_attachments WHERE id = $1', [attachmentId.data])
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
   }
 })
 

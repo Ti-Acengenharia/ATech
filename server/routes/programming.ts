@@ -741,9 +741,9 @@ router.post('/', async (req, res, next) => {
     const collaboratorNameById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.name]))
     const collaboratorRoleById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.role]))
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = data.activityType !== 'standalone' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+      const collaboratorProgrammingType = collaboratorRoleById.get(collaboratorId) === 'encarregado'
         ? 'foreman'
-        : data.programmingType
+        : 'general'
       for (const occurrence of data.occurrences) {
         await validateAvailability(
           client,
@@ -758,9 +758,9 @@ router.post('/', async (req, res, next) => {
 
     const ids: string[] = []
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = data.activityType !== 'standalone' && collaboratorRoleById.get(collaboratorId) === 'encarregado'
+      const collaboratorProgrammingType = collaboratorRoleById.get(collaboratorId) === 'encarregado'
         ? 'foreman'
-        : data.programmingType
+        : 'general'
       for (const occurrence of data.occurrences) {
         const result = await client.query<{ id: string }>(
           `INSERT INTO ticket_programming
@@ -859,10 +859,12 @@ router.put('/:id', async (req, res, next) => {
       return
     }
     await validateLegalProcess(client, data.legalProcessId)
+    const collabRoleQuery = await client.query<{ role: string }>('SELECT role FROM collaborators WHERE id = $1', [data.collaboratorId])
+    const inferredProgrammingType = collabRoleQuery.rows[0]?.role === 'encarregado' ? 'foreman' : 'general'
     await validateAvailability(
       client,
       data.collaboratorId,
-      data.programmingType,
+      inferredProgrammingType,
       data.ticketId ?? null,
       new Date(data.startsAt),
       new Date(data.endsAt),
@@ -878,7 +880,7 @@ router.put('/:id', async (req, res, next) => {
       [
         data.ticketId ?? null, data.legalProcessId ?? null, data.collaboratorId, data.activityDescription, data.startsAt, data.endsAt, data.enterprise,
         data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools, data.standaloneLocation,
-        data.programmingType, Boolean(data.isFinalization), Boolean(data.completionTermDelivered), programmingId.data,
+        inferredProgrammingType, Boolean(data.isFinalization), Boolean(data.completionTermDelivered), programmingId.data,
       ],
     )
     if (!result.rowCount) {

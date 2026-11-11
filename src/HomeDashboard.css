@@ -6,6 +6,10 @@
   gap: 24px;
   animation: reveal .35s ease both;
   padding-bottom: 24px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* =========================================
@@ -262,6 +266,9 @@
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Agenda Card */
@@ -273,6 +280,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-panel-header {
@@ -387,13 +397,16 @@
 
 .home-appointment-card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 10px 12px;
   background: #f8fafc;
   border: 1px solid #edf2f7;
   border-radius: 6px;
   transition: border-color 0.15s ease, background 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-appointment-card:hover {
@@ -427,6 +440,8 @@
 .home-appointment-details {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-appointment-title {
@@ -455,10 +470,11 @@
 .home-appointment-desc {
   font-size: 11px;
   color: #334155;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 2px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
+  margin-bottom: 4px;
 }
 
 .home-appointment-meta {
@@ -468,12 +484,18 @@
   font-size: 10px;
   color: #64748b;
   flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .home-appointment-meta-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .home-appointment-completed {
@@ -567,6 +589,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-mural-tabs {
@@ -575,6 +600,7 @@
   background: #f1f5f9;
   padding: 3px;
   border-radius: 6px;
+  flex-wrap: wrap;
 }
 
 .home-mural-tab {
@@ -607,6 +633,8 @@
   border: 1px solid #e2e8f0;
   padding: 4px;
   border-radius: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .home-mural-period-pill {
@@ -682,6 +710,9 @@
   border: 1px solid #edf2f7;
   border-radius: 6px;
   transition: all 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-celebrant-row:hover {
@@ -742,6 +773,8 @@
 .home-celebrant-info {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .home-celebrant-name-row {
@@ -756,10 +789,11 @@
   font-size: 11px;
   font-weight: 700;
   color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 220px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  max-width: 100%;
 }
 
 .home-celebrant-pill {
@@ -810,6 +844,10 @@
   font-size: 10px;
   color: #475569;
   margin-top: 3px;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .home-celebrant-admission {
@@ -953,7 +991,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .home-split-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .home-modules-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -962,17 +1000,21 @@
 
 @media (max-width: 640px) {
   .home-hero-v2 {
-    padding: 18px 16px;
+    padding: 16px 14px;
   }
   .home-hero-top {
     flex-direction: column;
     align-items: flex-start;
   }
+  .home-agenda-panel,
+  .home-mural-panel {
+    padding: 14px 12px;
+  }
   .home-kpis-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .home-modules-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .home-quick-actions-bar {
     flex-direction: column;
@@ -988,6 +1030,19 @@
   .home-quick-btn {
     flex: 1;
     justify-content: center;
+  }
+  .home-appointment-card {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .home-appointment-time {
+    width: 46px;
+    padding: 4px 2px;
+    font-size: 10px;
+  }
+  .home-celebrant-row {
+    padding: 6px 8px;
+    gap: 8px;
   }
 }
 

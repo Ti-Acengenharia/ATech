@@ -76,6 +76,7 @@ interface TicketAttachment {
   content_type: string
   file_size: number
   created_at: string
+  uploaded_by?: number | null
   uploaded_by_name: string
 }
 
@@ -1447,26 +1448,92 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
     }
   }
 
+async function optimizeImageForAttachment(file: File): Promise<{
+  fileName: string
+  contentType: string
+  contentBase64: string
+}> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const MAX_DIM = 1920
+        let { width, height } = img
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width >= height) {
+            height = Math.round((height * MAX_DIM) / width)
+            width = MAX_DIM
+          } else {
+            width = Math.round((width * MAX_DIM) / height)
+            height = MAX_DIM
+          }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('Canvas indisponível para processamento da imagem.'))
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
+        URL.revokeObjectURL(objectUrl)
+        const base64 = dataUrl.split(',')[1] || ''
+        const baseName = file.name.replace(/\.[^.]+$/, '') || 'foto'
+        resolve({
+          fileName: `${baseName}.jpg`,
+          contentType: 'image/jpeg',
+          contentBase64: base64,
+        })
+      } catch (err) {
+        URL.revokeObjectURL(objectUrl)
+        reject(err)
+      }
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('Não foi possível ler a imagem selecionada.'))
+    }
+    img.src = objectUrl
+  })
+}
+
   async function uploadAttachment(file: File | undefined) {
     if (!file) return
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Cada anexo pode ter no máximo 5 MiB.')
-      return
-    }
     setUploading(true)
     setError('')
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      let binary = ''
-      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+      let fileName = file.name
+      let contentType = file.type || 'application/octet-stream'
+      let contentBase64 = ''
+
+      const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)
+      if (isImage) {
+        const optimized = await optimizeImageForAttachment(file)
+        fileName = optimized.fileName
+        contentType = optimized.contentType
+        contentBase64 = optimized.contentBase64
+      } else {
+        if (file.size > 5 * 1024 * 1024) {
+          throw new Error('Cada anexo não-imagem pode ter no máximo 5 MiB.')
+        }
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ''
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+        }
+        contentBase64 = btoa(binary)
       }
+
       await apiRequest(`/api/tickets/${ticket.id}/attachments`, {
         method: 'POST',
         body: JSON.stringify({
-          fileName: file.name,
-          contentType: file.type || 'application/octet-stream',
-          contentBase64: btoa(binary),
+          fileName,
+          contentType,
+          contentBase64,
         }),
       })
       setRefresh((value) => value + 1)
@@ -1474,6 +1541,17 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível anexar o arquivo.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function deleteAttachment(attachmentId: string, fileName: string) {
+    if (!window.confirm(`Excluir permanentemente o anexo "${fileName}"?`)) return
+    try {
+      await apiRequest(`/api/tickets/${ticket.id}/attachments/${attachmentId}`, { method: 'DELETE' })
+      setAttachments((current) => current.filter((att) => att.id !== attachmentId))
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir o anexo.')
     }
   }
 
@@ -2063,7 +2141,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
                   <input
                     className="sr-only"
                     type="file"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.webp,.zip"
+                    accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip"
                     disabled={uploading}
                     onChange={(event) => { void uploadAttachment(event.target.files?.[0]); event.currentTarget.value = '' }}
                   />
@@ -2078,6 +2156,17 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
                       <button className="icon-button" type="button" title={`Baixar ${entry.file_name}`} aria-label={`Baixar ${entry.file_name}`} onClick={() => void downloadAttachment(entry)}>
                         <Download size={15} />
                       </button>
+                      {(currentUser.role === 'admin' || !entry.uploaded_by || entry.uploaded_by === currentUser.id) && (
+                        <button
+                          className="icon-button icon-button-danger"
+                          type="button"
+                          title={`Excluir ${entry.file_name}`}
+                          aria-label={`Excluir ${entry.file_name}`}
+                          onClick={() => void deleteAttachment(entry.id, entry.file_name)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>
