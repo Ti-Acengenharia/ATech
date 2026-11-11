@@ -18,7 +18,16 @@
 }
 
 * { box-sizing: border-box; }
-body { min-width: 360px; min-height: 100vh; margin: 0; }
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100vw;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
 button, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .7; }
@@ -4828,6 +4837,67 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   }
 }
 
+/* Quando o menu mobile/drawer estiver aberto, SEMPRE exibir ícones E nomes completos com 300px de largura em qualquer dispositivo */
+aside.sidebar.mobile-sidebar-open,
+.workspace-shell.sidebar-collapsed aside.sidebar.mobile-sidebar-open,
+.sidebar-collapsed aside.sidebar.mobile-sidebar-open {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  width: 300px !important;
+  min-width: 280px !important;
+  max-width: 86vw !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  z-index: 1050 !important;
+  transform: translateX(0) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: #0f2742 !important;
+  box-shadow: 14px 0 45px rgba(0, 0, 0, 0.55) !important;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)) !important;
+  box-sizing: border-box !important;
+}
+
+aside.sidebar.mobile-sidebar-open .brand-name,
+aside.sidebar.mobile-sidebar-open .brand-subtitle,
+aside.sidebar.mobile-sidebar-open .sidebar-label,
+aside.sidebar.mobile-sidebar-open .nav-item > span,
+aside.sidebar.mobile-sidebar-open .nav-group-label,
+aside.sidebar.mobile-sidebar-open .nav-group-chevron,
+aside.sidebar.mobile-sidebar-open .nav-subitem > span,
+aside.sidebar.mobile-sidebar-open .sidebar-security > span,
+aside.sidebar.mobile-sidebar-open .sidebar-version-text,
+aside.sidebar.mobile-sidebar-open .profile-info {
+  display: inline-block !important;
+  white-space: nowrap !important;
+}
+
+aside.sidebar.mobile-sidebar-open .sidebar-security > span,
+aside.sidebar.mobile-sidebar-open .profile-info {
+  display: flex !important;
+}
+
+aside.sidebar.mobile-sidebar-open .nav-item {
+  width: 100% !important;
+  min-height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  padding: 10px 14px !important;
+}
+
+aside.sidebar.mobile-sidebar-open .nav-group-header {
+  width: 100% !important;
+  min-height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 10px 12px !important;
+}
+
 /* ==========================================================================
    CONTROLES DO KANBAN E SELETOR DE FASES
    ========================================================================== */
@@ -4896,6 +4966,7 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
    ========================================================================== */
 @media (max-width: 768px) {
   /* 1. Reset e eliminação de barras de rolagem duplicadas nos quadros kanban */
+  .page-content.page-content-kanban,
   .workspace-main:has(.ticket-board-page.ticket-board-kanban) .page-content,
   .workspace-main:has(.legal-page.legal-board-page) .page-content {
     height: auto !important;
@@ -5223,13 +5294,15 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   /* 3. Seletor de Etapas / Fases Touch-friendly */
   .mobile-stage-selector {
     display: flex !important;
-    gap: 5px !important;
+    align-items: center !important;
+    gap: 6px !important;
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
-    padding: 2px 0 6px !important;
-    margin-bottom: 4px !important;
+    padding: 4px 2px 8px !important;
+    margin-bottom: 6px !important;
     scrollbar-width: none !important;
     overscroll-behavior-x: contain !important;
+    min-height: 44px !important;
   }
 
   .mobile-stage-selector::-webkit-scrollbar {
@@ -5239,21 +5312,23 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   .mobile-stage-pill {
     display: inline-flex !important;
     align-items: center !important;
-    gap: 5px !important;
-    min-height: 30px !important;
-    height: 30px !important;
-    padding: 2px 9px !important;
+    gap: 6px !important;
+    min-height: 32px !important;
+    height: auto !important;
+    padding: 4px 11px !important;
     background: #ffffff !important;
     border: 1px solid #dce5ee !important;
     border-radius: 9999px !important;
     color: #475569 !important;
     font-size: 11px !important;
     font-weight: 600 !important;
+    line-height: 1.25 !important;
     white-space: nowrap !important;
     flex-shrink: 0 !important;
     cursor: pointer !important;
     transition: all 0.15s ease !important;
     -webkit-tap-highlight-color: transparent !important;
+    box-sizing: border-box !important;
   }
 
   .mobile-stage-pill:hover,

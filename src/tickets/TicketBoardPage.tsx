@@ -1756,10 +1756,20 @@ async function optimizeImageForAttachment(file: File): Promise<{
 
       const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)
       if (isImage) {
-        const optimized = await optimizeImageForAttachment(file)
-        fileName = optimized.fileName
-        contentType = optimized.contentType
-        contentBase64 = optimized.contentBase64
+        try {
+          const optimized = await optimizeImageForAttachment(file)
+          fileName = optimized.fileName
+          contentType = optimized.contentType
+          contentBase64 = optimized.contentBase64
+        } catch {
+          // Fallback para leitura direta em base64 caso canvas falhe (ex: HEIC/HEIF em iOS ou limites de memória do navegador mobile)
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          let binary = ''
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+          }
+          contentBase64 = btoa(binary)
+        }
       } else {
         if (file.size > 5 * 1024 * 1024) {
           throw new Error('Cada anexo não-imagem pode ter no máximo 5 MiB.')
@@ -2400,7 +2410,7 @@ async function optimizeImageForAttachment(file: File): Promise<{
                       <button className="icon-button" type="button" title={`Baixar ${entry.file_name}`} aria-label={`Baixar ${entry.file_name}`} onClick={() => void downloadAttachment(entry)}>
                         <Download size={15} />
                       </button>
-                      {(currentUser.role === 'admin' || !entry.uploaded_by || entry.uploaded_by === currentUser.id) && (
+                      {(currentUser.role === 'admin' || !entry.uploaded_by || String(entry.uploaded_by) === String(currentUser.id)) && (
                         <button
                           className="icon-button icon-button-danger"
                           type="button"

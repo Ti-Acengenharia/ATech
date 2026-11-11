@@ -123,30 +123,32 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
   const photos = new Map<string, { dataUrl: string; format: 'PNG' | 'JPEG' }>()
   for (const person of groups.flatMap((group) => group.people)) {
     if (!person.photo_url || photos.has(person.photo_url)) continue
-    const response = await fetch(person.photo_url, { credentials: 'same-origin' })
-    if (!response.ok) throw new Error(`Não foi possível carregar a foto de ${person.name} para o relatório.`)
-    const blob = await response.blob()
-    if (blob.type === 'image/png' || blob.type === 'image/jpeg') {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
-        reader.onerror = () => reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
-        reader.readAsDataURL(blob)
-      })
-      photos.set(person.photo_url, { dataUrl, format: blob.type === 'image/png' ? 'PNG' : 'JPEG' })
-    } else {
-      const bitmap = await createImageBitmap(blob)
-      const canvas = window.document.createElement('canvas')
-      canvas.width = bitmap.width
-      canvas.height = bitmap.height
-      const context = canvas.getContext('2d')
-      if (!context) {
+    try {
+      const response = await fetch(person.photo_url, { credentials: 'same-origin' })
+      if (!response.ok) continue
+      const blob = await response.blob()
+      if (blob.type === 'image/png' || blob.type === 'image/jpeg') {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
+          reader.onerror = () => reject(new Error(`Não foi possível preparar a foto de ${person.name}.`))
+          reader.readAsDataURL(blob)
+        })
+        photos.set(person.photo_url, { dataUrl, format: blob.type === 'image/png' ? 'PNG' : 'JPEG' })
+      } else {
+        const bitmap = await createImageBitmap(blob)
+        const canvas = window.document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        const context = canvas.getContext('2d')
+        if (context) {
+          context.drawImage(bitmap, 0, 0)
+          photos.set(person.photo_url, { dataUrl: canvas.toDataURL('image/png'), format: 'PNG' })
+        }
         bitmap.close()
-        throw new Error(`Não foi possível converter a foto de ${person.name} para o relatório.`)
       }
-      context.drawImage(bitmap, 0, 0)
-      bitmap.close()
-      photos.set(person.photo_url, { dataUrl: canvas.toDataURL('image/png'), format: 'PNG' })
+    } catch {
+      // Falha no carregamento de foto individual não deve impedir a emissão do PDF
     }
   }
 
@@ -435,6 +437,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
     const params = new URLSearchParams({ date, type: programmingType })
     apiRequest<{ date: string; collaborators: CollaboratorDay[] }>(`/api/programming?${params}`)
       .then((program) => {

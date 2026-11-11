@@ -999,41 +999,101 @@
 }
 
 @media (max-width: 640px) {
+  .home-dashboard-v2 {
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
   .home-hero-v2 {
     padding: 16px 14px;
+    border-radius: 8px;
   }
   .home-hero-top {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
+  }
+  .home-quick-actions-bar {
+    padding: 8px 10px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .home-quick-actions-buttons {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .home-quick-btn {
+    width: 100% !important;
+    padding: 10px 8px !important;
+    font-size: 11px !important;
+    justify-content: center !important;
+    min-height: 40px !important;
+  }
+  .home-split-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
   }
   .home-agenda-panel,
   .home-mural-panel {
     padding: 14px 12px;
-  }
-  .home-kpis-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .home-modules-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .home-quick-actions-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .home-ticket-search-box {
-    width: 100%;
-  }
-  .home-quick-actions-buttons {
-    width: 100%;
-    justify-content: stretch;
-  }
-  .home-quick-btn {
-    flex: 1;
-    justify-content: center;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
   }
   .home-appointment-card {
     padding: 8px 10px;
     gap: 8px;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+  .home-appointment-details {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+  .home-appointment-desc {
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    white-space: normal !important;
+  }
+  .home-appointment-meta {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    min-width: 0 !important;
+  }
+  .home-appointment-meta-item {
+    min-width: 0 !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+  .home-mural-periods {
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    width: 100% !important;
+  }
+  .home-mural-period-pill {
+    padding: 4px 4px !important;
+    font-size: 10px !important;
+    min-width: 60px !important;
+  }
+  .home-kpis-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .home-modules-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .home-ticket-search-box {
+    width: 100%;
   }
   .home-appointment-time {
     width: 46px;

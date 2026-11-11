@@ -1407,7 +1407,7 @@ router.delete('/:id/attachments/:attachmentId', async (req, res, next) => {
       return
     }
 
-    if (req.session.user?.role !== 'admin' && attachment.uploaded_by !== req.session.user?.id) {
+    if (req.session.user?.role !== 'admin' && String(attachment.uploaded_by ?? '') !== String(req.session.user?.id ?? '')) {
       await client.query('ROLLBACK')
       res.status(403).json({ error: 'Você só pode excluir anexos enviados por você.' })
       return

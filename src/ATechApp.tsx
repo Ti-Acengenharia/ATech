@@ -1506,7 +1506,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
             <span className="topbar-admin">{user.role === 'admin' ? 'Administração' : 'Workspace'}</span>
           </div>
         </header>
-        <div className="page-content">
+        <div className={`page-content ${(page === 'tickets' && ticketView === 'kanban') || (page === 'legal-processes' && legalView === 'board') ? 'page-content-kanban' : ''}`}>
           <Suspense fallback={<ATechLoading message="Carregando página..." subtitle="Preparando ambiente de trabalho..." />}>
           {page === 'not-found' ? (
             <NotFoundPage onGoHome={() => openPage('home')} onGoTickets={() => openPage('tickets')} />
