@@ -827,10 +827,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .login-panel-footer { flex-direction: column; gap: 5px; margin-top: 45px; }
   .login-panel-footer span:last-child { display: none; }
   .workspace-shell { display: block; }
-  .sidebar { position: static; height: auto; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0; padding: 12px 15px; }
-  .sidebar .brand-lockup { padding: 0; }
-  .sidebar-label, .workspace-switcher, .sidebar-nav, .sidebar-bottom { display: none; }
-  .sidebar::after { content: 'ADMINISTRAÇÃO'; color: #b0c6d8; font-family: var(--mono); font-size: 9px; }
   .topbar { height: 46px; padding: 0 16px; }
   .topbar-right { gap: 9px; }
   .topbar-admin, .topbar-divider { display: none; }
@@ -918,12 +914,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .future-status i { width: 5px; height: 5px; background: #6b9fc7; }
 
 @media (max-width: 760px) {
-  .sidebar { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px 0; }
-  .sidebar::after { display: none; }
-  .sidebar-nav { width: 100%; min-height: 0; max-height: 44vh; display: flex; flex: 0 0 100%; flex-direction: row; gap: 4px; overflow-x: auto; overflow-y: hidden; padding: 0 0 8px; border-top: 1px solid rgba(239, 246, 235, .13); }
-  .nav-item { width: auto; min-height: 34px; flex: 0 0 auto; gap: 6px; padding: 0 8px; font-size: 10px; }
-  .nav-item svg { width: 14px; height: 14px; }
-  .nav-count { display: none; }
   .dashboard-welcome { min-height: 150px; padding: 20px; }
   .welcome-copy h1 { font-size: 25px; }
   .welcome-copy p { max-width: 240px; line-height: 1.5; }
@@ -1142,17 +1132,6 @@ body, .workspace-shell { background: #f4f7fb; }
 .sidebar-collapsed .sidebar-security { justify-content: center; padding: 12px 0; }
 .sidebar-collapsed .profile-row { justify-content: center; padding: 12px 0 4px; }
 .sidebar-collapsed .profile-row > svg { display: none; }
-
-@media (max-width: 760px) {
-  .sidebar-header { width: 100%; }
-  .workspace-shell.sidebar-collapsed .sidebar { gap: 7px; }
-  .workspace-shell.sidebar-collapsed .sidebar-header { width: auto; flex: 1; flex-direction: row; }
-  .workspace-shell.sidebar-collapsed .sidebar-header .brand-lockup { display: none; }
-  .workspace-shell.sidebar-collapsed .sidebar-header::before { content: 'AT'; width: 30px; height: 30px; display: grid; place-items: center; color: #164d7d; background: #d7ebfb; border-radius: 4px; font-family: var(--mono); font-size: 9px; }
-  .workspace-shell.sidebar-collapsed .sidebar-toggle { margin-left: auto; }
-  .workspace-shell.sidebar-collapsed .sidebar-nav { justify-content: space-between; }
-  .workspace-shell.sidebar-collapsed .nav-label { display: none; }
-}
 
 .collaborator-status-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .collaborator-status { white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -3155,9 +3134,6 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 @media (max-width: 760px) {
   body { min-width: 320px; }
   .workspace-shell { grid-template-columns: minmax(0, 1fr); }
-  .sidebar { min-width: 0; }
-  .sidebar-nav { scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
-  .nav-item { scroll-snap-align: start; }
   .topbar { min-width: 0; }
   .breadcrumbs { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .page-content { min-width: 0; padding-right: max(12px, env(safe-area-inset-right)); padding-left: max(12px, env(safe-area-inset-left)); }
@@ -4533,6 +4509,535 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .whatsapp-send-button:disabled {
   opacity: 0.6;
 }
+
+/* ==========================================================================
+   OTIMIZAÇÕES DE RESPONSIVIDADE, MOBILE & USABILIDADE (SUGESTÕES 3.1 - 3.6)
+   ========================================================================== */
+
+/* 3.1: Botão disparador do menu mobile e Drawer Off-canvas */
+.mobile-menu-trigger {
+  display: none;
+}
+
+.mobile-sidebar-close {
+  display: none;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mobile-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 23, 38, 0.65);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 1040;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+
+.mobile-sidebar-backdrop.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 768px) {
+  .mobile-menu-trigger {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 13px 0 10px !important;
+    border-radius: 9999px !important; /* Formato Pill */
+    border: 1px solid #bfdbfe !important;
+    background: #eff6ff !important;
+    color: #1d4ed8 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12) !important;
+    transition: all 0.15s ease !important;
+  }
+
+  .mobile-menu-trigger:hover,
+  .mobile-menu-trigger:active {
+    background: #dbeafe !important;
+    border-color: #93c5fd !important;
+    color: #1e40af !important;
+    transform: scale(0.98) !important;
+  }
+
+  .mobile-menu-trigger svg {
+    flex-shrink: 0 !important;
+    color: currentColor !important;
+  }
+
+  .sidebar-toggle {
+    display: none !important;
+  }
+
+  .mobile-sidebar-close {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: #f1f5f9 !important;
+    cursor: pointer !important;
+    transition: background 0.15s ease !important;
+  }
+
+  .mobile-sidebar-close:hover,
+  .mobile-sidebar-close:active {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+  }
+
+  .breadcrumb-root,
+  .breadcrumb-separator {
+    display: none !important;
+  }
+
+  .breadcrumbs {
+    font-size: 13px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .workspace-shell {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+  }
+
+  .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 290px !important;
+    max-width: 85vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    z-index: 1050 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    background: #0f2742 !important;
+  }
+
+  .sidebar.mobile-sidebar-open {
+    transform: translateX(0) !important;
+    box-shadow: 14px 0 45px rgba(0, 0, 0, 0.55) !important;
+  }
+
+  .sidebar::after {
+    display: none !important;
+  }
+
+  /* No mobile, NUNCA colapsar o drawer em modo ícones: exibir SEMPRE com nomes e layout completo */
+  .workspace-shell.sidebar-collapsed .sidebar-header::before {
+    display: none !important;
+  }
+
+  .sidebar-header {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding-bottom: 12px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .sidebar-header .brand-lockup,
+  .workspace-shell.sidebar-collapsed .sidebar-header .brand-lockup {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+  }
+
+  .sidebar-header .brand-name,
+  .workspace-shell.sidebar-collapsed .brand-name {
+    display: inline-block !important;
+  }
+
+  .sidebar-header .brand-subtitle,
+  .workspace-shell.sidebar-collapsed .brand-subtitle {
+    display: block !important;
+  }
+
+  .sidebar-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 12px 0 !important;
+    border-top: none !important;
+    gap: 4px !important;
+  }
+
+  .sidebar-label,
+  .workspace-shell.sidebar-collapsed .sidebar-label,
+  .sidebar-collapsed .sidebar-label {
+    display: block !important;
+    color: #8da4be !important;
+    font-size: 10px !important;
+    letter-spacing: 0.06em !important;
+    margin: 14px 0 6px !important;
+  }
+
+  .sidebar-bottom {
+    display: flex !important;
+    flex-direction: column !important;
+    margin-top: auto !important;
+    padding-top: 14px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    gap: 8px !important;
+  }
+
+  .nav-item,
+  .workspace-shell.sidebar-collapsed .nav-item,
+  .sidebar-collapsed .nav-item {
+    width: 100% !important;
+    min-height: 44px !important;
+    font-size: 13px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    padding: 10px 14px !important;
+    border-radius: 6px !important;
+    color: #cde1f5 !important;
+  }
+
+  .nav-item > span,
+  .workspace-shell.sidebar-collapsed .nav-item > span,
+  .sidebar-collapsed .nav-item > span,
+  .nav-group-label,
+  .workspace-shell.sidebar-collapsed .nav-group-label,
+  .sidebar-collapsed .nav-group-label {
+    display: inline-block !important;
+    white-space: nowrap !important;
+  }
+
+  .nav-group-chevron,
+  .workspace-shell.sidebar-collapsed .nav-group-chevron,
+  .sidebar-collapsed .nav-group-chevron {
+    display: inline-block !important;
+    margin-left: auto !important;
+  }
+
+  .nav-group-header,
+  .workspace-shell.sidebar-collapsed .nav-group-header,
+  .sidebar-collapsed .nav-group-header {
+    width: 100% !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 10px 12px !important;
+    gap: 10px !important;
+  }
+
+  .nav-subitems,
+  .workspace-shell.sidebar-collapsed .nav-subitems,
+  .sidebar-collapsed .nav-subitems {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 3px !important;
+    margin: 4px 0 6px 16px !important;
+    padding-left: 12px !important;
+    border-left: 1px solid rgba(255, 255, 255, 0.15) !important;
+  }
+
+  .nav-subitem,
+  .workspace-shell.sidebar-collapsed .nav-subitem,
+  .sidebar-collapsed .nav-subitem {
+    min-height: 38px !important;
+    font-size: 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    padding: 8px 10px !important;
+    gap: 8px !important;
+    color: #a8c4e0 !important;
+  }
+
+  .nav-subitem > span,
+  .workspace-shell.sidebar-collapsed .nav-subitem > span,
+  .sidebar-collapsed .nav-subitem > span {
+    display: inline !important;
+  }
+
+  .sidebar-security,
+  .workspace-shell.sidebar-collapsed .sidebar-security,
+  .sidebar-collapsed .sidebar-security {
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    padding: 8px 10px !important;
+  }
+
+  .sidebar-security > span,
+  .workspace-shell.sidebar-collapsed .sidebar-security > span,
+  .sidebar-collapsed .sidebar-security > span {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .sidebar-version-pill-btn,
+  .workspace-shell.sidebar-collapsed .sidebar-version-pill-btn,
+  .sidebar-collapsed .sidebar-version-pill-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    padding: 8px 12px !important;
+  }
+
+  .sidebar-version-text,
+  .workspace-shell.sidebar-collapsed .sidebar-version-text,
+  .sidebar-collapsed .sidebar-version-text {
+    display: inline !important;
+  }
+
+  .profile-row,
+  .workspace-shell.sidebar-collapsed .profile-row,
+  .sidebar-collapsed .profile-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    padding: 10px 12px !important;
+  }
+
+  .profile-info,
+  .workspace-shell.sidebar-collapsed .profile-info,
+  .sidebar-collapsed .profile-info {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .profile-row > svg,
+  .workspace-shell.sidebar-collapsed .profile-row > svg,
+  .sidebar-collapsed .profile-row > svg {
+    display: block !important;
+    margin-left: auto !important;
+  }
+}
+
+/* Controles e navegação do Kanban */
+.kanban-board-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.kanban-board-controls > span {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+}
+
+.kanban-board-nav-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.kanban-board-nav-buttons button {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid #dce6ef;
+  background: #ffffff;
+  color: #315d7e;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+}
+
+.kanban-board-nav-buttons button:hover {
+  background: #f0f7fd;
+  border-color: #2877b8;
+  color: #2877b8;
+}
+
+@media (max-width: 768px) {
+  /* No mobile, oculta barras de rolagem nativas feias do quadro e das colunas para experiência limpa e fluida */
+  .kanban-board {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  .kanban-board::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  .kanban-column-body {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  .kanban-column-body::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+}
+
+/* 3.3: Indicadores de rolagem suave e sombras para tabelas largas */
+.collaborator-table-wrap,
+.user-table-wrap,
+.ticket-list-wrap,
+.legal-list-wrap,
+.table-wrap,
+.responsive-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  position: relative;
+  background-image: 
+    linear-gradient(to right, #ffffff, #ffffff),
+    linear-gradient(to right, #ffffff, #ffffff),
+    linear-gradient(to right, rgba(16, 47, 80, 0.08), rgba(255, 255, 255, 0)),
+    linear-gradient(to left, rgba(16, 47, 80, 0.08), rgba(255, 255, 255, 0));
+  background-position: left center, right center, left center, right center;
+  background-repeat: no-repeat;
+  background-color: #ffffff;
+  background-size: 20px 100%, 20px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* 3.4: Modais com comportamento Bottom Sheet no mobile */
+@media (max-width: 640px) {
+  .modal-backdrop,
+  .dialog-backdrop,
+  .legal-modal-backdrop,
+  .profile-modal-backdrop,
+  .protocol-lookup-modal-backdrop {
+    display: flex !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+
+  .modal,
+  .dialog,
+  .legal-modal,
+  .profile-modal-card,
+  .protocol-lookup-modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 88dvh !important;
+    border-radius: 20px 20px 0 0 !important;
+    margin: 0 !important;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.3) !important;
+    animation: atechSlideUpModal 0.28s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+  }
+
+  @keyframes atechSlideUpModal {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+}
+
+/* 3.5: Áreas de toque aumentadas para mínimo de 44x44px no mobile */
+@media (max-width: 768px) {
+  .topbar-search-trigger {
+    min-height: 44px;
+  }
+
+  .notification-trigger {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .kanban-board-controls button {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .ghost-button,
+  .text-button {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .ticket-card {
+    min-height: 54px;
+  }
+
+  .sidebar-version-pill-btn {
+    min-height: 44px;
+  }
+
+  .profile-row {
+    min-height: 44px;
+  }
+}
+
+/* 3.6: Suporte a entalhes e barras de navegação (Safe Area Insets) */
+.topbar {
+  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  height: calc(56px + env(safe-area-inset-top, 0px));
+}
+
+.page-content {
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
 
 
 

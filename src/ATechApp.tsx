@@ -25,6 +25,7 @@ import {
   LayoutDashboard,
   ListTodo,
   Mail,
+  Menu,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
@@ -613,6 +614,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     return 'board'
   })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('atech.sidebar-collapsed') === 'true')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>(() => {
     try {
       const saved = localStorage.getItem('atech.sidebar-open-menus')
@@ -928,6 +930,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     } else if (configuracoesPages.includes(page as AdminPage)) {
       setOpenMenus((prev) => prev.configuracoes ? prev : { ...prev, configuracoes: true })
     }
+    setMobileMenuOpen(false)
   }, [page])
 
   const toggleSubmenu = (menuKey: 'chamados' | 'administracao' | 'configuracoes') => {
@@ -1108,9 +1111,28 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
   const isConfigActive = (['api-validation', 'work-calendar', 'accesses', 'logs'] as AdminPage[]).includes(page as AdminPage)
 
   return (
-    <main className={`workspace-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      <aside className="sidebar">
-        <div className="sidebar-header"><Brand /><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'} title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
+    <main className={`workspace-shell ${sidebarCollapsed && !mobileMenuOpen ? 'sidebar-collapsed' : ''}`}>
+      <aside className={`sidebar ${sidebarCollapsed && !mobileMenuOpen ? 'sidebar-is-collapsed' : ''} ${mobileMenuOpen ? 'mobile-sidebar-open' : ''}`}>
+        <div className="sidebar-header">
+          <Brand />
+          <button
+            className="sidebar-toggle"
+            type="button"
+            aria-label={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+            title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
+          <button
+            className="mobile-sidebar-close"
+            type="button"
+            aria-label="Fechar menu lateral"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            <X size={19} />
+          </button>
+        </div>
         <div className="sidebar-label nav-label">MENU PRINCIPAL</div>
         <nav className="sidebar-nav" aria-label="Navegação principal">
           {/* 1. Início */}
@@ -1392,10 +1414,33 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
           <button className="profile-row" type="button" onClick={() => setShowProfile(true)} title="Editar perfil"><span className="profile-avatar">{user.displayName.slice(0, 1).toUpperCase()}</span><span className="profile-info"><strong>{user.displayName}</strong><small>Editar perfil e assinatura</small></span><Pencil size={15} /></button>
         </div>
       </aside>
+      {mobileMenuOpen && (
+        <div
+          className="mobile-sidebar-backdrop is-active"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       <section className="workspace-main" id="usuarios">
         <header className="topbar">
-          <div className="breadcrumbs">Espaço de trabalho <span>/</span> <strong>{currentTitle}</strong></div>
+          <div className="topbar-left">
+            <button
+              type="button"
+              className="mobile-menu-trigger"
+              aria-label="Abrir menu lateral"
+              title="Abrir menu lateral"
+              onClick={() => setMobileMenuOpen(true)}
+            >
+              <Menu size={18} />
+              <span>Menu</span>
+            </button>
+            <div className="breadcrumbs">
+              <span className="breadcrumb-root">Espaço de trabalho</span>
+              <span className="breadcrumb-separator">/</span>
+              <strong>{currentTitle}</strong>
+            </div>
+          </div>
           <div className="topbar-right">
             <button
               type="button"

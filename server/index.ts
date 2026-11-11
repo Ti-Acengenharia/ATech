@@ -44,6 +44,7 @@ const sessionStore = new PgSession({
   pool,
   tableName: 'user_sessions',
   createTableIfMissing: true,
+  pruneSessionInterval: 60 * 15, // 1.1: Prunar sessões expiradas a cada 15 minutos em vez de a cada 60s
 })
 
 sessionStore.on('error', (err) => {

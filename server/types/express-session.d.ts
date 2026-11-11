@@ -6,5 +6,7 @@ declare module 'express-session' {
     user?: SessionUser
     loginTime?: number
     lastActivity?: number
+    lastUserValidation?: number
+    pageAccess?: string[]
   }
 }

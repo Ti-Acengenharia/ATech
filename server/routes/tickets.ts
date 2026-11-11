@@ -2,11 +2,12 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
 import { APP_TIMEZONE } from '../config.js'
-import { pool } from '../db.js'
+import { pool, safeRollback } from '../db.js'
 import { decryptPersonalData, fingerprintPhoneQuery, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 import { evaluateTicketWarranty } from '../services/warranties.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
+import { validateBinaryFileSignature } from '../services/file-validation.js'
 import {
   fetchAndImportCvcrmTicketByProtocol,
   fetchCvcrmTicketByProtocol,
@@ -463,18 +464,19 @@ router.put('/:id/tags', async (req, res, next) => {
       }
     }
     await client.query('DELETE FROM ticket_tag_assignments WHERE ticket_id = $1', [ticketId.data])
-    for (const tagId of tagIds) {
+    // 1.4: Inserção em lote (bulk insert) com unnest em vez de query individual em laço
+    if (tagIds.length > 0) {
       await client.query(
         `INSERT INTO ticket_tag_assignments (ticket_id, tag_id, assigned_by)
-         VALUES ($1, $2, $3)`,
-        [ticketId.data, tagId, req.session.user!.id],
+         SELECT $1, unnest($2::bigint[]), $3`,
+        [ticketId.data, tagIds, req.session.user!.id],
       )
     }
     await client.query('COMMIT')
     void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
     res.status(204).end()
   } catch (error) {
-    await client.query('ROLLBACK')
+    await safeRollback(client)
     next(error)
   } finally {
     client.release()
@@ -1299,6 +1301,16 @@ router.post('/:id/attachments', async (req, res, next) => {
       content.toString('base64') !== parsed.data.contentBase64) {
     res.status(400).json({ error: 'Tipo de arquivo não permitido ou arquivo maior que 5 MiB.' })
     return
+  }
+
+  // 2.3: Validação de assinatura binária (magic bytes) para prevenir arquivos maliciosos mascarados
+  const binaryTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] as const
+  if (binaryTypes.includes(contentType as any)) {
+    const signatureCheck = validateBinaryFileSignature(content, contentType, binaryTypes)
+    if (!signatureCheck.valid) {
+      res.status(400).json({ error: 'O conteúdo binário do arquivo não corresponde ao formato declarado.' })
+      return
+    }
   }
 
   const client = await pool.connect()

@@ -1067,8 +1067,10 @@ export default function TicketBoardPage({
         <div className="kanban-board-container">
           <div className="kanban-board-controls" aria-label="Navegação das situações">
             <span>Deslize ou arraste para ver outras situações</span>
-            <button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveKanban(-1)}><ChevronLeft size={17} /></button>
-            <button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveKanban(1)}><ChevronRight size={17} /></button>
+            <div className="kanban-board-nav-buttons">
+              <button type="button" aria-label="Mostrar situações anteriores" title="Mostrar situações anteriores" onClick={() => moveKanban(-1)}><ChevronLeft size={17} /></button>
+              <button type="button" aria-label="Mostrar próximas situações" title="Mostrar próximas situações" onClick={() => moveKanban(1)}><ChevronRight size={17} /></button>
+            </div>
           </div>
           <div
             className="kanban-board"
@@ -1090,7 +1092,7 @@ export default function TicketBoardPage({
               const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
               const visibleCount = visibleTicketCounts[String(stage.id)] ?? kanbanPageSize
               const ticketsToShow = stageTickets.slice(0, visibleCount)
-              return <section className="kanban-column" key={stage.id}>
+              return <section className="kanban-column" key={stage.id} data-stage-key={stage.id}>
                 <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
                 <div className="kanban-column-body">
                   {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
@@ -1102,7 +1104,7 @@ export default function TicketBoardPage({
               const key = 'unassigned'
               const visibleCount = visibleTicketCounts[key] ?? kanbanPageSize
               const ticketsToShow = unassignedTickets.slice(0, visibleCount)
-              return <section className="kanban-column" key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
+              return <section className="kanban-column" key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
             })()}
           </div>
         </div>

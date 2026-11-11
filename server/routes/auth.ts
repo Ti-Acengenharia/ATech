@@ -106,6 +106,8 @@ router.get('/session', async (req, res, next) => {
     )
     if (result.rowCount) {
       const pageAccess = sessionUser.role === 'admin' ? [...pageAccessKeys] : result.rows[0].page_access
+      req.session.pageAccess = pageAccess
+      req.session.lastUserValidation = Date.now()
       res.json({
         user: sessionUser,
         corporateDomain: env.CORPORATE_DOMAIN,

@@ -22,6 +22,13 @@ const defaultFilterConfig: HomepageTicketsFilterConfig = {
   fromYear: null,
 }
 
+// 1.2: Cache em memória de curto prazo (TTL 20s) para evitar sobrecarga simultânea de conexões
+const homeSummaryCache = new Map<string, { payload: unknown; expiresAt: number }>()
+
+export function invalidateHomeSummaryCache() {
+  homeSummaryCache.clear()
+}
+
 async function getHomepageTicketsFilterConfig(): Promise<HomepageTicketsFilterConfig> {
   try {
     const result = await pool.query<{ setting_value: HomepageTicketsFilterConfig }>(
@@ -55,6 +62,13 @@ router.use(requireAuth)
 
 router.get('/summary', async (req, res, next) => {
   const user = req.session.user!
+
+  const cacheKey = `${user.id}_${user.role}`
+  const cached = homeSummaryCache.get(cacheKey)
+  if (cached && Date.now() < cached.expiresAt) {
+    res.json(cached.payload)
+    return
+  }
 
   try {
     const todayDateStr = new Intl.DateTimeFormat('en-CA', {
@@ -305,7 +319,7 @@ router.get('/summary', async (req, res, next) => {
         : Promise.resolve(null),
     ])
 
-    res.json({
+    const responsePayload = {
       todayDate: todayDateStr,
       user: {
         id: user.id,
@@ -364,7 +378,10 @@ router.get('/summary', async (req, res, next) => {
         cid: abs.cid,
       })),
       personalTasksCount: personalTasks,
-    })
+    }
+
+    homeSummaryCache.set(cacheKey, { payload: responsePayload, expiresAt: Date.now() + 20_000 })
+    res.json(responsePayload)
   } catch (error) {
     next(error)
   }
@@ -460,6 +477,8 @@ router.put('/tickets-filter-config', async (req, res, next) => {
            updated_by = EXCLUDED.updated_by`,
       [JSON.stringify(cleanConfig), user.id],
     )
+
+    invalidateHomeSummaryCache()
 
     await recordAuditLog({
       actorUserId: user.id,

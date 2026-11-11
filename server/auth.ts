@@ -47,17 +47,32 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return
   }
 
-  req.session.lastActivity = now
-  if (req.session.cookie) {
-    req.session.cookie.maxAge = timeoutMs
+  // 1.1: Só atualiza o cookie e lastActivity no banco se passou mais de 2 minutos para evitar I/O contínuo
+  if (now - lastActivity > 2 * 60 * 1000) {
+    req.session.lastActivity = now
+    if (req.session.cookie) {
+      req.session.cookie.maxAge = timeoutMs
+    }
   }
 
-  pool.query(
-    `SELECT 1 FROM users
-     WHERE id = $1 AND role = $2 AND status = 'active'`,
-    [user.id, user.role],
+  // 1.3: Validação de status ativo com cache de 3 minutos por sessão (elimina centenas de queries repetidas)
+  const userValidationInterval = 3 * 60 * 1000
+  const lastValidation = req.session.lastUserValidation || 0
+  if (now - lastValidation < userValidationInterval) {
+    next()
+    return
+  }
+
+  pool.query<{ status: string; role: string }>(
+    `SELECT status, role FROM users WHERE id = $1`,
+    [user.id],
   ).then((result) => {
-    if (result.rowCount) {
+    const row = result.rows[0]
+    if (row && row.status === 'active') {
+      req.session.lastUserValidation = now
+      if (req.session.user) {
+        req.session.user.role = row.role as any
+      }
       next()
       return
     }
@@ -80,11 +95,24 @@ export function requirePageAccess(pageKey: PageAccessKey) {
       return
     }
 
-    pool.query(
-      'SELECT 1 FROM user_page_access WHERE user_id = $1 AND page_key = $2',
-      [user?.id, pageKey],
+    // 1.3: Checagem instantânea de permissão em memória via sessão (zero queries ao banco)
+    if (Array.isArray(req.session.pageAccess)) {
+      if (req.session.pageAccess.includes(pageKey)) {
+        next()
+        return
+      }
+      res.status(403).json({ error: 'Você não tem acesso a esta página.' })
+      return
+    }
+
+    // Fallback: busca uma vez no banco e armazena na sessão
+    pool.query<{ page_key: string }>(
+      'SELECT page_key FROM user_page_access WHERE user_id = $1',
+      [user?.id],
     ).then((result) => {
-      if (result.rowCount) next()
+      const accesses = result.rows.map((r) => r.page_key)
+      req.session.pageAccess = accesses
+      if (accesses.includes(pageKey)) next()
       else res.status(403).json({ error: 'Você não tem acesso a esta página.' })
     }).catch(next)
   }
