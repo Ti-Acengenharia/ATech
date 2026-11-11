@@ -841,7 +841,7 @@ export default function TicketProgrammingForm({
           ) : filteredCollaborators.length === 0 ? (
             <div className="collab-checklist-empty">{searchFilter
               ? `Nenhum colaborador visível encontrado com "${searchFilter}".`
-              : 'As funções dos colaboradores estão ocultas na programação. Reative-as na agenda para selecioná-los.'}</div>
+              : 'As funções dos colaboradores estão ocultas na programação. Reative-as na programação para selecioná-los.'}</div>
           ) : (
             filteredCollaborators.map((person) => {
               const isSelected = collaboratorIds.includes(person.id)
@@ -1023,7 +1023,7 @@ export default function TicketProgrammingForm({
             )}
           </div>
           <p className="programming-finalization-desc">
-            Identifica esta atividade como a visita final da assistência técnica, gerando alertas na agenda e no relatório PDF para coleta da assinatura do cliente no termo de finalização.
+            Identifica esta atividade como a visita final da assistência técnica, gerando alertas na programação e no relatório PDF para coleta da assinatura do cliente no termo de finalização.
           </p>
 
           {isFinalization && (
@@ -1066,7 +1066,7 @@ export default function TicketProgrammingForm({
                 const person = collaborators.find((c) => c.id === collabId)
                 return absList.map((abs) => (
                   <li key={abs.id}>
-                    <strong>{person?.name || 'Colaborador'}:</strong> {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}{abs.cid ? ` (CID ${abs.cid})` : ''} · {abs.startDate.split('-').reverse().join('/')} a {abs.endDate.split('-').reverse().join('/')} (Agenda bloqueada)
+                    <strong>{person?.name || 'Colaborador'}:</strong> {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}{abs.cid ? ` (CID ${abs.cid})` : ''} · {abs.startDate.split('-').reverse().join('/')} a {abs.endDate.split('-').reverse().join('/')} (Programação bloqueada)
                   </li>
                 ))
               })}

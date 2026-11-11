@@ -1430,16 +1430,6 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
       <section className="workspace-main" id="usuarios">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              type="button"
-              className="mobile-menu-trigger"
-              aria-label="Abrir menu lateral"
-              title="Abrir menu lateral"
-              onClick={() => setMobileMenuOpen(true)}
-            >
-              <Menu size={18} />
-              <span>Menu</span>
-            </button>
             <div className="breadcrumbs">
               <span className="breadcrumb-root">Espaço de trabalho</span>
               <span className="breadcrumb-separator">/</span>
@@ -1754,7 +1744,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               onClick={() => navigateToPage('schedule')}
             >
               <CalendarDays size={19} />
-              <span>Agenda</span>
+              <span>Programação</span>
             </button>
           )}
           {canAccessPage('legal-processes') ? (
@@ -1907,7 +1897,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
   const module = {
     tickets: { title: 'Chamados', description: 'Atendimentos técnicos e solicitações em um só lugar.', icon: ClipboardList },
     'letter-filling': { title: 'Preenchimento de cartas', description: 'Geração de notificações e termos a partir dos chamados.', icon: FileText },
-    schedule: { title: 'Programação', description: 'Agenda de serviços e atividades da equipe.', icon: CalendarDays },
+    schedule: { title: 'Programação', description: 'Programação de serviços e atividades da equipe.', icon: CalendarDays },
     information: { title: 'Informações de empreendimentos', description: 'Dados cadastrais, síndicos e habite-se de empreendimentos.', icon: Info },
     accesses: { title: 'Acessos', description: 'Contas administrativas e convites.', icon: UsersRound },
     'api-validation': { title: 'Validação da API', description: 'Painel de testes e controle da API CVCRM.', icon: Zap },

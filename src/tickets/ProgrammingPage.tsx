@@ -607,7 +607,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   return (
     <section className="programming-page">
       <div className="programming-heading">
-        <div><span className="eyebrow">AGENDA DA ASSISTÊNCIA TÉCNICA</span><h1>{programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</h1><p>Atividades por colaborador, com reserva de horário sem sobreposição.</p></div>
+        <div><span className="eyebrow">PROGRAMAÇÃO DA ASSISTÊNCIA TÉCNICA</span><h1>{programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</h1><p>Atividades por colaborador, com reserva de horário sem sobreposição.</p></div>
         <button className="primary-button" type="button" onClick={() => { setEditingAppointment(null); setShowForm((value) => !value) }}><Plus size={16} /> Nova programação</button>
       </div>
 
@@ -618,7 +618,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={() => setError('')} aria-label="Fechar aviso">×</button></div>}
       {whatsappNotice && <div className="notice notice-success" role="status"><Check size={16} />{whatsappNotice.text}<button type="button" onClick={() => setWhatsappNotice(null)} aria-label="Fechar aviso">×</button></div>}
-      {(showForm || editingAppointment) && <section ref={programmingFormRef} className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à agenda</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={(savedDate) => {
+      {(showForm || editingAppointment) && <section ref={programmingFormRef} className="programming-form-panel"><header><div><span className="eyebrow">{editingAppointment ? 'EDITAR ATIVIDADE' : 'NOVA ATIVIDADE'}</span><h2>{editingAppointment ? editingAppointment.protocol ? `Editar protocolo ${editingAppointment.protocol}` : 'Editar atividade avulsa' : 'Programar atividade'}</h2></div><button className="secondary-button" type="button" onClick={() => { setShowForm(false); setEditingAppointment(null) }}><ArrowLeft size={15} /> Voltar à programação</button></header>{ticketsLoadError ? <div className="programming-empty" role="alert">{ticketsLoadError}<button type="button" className="text-action-btn" onClick={() => { setTicketsLoadError(''); setTicketsRetry((value) => value + 1) }}>Tentar novamente</button></div> : !ticketsLoaded ? <p className="programming-empty">Carregando chamados...</p> : <TicketProgrammingForm key={editingAppointment ? `${editingAppointment.id}-${programmingType}` : `new-${programmingType}`} tickets={tickets} initialDate={date} programmingType={programmingType} editingAppointment={editingAppointment ?? undefined} onCancel={() => { setShowForm(false); setEditingAppointment(null) }} onSaved={(savedDate) => {
   setShowForm(false)
   setEditingAppointment(null)
   if (savedDate && savedDate !== date) {
@@ -628,7 +628,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
-        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da agenda" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar agenda" title="Atualizar agenda" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
+        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
         <div className="calendar-week-strip no-print">
           {week.map((day) => {
             const isHoliday = holidayMap.has(day.date)
@@ -671,7 +671,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
           </div>
         )}
         {programmingType === 'general' && isAdmin && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
-          <strong>Funções na agenda</strong>
+          <strong>Funções na programação</strong>
           {savingRoleVisibility && <span className="schedule-role-saving">Salvando para todos...</span>}
           {roles.map((role) => {
             const selected = !hiddenRoleKeys.has(role.key)
@@ -689,7 +689,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
         </div>}
         <p className="programming-print-date">{displayDate(date)} · {programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</p>
         <div className="schedule-day-content">
-          {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando agenda...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na agenda.</p> : roleGroups.map((group) => (
+          {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : roleGroups.map((group) => (
             <section className={`schedule-role-group ${group.hasProgrammedPeople ? '' : 'schedule-role-group-empty'}`} key={group.key}>
               <h3>{group.title}</h3>
               <div className="schedule-staff-cards">
@@ -719,7 +719,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                           <strong>
                             {collaborator.appointments.length
                               ? '⚠️ ATENÇÃO: Ausência com atividades pendentes de reprogramação!'
-                              : `AGENDA BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
+                              : `PROGRAMAÇÃO BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
                           </strong>
                         </div>
                         <p>
@@ -808,7 +808,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                       </div>
                     )) : (
                       <p className="schedule-free-label">
-                        {collaborator.absence ? 'Agenda bloqueada por ausência/atestado' : 'Sem atividades programadas'}
+                        {collaborator.absence ? 'Programação bloqueada por ausência/atestado' : 'Sem atividades programadas'}
                       </p>
                     )}
                   </article>

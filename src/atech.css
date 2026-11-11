@@ -4550,35 +4550,7 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 
 @media (max-width: 768px) {
   .mobile-menu-trigger {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    height: 38px !important;
-    min-height: 38px !important;
-    padding: 0 13px 0 10px !important;
-    border-radius: 9999px !important; /* Formato Pill */
-    border: 1px solid #bfdbfe !important;
-    background: #eff6ff !important;
-    color: #1d4ed8 !important;
-    font-size: 13px !important;
-    font-weight: 600 !important;
-    cursor: pointer !important;
-    flex-shrink: 0 !important;
-    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12) !important;
-    transition: all 0.15s ease !important;
-  }
-
-  .mobile-menu-trigger:hover,
-  .mobile-menu-trigger:active {
-    background: #dbeafe !important;
-    border-color: #93c5fd !important;
-    color: #1e40af !important;
-    transform: scale(0.98) !important;
-  }
-
-  .mobile-menu-trigger svg {
-    flex-shrink: 0 !important;
-    color: currentColor !important;
+    display: none !important;
   }
 
   .sidebar-toggle {
