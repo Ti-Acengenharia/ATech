@@ -1053,12 +1053,20 @@ export default function TicketBoardPage({
                     onClick={() => setFiltersExpanded((expanded) => !expanded)}
                   >
                     <ChevronDown size={15} />
-                    <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
-                    {activeFiltersCount > 0 && <span className="ticket-filter-badge">{activeFiltersCount} filtro(s)</span>}
+                    <span className="desktop-text">{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
+                    <span className="mobile-only-text">Filtros</span>
+                    {activeFiltersCount > 0 && (
+                      <span className="ticket-filter-badge">
+                        <span className="desktop-text">{activeFiltersCount} filtro(s)</span>
+                        <span className="mobile-only-text">{activeFiltersCount}</span>
+                      </span>
+                    )}
                   </button>
 
                   <span className="ticket-filter-count">
-                    <Clock3 size={13} /> {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}
+                    <Clock3 size={13} />
+                    <span className="desktop-text">{filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}</span>
+                    <span className="mobile-only-text">{filtered.length} ativos</span>
                   </span>
 
                   {activeFiltersCount > 0 && (
@@ -1068,7 +1076,7 @@ export default function TicketBoardPage({
                       onClick={clearAllFilters}
                       title="Limpar todos os filtros"
                     >
-                      <X size={13} /> Limpar
+                      <X size={13} /> <span className="desktop-text">Limpar</span>
                     </button>
                   )}
                 </div>

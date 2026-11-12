@@ -2113,8 +2113,14 @@ export default function LegalProcessesPage({
                   onClick={() => setFiltersExpanded((expanded) => !expanded)}
                 >
                   <ChevronDown size={15} className={`legal-filter-chevron ${filtersExpanded ? 'is-expanded' : ''}`} />
-                  <span>{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
-                  {activeFiltersCount > 0 && <span className="legal-filter-badge">{activeFiltersCount} ativo(s)</span>}
+                  <span className="desktop-text">{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
+                  <span className="mobile-only-text">Filtros</span>
+                  {activeFiltersCount > 0 && (
+                    <span className="legal-filter-badge">
+                      <span className="desktop-text">{activeFiltersCount} ativo(s)</span>
+                      <span className="mobile-only-text">{activeFiltersCount}</span>
+                    </span>
+                  )}
                 </button>
                 {activeFiltersCount > 0 && (
                   <button
@@ -2123,7 +2129,7 @@ export default function LegalProcessesPage({
                     onClick={clearAllFilters}
                     title="Limpar todos os filtros"
                   >
-                    <X size={14} /> Limpar
+                    <X size={14} /> <span className="desktop-text">Limpar</span>
                   </button>
                 )}
               </div>
