@@ -40,8 +40,14 @@ router.get('/', async (_req, res, next) => {
       can_access_legal_processes: boolean
       can_view_other_personal_activities: boolean
       page_access: string[]
+      has_pin: boolean
+      has_signature: boolean
+      is_pin_locked: boolean
     }>(
       `SELECT u.id, u.email, u.display_name, u.role, u.status, u.created_at, u.last_login_at,
+              (u.signature_pin_hash IS NOT NULL) AS has_pin,
+              (u.signature_data_ciphertext IS NOT NULL) AS has_signature,
+              (u.signature_pin_locked_until IS NOT NULL AND u.signature_pin_locked_until > NOW()) AS is_pin_locked,
               (u.role = 'admin' OR a.user_id IS NOT NULL OR EXISTS (
                 SELECT 1 FROM user_page_access p WHERE p.user_id = u.id AND p.page_key = 'legal-processes'
               )) AS can_access_legal_processes,
@@ -67,6 +73,9 @@ router.get('/', async (_req, res, next) => {
       canAccessLegalProcesses: user.can_access_legal_processes,
       pageAccess: user.role === 'admin' ? [...pageAccessKeys] : user.page_access,
       canViewOtherPersonalActivities: user.can_view_other_personal_activities,
+      hasPin: user.has_pin,
+      hasSignature: user.has_signature,
+      isPinLocked: user.is_pin_locked,
     }))
     res.json({ users })
   } catch (error) {
@@ -521,6 +530,78 @@ router.patch('/:id/personal-activities-view-access', async (req, res, next) => {
     res.status(204).end()
   } catch (error) {
     next(error)
+  }
+})
+
+router.post('/:id/reset-signature-pin', async (req, res, next) => {
+  const userId = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!userId.success) {
+    res.status(400).json({ error: 'ID de usuário inválido.' })
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const existing = await client.query<{
+      id: number
+      email: string
+      display_name: string
+      signature_pin_hash: string | null
+      signature_data_ciphertext: string | null
+    }>(
+      `SELECT id, email, display_name, signature_pin_hash, signature_data_ciphertext
+       FROM users
+       WHERE id = $1
+       FOR UPDATE`,
+      [userId.data],
+    )
+
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Usuário não encontrado.' })
+      return
+    }
+
+    const target = existing.rows[0]
+
+    await client.query(
+      `UPDATE users
+       SET signature_data_ciphertext = NULL,
+           signature_pin_hash = NULL,
+           signature_pin_failed_attempts = 0,
+           signature_pin_locked_until = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [userId.data],
+    )
+
+    await recordAuditLog(
+      {
+        actorUserId: req.session.user!.id,
+        actorName: req.session.user!.displayName,
+        action: 'user_signature_pin_reset',
+        resourceType: 'user',
+        resourceId: String(userId.data),
+        summary: `PIN de assinatura e assinatura descartados/resetados para ${target.display_name} (${target.email})`,
+        metadata: {
+          targetUserId: target.id,
+          targetUserEmail: target.email,
+          hadPin: !!target.signature_pin_hash,
+          hadSignature: !!target.signature_data_ciphertext,
+        },
+      },
+      client,
+    )
+
+    await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'users', action: 'update' })
+    res.json({ success: true, message: 'PIN e assinatura resetados com sucesso.' })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
   }
 })
 

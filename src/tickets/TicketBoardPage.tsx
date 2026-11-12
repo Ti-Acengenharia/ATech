@@ -363,6 +363,7 @@ export default function TicketBoardPage({
   const [subjectFilter, setSubjectFilter] = useState<string[]>(savedFilters.subject)
   const [subsubjectFilter, setSubsubjectFilter] = useState<string[]>(savedFilters.subsubject)
   const [includeInactive, setIncludeInactive] = useState(savedFilters.includeInactive)
+  const [stageFilter, setStageFilter] = useState<string[]>([])
   const [initialViewState] = useState(() => resolveInitialTicketView(savedFilters.viewMode))
   const [viewMode, setViewMode] = useState<TicketViewMode>(initialViewState.viewMode)
   const [cardFields, setCardFields] = useState<TicketCardField[]>(savedFilters.cardFields)
@@ -585,6 +586,7 @@ export default function TicketBoardPage({
       if (customerNameFilter.trim()) params.set('customerName', customerNameFilter.trim())
       for (const subject of subjectFilter) params.append('subject', subject)
       for (const subsubject of subsubjectFilter) params.append('subsubject', subsubject)
+      for (const st of stageFilter) params.append('status', st)
       if (includeInactive) params.set('includeInactive', 'true')
       const query = params.toString()
       const suffix = query ? `?${query}` : ''
@@ -614,7 +616,7 @@ export default function TicketBoardPage({
         }).finally(() => { if (!cancelled) setLoading(false) })
     }, 180)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, includeInactive, viewMode, requestedTicketId, onTicketOpened, refreshKey, dashboardOpen])
+  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, stageFilter, includeInactive, viewMode, requestedTicketId, onTicketOpened, refreshKey, dashboardOpen])
 
   async function syncNow() {
     setSyncing(true)
@@ -744,13 +746,33 @@ export default function TicketBoardPage({
     }
   }
 
+  const orderedStages = useMemo(
+    () =>
+      stages
+        .filter((stage) => stage.name.trim().length > 0)
+        .sort((left, right) => left.position - right.position || ticketSortCollator.compare(left.name, right.name)),
+    [stages],
+  )
+
+  const stageOptions = useMemo(
+    () => orderedStages.map((stage) => ({ value: String(stage.id), label: stage.name })),
+    [orderedStages],
+  )
+
   const filtered = useMemo(
-    () => [...tickets].sort((left, right) => compareTickets(left, right, sortField, sortDirection)),
-    [tickets, sortField, sortDirection],
+    () =>
+      tickets
+        .filter((ticket) => {
+          if (stageFilter.length === 0) return true
+          if (!ticket.statusId) return stageFilter.includes('unassigned')
+          return stageFilter.includes(String(ticket.statusId)) || stageFilter.includes(ticket.status)
+        })
+        .sort((left, right) => compareTickets(left, right, sortField, sortDirection)),
+    [tickets, stageFilter, sortField, sortDirection],
   )
   const ticketPaginationKey = JSON.stringify([
     search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter,
-    subjectFilter, subsubjectFilter, includeInactive, sortField, sortDirection, refreshKey,
+    subjectFilter, subsubjectFilter, stageFilter, includeInactive, sortField, sortDirection, refreshKey,
   ])
   const ticketListKey = JSON.stringify([ticketPaginationKey, filtered.map((ticket) => ticket.id)])
   const [ticketListPageState, setTicketListPageState] = useState<{ key: string; page: number }>({ key: '', page: 1 })
@@ -765,9 +787,6 @@ export default function TicketBoardPage({
       counts: { ...(current.key === ticketPaginationKey ? current.counts : {}), [columnKey]: visibleCount + kanbanPageSize },
     }))
   }
-  const orderedStages = stages
-    .filter((stage) => stage.name.trim().length > 0)
-    .sort((left, right) => left.position - right.position || ticketSortCollator.compare(left.name, right.name))
   const filteredStatusIds = new Set(filtered.map((ticket) => ticket.statusId).filter((statusId): statusId is number => statusId !== null))
   const visibleStages = orderedStages.filter((stage) => filteredStatusIds.has(stage.id))
   const unassignedTickets = filtered.filter((ticket) => !ticket.statusId || !orderedStages.some((stage) => stage.id === ticket.statusId))
@@ -1000,6 +1019,7 @@ export default function TicketBoardPage({
           customerNameFilter,
           ...subjectFilter,
           ...subsubjectFilter,
+          ...stageFilter,
           includeInactive && 'inativos',
         ].filter(Boolean).length
 
@@ -1012,6 +1032,7 @@ export default function TicketBoardPage({
           setCustomerNameFilter('')
           setSubjectFilter([])
           setSubsubjectFilter([])
+          setStageFilter([])
           setIncludeInactive(false)
         }
 
@@ -1080,9 +1101,8 @@ export default function TicketBoardPage({
                     </button>
                   )}
                 </div>
-              </div>
 
-            <div className="ticket-board-toolbar ticket-board-options">
+                <div className="ticket-board-toolbar ticket-board-options">
               <label className="ticket-include-inactive">
                 <input
                   type="checkbox"
@@ -1212,16 +1232,19 @@ export default function TicketBoardPage({
                 {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
               </button>
             </div>
+          </div>
 
-            {filtersExpanded && <div className="ticket-board-toolbar ticket-board-filters">
-          <label className="ticket-filter-field ticket-filter-search">
-            <span>Busca geral</span>
-            <div className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID, protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone" /></div>
-          </label>
-          <label className="ticket-filter-field customer-name-filter">
-            <span>Nome do cliente</span>
-            <input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar por nome do cliente" />
-          </label>
+          {filtersExpanded && (
+            <div className="ticket-board-toolbar ticket-board-filters">
+              <label className="ticket-filter-field ticket-filter-search">
+                <span>Busca geral</span>
+                <div className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID, protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone" /></div>
+              </label>
+              <SearchableMultiSelect label="Situação" options={stageOptions} value={stageFilter} onChange={setStageFilter} />
+              <label className="ticket-filter-field customer-name-filter">
+                <span>Nome do cliente</span>
+                <input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar por nome do cliente" />
+              </label>
           <SearchableMultiSelect label="Empreendimentos" options={enterpriseOptions} value={enterpriseFilters} onChange={(value) => {
             setEnterpriseFilters(value)
             setBlockFilter([])
@@ -1234,14 +1257,15 @@ export default function TicketBoardPage({
           <SearchableMultiSelect label="Unidade" options={unitOptions} value={activeUnitFilter} disabled={!blockOptionsReady} onChange={setUnitFilter} />
           <SearchableMultiSelect label="Assunto" options={subjectOptions} value={subjectFilter} onChange={(value) => { setSubjectFilter(value); setSubsubjectFilter([]) }} />
           <SearchableMultiSelect label="Subassunto" options={subsubjectOptions} value={subsubjectFilter} onChange={setSubsubjectFilter} />
-          <div className="ticket-filter-field ticket-type-filter" role="group" aria-label="Tipo de chamado">
-            <span>Tipo de chamado</span>
-            <div className="ticket-type-options">
-              {(['client', 'condominium'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : 'Condomínio'}</span></label>)}
-            </div>
-          </div>
-        </div>}
-          </section>
+                  <div className="ticket-filter-field ticket-type-filter" role="group" aria-label="Tipo de chamado">
+                    <span>Tipo de chamado</span>
+                    <div className="ticket-type-options">
+                      {(['client', 'condominium'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : 'Condomínio'}</span></label>)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
         </>
       )
       })()}

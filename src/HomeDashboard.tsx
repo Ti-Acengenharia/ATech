@@ -11,6 +11,8 @@ import {
   ChevronRight,
   ClipboardList,
   Clock,
+  FileText,
+  History,
   Info,
   Layers,
   ListTodo,
@@ -163,6 +165,11 @@ export default function HomeDashboard({
   const canAccessLegal = canAccess('legal-processes')
   const canAccessInventory = canAccess('inventory')
 
+  const hasGroup1 = canAccessTickets || canAccessSchedule || canAccess('letter-filling') || canAccess('information') || canAccess('warranties')
+  const hasGroup2 = canAccessCollaborators || canAccessInventory || canAccess('stock-units') || canAccessLegal || canAccess('personal-activities')
+  const hasGroup3 = user.role === 'admin'
+  const hasAnyModule = hasGroup1 || hasGroup2 || hasGroup3
+
   const [summary, setSummary] = useState<HomeSummaryData | null>(null)
   const [_summaryLoading, setSummaryLoading] = useState(true)
   const [celebrations, setCelebrations] = useState<DashboardCelebrations | null>(null)
@@ -303,53 +310,66 @@ export default function HomeDashboard({
         </div>
 
         {/* Barra de Ações Rápidas */}
-        <div className="home-quick-actions-bar">
-          <div className="home-quick-actions-buttons">
-            {canAccessTickets && (
-              <button
-                type="button"
-                className="home-quick-btn home-quick-btn-primary"
-                onClick={() => onOpenPage('tickets')}
-                title="Acessar quadro e atendimentos de chamados"
-              >
-                <ClipboardList size={15} /> Chamados
-              </button>
-            )}
+        {(canAccessTickets || canAccessSchedule || canAccessInventory || canAccessLegal || canAccess('personal-activities')) && (
+          <div className="home-quick-actions-bar">
+            <div className="home-quick-actions-buttons">
+              {canAccessTickets && (
+                <button
+                  type="button"
+                  className="home-quick-btn home-quick-btn-primary"
+                  onClick={() => onOpenPage('tickets')}
+                  title="Acessar quadro e atendimentos de chamados"
+                >
+                  <ClipboardList size={15} /> Chamados
+                </button>
+              )}
 
-            {canAccessSchedule && (
-              <button
-                type="button"
-                className="home-quick-btn"
-                onClick={() => onOpenPage('schedule')}
-                title="Agendar equipe técnica para atendimentos ou serviços"
-              >
-                <CalendarDays size={14} /> Agendar equipe
-              </button>
-            )}
+              {canAccessSchedule && (
+                <button
+                  type="button"
+                  className="home-quick-btn"
+                  onClick={() => onOpenPage('schedule')}
+                  title="Agendar equipe técnica para atendimentos ou serviços"
+                >
+                  <CalendarDays size={14} /> Agendar equipe
+                </button>
+              )}
 
-            {canAccessInventory && (
-              <button
-                type="button"
-                className="home-quick-btn"
-                onClick={() => onOpenPage('inventory')}
-                title="Lançar entrada, saída ou entrega de insumos/ferramentas"
-              >
-                <Package size={14} /> Movimentar estoque
-              </button>
-            )}
+              {canAccessInventory && (
+                <button
+                  type="button"
+                  className="home-quick-btn"
+                  onClick={() => onOpenPage('inventory')}
+                  title="Lançar entrada, saída ou entrega de insumos/ferramentas"
+                >
+                  <Package size={14} /> Movimentar estoque
+                </button>
+              )}
 
-            {canAccessLegal && (
-              <button
-                type="button"
-                className="home-quick-btn"
-                onClick={() => onOpenPage('legal-processes')}
-                title="Acessar processos jurídicos e prazos"
-              >
-                <BriefcaseBusiness size={14} /> Processos jurídicos
-              </button>
-            )}
+              {canAccessLegal && (
+                <button
+                  type="button"
+                  className="home-quick-btn"
+                  onClick={() => onOpenPage('legal-processes')}
+                  title="Acessar processos jurídicos e prazos"
+                >
+                  <BriefcaseBusiness size={14} /> Processos jurídicos
+                </button>
+              )}
+
+              {canAccess('personal-activities') && (
+                <button
+                  type="button"
+                  className="home-quick-btn"
+                  onClick={() => onOpenPage('personal-activities')}
+                  title="Acessar minhas atividades e tarefas"
+                >
+                  <ListTodo size={14} /> Minhas atividades
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* 2. RADAR OPERACIONAL EM TEMPO REAL (KPIs) */}
@@ -443,46 +463,48 @@ export default function HomeDashboard({
         )}
 
         {/* KPI 4: Alertas Operacionais (Estoque Baixo & Atestados) */}
-        <article
-          className={`home-kpi-card ${
-            (summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0
-              ? 'home-kpi-amber'
-              : 'home-kpi-emerald'
-          }`}
-          onClick={() => {
-            if ((summary?.inventory?.lowStockCount ?? 0) > 0 && canAccessInventory) {
-              onOpenPage('inventory')
-            } else if ((summary?.absencesToday?.length ?? 0) > 0 && canAccessCollaborators) {
-              onOpenCollaborators()
-            }
-          }}
-        >
-          <div className="home-kpi-header">
-            <span className="home-kpi-label">Alertas Operacionais</span>
-            <div className="home-kpi-icon">
-              {(summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0 ? (
-                <TriangleAlert size={18} />
-              ) : (
-                <CheckCircle2 size={18} />
-              )}
+        {(canAccessInventory || canAccessCollaborators) && (
+          <article
+            className={`home-kpi-card ${
+              (summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0
+                ? 'home-kpi-amber'
+                : 'home-kpi-emerald'
+            }`}
+            onClick={() => {
+              if ((summary?.inventory?.lowStockCount ?? 0) > 0 && canAccessInventory) {
+                onOpenPage('inventory')
+              } else if ((summary?.absencesToday?.length ?? 0) > 0 && canAccessCollaborators) {
+                onOpenCollaborators()
+              }
+            }}
+          >
+            <div className="home-kpi-header">
+              <span className="home-kpi-label">Alertas Operacionais</span>
+              <div className="home-kpi-icon">
+                {(summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0 ? (
+                  <TriangleAlert size={18} />
+                ) : (
+                  <CheckCircle2 size={18} />
+                )}
+              </div>
             </div>
-          </div>
-          <div className="home-kpi-body">
-            <div className="home-kpi-value">
-              {(summary?.inventory?.lowStockCount ?? 0) + (summary?.absencesToday?.length ?? 0)}
+            <div className="home-kpi-body">
+              <div className="home-kpi-value">
+                {(summary?.inventory?.lowStockCount ?? 0) + (summary?.absencesToday?.length ?? 0)}
+              </div>
             </div>
-          </div>
-          <div className="home-kpi-footer">
-            <span>
-              {(summary?.inventory?.lowStockCount ?? 0) > 0
-                ? `${summary?.inventory?.lowStockCount} insumos em nível crítico`
-                : (summary?.absencesToday?.length ?? 0) > 0
-                  ? `${summary?.absencesToday.length} ausências registradas hoje`
-                  : 'Suprimentos e escalas em conformidade'}
-            </span>
-            <ArrowRight size={14} className="home-kpi-arrow" />
-          </div>
-        </article>
+            <div className="home-kpi-footer">
+              <span>
+                {(summary?.inventory?.lowStockCount ?? 0) > 0
+                  ? `${summary?.inventory?.lowStockCount} insumos em nível crítico`
+                  : (summary?.absencesToday?.length ?? 0) > 0
+                    ? `${summary?.absencesToday.length} ausências registradas hoje`
+                    : 'Suprimentos e escalas em conformidade'}
+              </span>
+              <ArrowRight size={14} className="home-kpi-arrow" />
+            </div>
+          </article>
+        )}
       </section>
 
       {/* 3. PAINEL CENTRAL (AGENDA DO DIA + MURAL & CELEBRAÇÕES) */}
@@ -792,166 +814,220 @@ export default function HomeDashboard({
       </section>
 
       {/* 4. VITRINE DE ÁREAS DE TRABALHO CATEGORIZADAS */}
-      <section className="home-modules-section" aria-label="Módulos da plataforma ATech">
-        <div className="home-modules-heading">
-          <div>
-            <h3>Áreas de Trabalho & Ferramentas</h3>
-            <p>Acesse rapidamente os módulos da plataforma corporativa</p>
-          </div>
-        </div>
-
-        {/* Grupo 1: Atendimento Técnico & Obras */}
-        <div className="home-modules-category-group">
-          <span className="home-modules-cat-label">
-            <ClipboardList size={13} /> Atendimento Técnico & Obras
-          </span>
-          <div className="home-modules-grid">
-            {canAccessTickets && (
-              <div className="home-module-card" onClick={() => onOpenPage('tickets')}>
-                <div className="home-module-icon-wrap home-mod-blue">
-                  <ClipboardList size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Chamados</strong>
-                  <small>Quadro Kanban, solicitações e atendimentos CVCRM</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccessSchedule && (
-              <div className="home-module-card" onClick={() => onOpenPage('schedule')}>
-                <div className="home-module-icon-wrap home-mod-teal">
-                  <CalendarDays size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Programação</strong>
-                  <small>Agenda de serviços técnicos e alocação de equipes</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccess('information') && (
-              <div className="home-module-card" onClick={() => onOpenPage('information')}>
-                <div className="home-module-icon-wrap home-mod-slate">
-                  <Info size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Informações de empreendimentos</strong>
-                  <small>Dados cadastrais, síndicos e habite-se de empreendimentos</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccess('warranties') && (
-              <div className="home-module-card" onClick={() => onOpenPage('warranties')}>
-                <div className="home-module-icon-wrap home-mod-amber">
-                  <ShieldCheck size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Prazos de Garantia</strong>
-                  <small>Configuração e prazos de garantia por subassuntos</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Grupo 2: Recursos, Pessoas & Jurídico */}
-        <div className="home-modules-category-group">
-          <span className="home-modules-cat-label">
-            <Layers size={13} /> Pessoas, Recursos & Jurídico
-          </span>
-          <div className="home-modules-grid">
-            {canAccessCollaborators && (
-              <div className="home-module-card" onClick={onOpenCollaborators}>
-                <div className="home-module-icon-wrap home-mod-emerald">
-                  <UsersRound size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Colaboradores</strong>
-                  <small>Fichas, uniformes, escalas e registro de atestados</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccessInventory && (
-              <div className="home-module-card" onClick={() => onOpenPage('inventory')}>
-                <div className="home-module-icon-wrap home-mod-blue">
-                  <Package size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Gestão de Estoque</strong>
-                  <small>Insumos, EPIs, entregas com PIN e ferramentas</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccessLegal && (
-              <div className="home-module-card" onClick={() => onOpenPage('legal-processes')}>
-                <div className="home-module-icon-wrap home-mod-purple">
-                  <BriefcaseBusiness size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Processos Jurídicos</strong>
-                  <small>Quadro, fases, incidentes e dashboard executivo</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-
-            {canAccess('personal-activities') && (
-              <div className="home-module-card" onClick={() => onOpenPage('personal-activities')}>
-                <div className="home-module-icon-wrap home-mod-indigo">
-                  <ListTodo size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Minhas atividades</strong>
-                  <small>Seu quadro privado de tarefas e acompanhamentos</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Grupo 3: Administração & Integrações (exibido apenas para administradores) */}
-        {user.role === 'admin' && (
-          <div className="home-modules-category-group">
-            <span className="home-modules-cat-label">
-              <ShieldAlert size={13} /> Administração & Integrações
-            </span>
-            <div className="home-modules-grid">
-              <div className="home-module-card" onClick={() => onOpenPage('accesses')}>
-                <div className="home-module-icon-wrap home-mod-slate">
-                  <UserCheck size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Controle de Acessos</strong>
-                  <small>Gestão de permissões de páginas e contas da equipe</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
-
-              <div className="home-module-card" onClick={() => onOpenPage('api-validation')}>
-                <div className="home-module-icon-wrap home-mod-amber">
-                  <Zap size={18} />
-                </div>
-                <div className="home-module-content">
-                  <strong>Validação da API</strong>
-                  <small>Sincronização CVCRM, carga CSV e diagnóstico</small>
-                </div>
-                <ChevronRight size={15} className="home-module-arrow" />
-              </div>
+      {hasAnyModule && (
+        <section className="home-modules-section" aria-label="Módulos da plataforma ATech">
+          <div className="home-modules-heading">
+            <div>
+              <h3>Áreas de Trabalho & Ferramentas</h3>
+              <p>Acesse rapidamente os módulos da plataforma corporativa</p>
             </div>
           </div>
-        )}
-      </section>
+
+          {/* Grupo 1: Atendimento Técnico & Obras */}
+          {hasGroup1 && (
+            <div className="home-modules-category-group">
+              <span className="home-modules-cat-label">
+                <ClipboardList size={13} /> Atendimento Técnico & Obras
+              </span>
+              <div className="home-modules-grid">
+                {canAccessTickets && (
+                  <div className="home-module-card" onClick={() => onOpenPage('tickets')}>
+                    <div className="home-module-icon-wrap home-mod-blue">
+                      <ClipboardList size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Chamados</strong>
+                      <small>Quadro Kanban, solicitações e atendimentos CVCRM</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccessSchedule && (
+                  <div className="home-module-card" onClick={() => onOpenPage('schedule')}>
+                    <div className="home-module-icon-wrap home-mod-teal">
+                      <CalendarDays size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Programação</strong>
+                      <small>Agenda de serviços técnicos e alocação de equipes</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccess('letter-filling') && (
+                  <div className="home-module-card" onClick={() => onOpenPage('letter-filling')}>
+                    <div className="home-module-icon-wrap home-mod-blue">
+                      <FileText size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Preenchimento de cartas</strong>
+                      <small>Geração de cartas e termos de atendimento</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccess('information') && (
+                  <div className="home-module-card" onClick={() => onOpenPage('information')}>
+                    <div className="home-module-icon-wrap home-mod-slate">
+                      <Info size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Informações de empreendimentos</strong>
+                      <small>Dados cadastrais, síndicos e habite-se de empreendimentos</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccess('warranties') && (
+                  <div className="home-module-card" onClick={() => onOpenPage('warranties')}>
+                    <div className="home-module-icon-wrap home-mod-amber">
+                      <ShieldCheck size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Prazos de Garantia</strong>
+                      <small>Configuração e prazos de garantia por subassuntos</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Grupo 2: Recursos, Pessoas & Jurídico */}
+          {hasGroup2 && (
+            <div className="home-modules-category-group">
+              <span className="home-modules-cat-label">
+                <Layers size={13} /> Pessoas, Recursos & Jurídico
+              </span>
+              <div className="home-modules-grid">
+                {canAccessCollaborators && (
+                  <div className="home-module-card" onClick={onOpenCollaborators}>
+                    <div className="home-module-icon-wrap home-mod-emerald">
+                      <UsersRound size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Colaboradores</strong>
+                      <small>Fichas, uniformes, escalas e registro de atestados</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccessInventory && (
+                  <div className="home-module-card" onClick={() => onOpenPage('inventory')}>
+                    <div className="home-module-icon-wrap home-mod-blue">
+                      <Package size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Gestão de Estoque</strong>
+                      <small>Insumos, EPIs, entregas com PIN e ferramentas</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccess('stock-units') && (
+                  <div className="home-module-card" onClick={() => onOpenPage('stock-units')}>
+                    <div className="home-module-icon-wrap home-mod-teal">
+                      <Building2 size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Unidades em estoque</strong>
+                      <small>Controle e status de unidades prontas e chaves</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccessLegal && (
+                  <div className="home-module-card" onClick={() => onOpenPage('legal-processes')}>
+                    <div className="home-module-icon-wrap home-mod-purple">
+                      <BriefcaseBusiness size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Processos Jurídicos</strong>
+                      <small>Quadro, fases, incidentes e dashboard executivo</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+
+                {canAccess('personal-activities') && (
+                  <div className="home-module-card" onClick={() => onOpenPage('personal-activities')}>
+                    <div className="home-module-icon-wrap home-mod-indigo">
+                      <ListTodo size={18} />
+                    </div>
+                    <div className="home-module-content">
+                      <strong>Minhas atividades</strong>
+                      <small>Seu quadro privado de tarefas e acompanhamentos</small>
+                    </div>
+                    <ChevronRight size={15} className="home-module-arrow" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Grupo 3: Administração & Integrações (exibido apenas para administradores) */}
+          {hasGroup3 && (
+            <div className="home-modules-category-group">
+              <span className="home-modules-cat-label">
+                <ShieldAlert size={13} /> Administração & Auditoria
+              </span>
+              <div className="home-modules-grid">
+                <div className="home-module-card" onClick={() => onOpenPage('accesses')}>
+                  <div className="home-module-icon-wrap home-mod-slate">
+                    <UserCheck size={18} />
+                  </div>
+                  <div className="home-module-content">
+                    <strong>Controle de Acessos</strong>
+                    <small>Gestão de permissões de páginas e contas da equipe</small>
+                  </div>
+                  <ChevronRight size={15} className="home-module-arrow" />
+                </div>
+
+                <div className="home-module-card" onClick={() => onOpenPage('api-validation')}>
+                  <div className="home-module-icon-wrap home-mod-amber">
+                    <Zap size={18} />
+                  </div>
+                  <div className="home-module-content">
+                    <strong>Validação da API</strong>
+                    <small>Sincronização CVCRM, carga CSV e diagnóstico</small>
+                  </div>
+                  <ChevronRight size={15} className="home-module-arrow" />
+                </div>
+
+                <div className="home-module-card" onClick={() => onOpenPage('work-calendar')}>
+                  <div className="home-module-icon-wrap home-mod-teal">
+                    <CalendarDays size={18} />
+                  </div>
+                  <div className="home-module-content">
+                    <strong>Expediente e Calendário</strong>
+                    <small>Configuração de expediente, feriados e folgas</small>
+                  </div>
+                  <ChevronRight size={15} className="home-module-arrow" />
+                </div>
+
+                <div className="home-module-card" onClick={() => onOpenPage('logs')}>
+                  <div className="home-module-icon-wrap home-mod-purple">
+                    <History size={18} />
+                  </div>
+                  <div className="home-module-content">
+                    <strong>Auditoria & Logs</strong>
+                    <small>Histórico completo de ações e eventos do sistema</small>
+                  </div>
+                  <ChevronRight size={15} className="home-module-arrow" />
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Footer discreto */}
       <footer className="workspace-footer">

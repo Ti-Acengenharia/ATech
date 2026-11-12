@@ -24,6 +24,7 @@ import {
   KeyRound,
   LayoutDashboard,
   ListTodo,
+  Lock,
   Mail,
   Menu,
   Package,
@@ -31,6 +32,7 @@ import {
   PanelLeftOpen,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
@@ -61,6 +63,9 @@ interface ManagedUser extends SessionUser {
   canAccessLegalProcesses: boolean
   canViewOtherPersonalActivities: boolean
   pageAccess: AdminPage[]
+  hasPin?: boolean
+  hasSignature?: boolean
+  isPinLocked?: boolean
 }
 
 interface SessionResponse {
@@ -1039,6 +1044,31 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     }
   }
 
+  async function resetSignaturePin(member: ManagedUser) {
+    const confirmed = window.confirm(
+      `Deseja realmente resetar o PIN e descartar a assinatura de ${member.displayName} (${member.email})?\n\n` +
+      `Esta ação descartará a assinatura cadastrada e apagará o PIN de segurança. O colaborador terá que cadastrar uma nova assinatura e definir um novo PIN no próximo uso.`
+    )
+    if (!confirmed) return
+
+    setNotice(null)
+    try {
+      await apiRequest(`/api/users/${member.id}/reset-signature-pin`, { method: 'POST' })
+      setNotice({
+        kind: 'success',
+        text: `PIN e assinatura de ${member.displayName} foram resetados com sucesso.`,
+      })
+      await loadUsers()
+      const logsResult = await apiRequest<{ logs: AuditLogEntry[] }>('/api/users/audit-logs').catch(() => null)
+      if (logsResult) setAuditLogs(logsResult.logs)
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Não foi possível resetar o PIN e a assinatura.',
+      })
+    }
+  }
+
   function handleSelectQuickSearchItem(item: QuickSearchResultItem) {
     closeCommandPalette()
     if (item.kind === 'ticket' && canAccessPage('tickets')) {
@@ -1602,8 +1632,8 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
 
           <section className="directory-section" aria-labelledby="directory-heading">
             <div className="directory-heading"><div><h2 id="directory-heading">Pessoas e permissões</h2><p>{users.length} {users.length === 1 ? 'pessoa cadastrada' : 'pessoas cadastradas'}</p></div><div className="filter-search-actions"><label className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar pessoa" aria-label="Buscar por nome ou e-mail" /></label><button className="filter-clear-button" type="button" disabled={!search} onClick={() => setSearch('')}><X size={14} /> Limpar</button></div></div>
-            <div className="user-table-wrap"><table className="user-table"><thead><tr><th>USUÁRIO</th><th>PERMISSÃO</th><th>PÁGINAS LIBERADAS</th><th>STATUS</th><th>ÚLTIMO ACESSO</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>
-              {loading ? <tr><td colSpan={6} className="table-message">Carregando usuários...</td></tr> : filteredUsers.length === 0 ? <tr><td colSpan={6} className="table-message">{users.length ? 'Nenhum resultado para esta busca.' : 'Ainda não há usuários cadastrados.'}</td></tr> : filteredUsers.map((member) => (
+            <div className="user-table-wrap"><table className="user-table"><thead><tr><th>USUÁRIO</th><th>PERMISSÃO</th><th>PÁGINAS LIBERADAS</th><th>STATUS</th><th>ASSINATURA & PIN</th><th>ÚLTIMO ACESSO</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>
+              {loading ? <tr><td colSpan={7} className="table-message">Carregando usuários...</td></tr> : filteredUsers.length === 0 ? <tr><td colSpan={7} className="table-message">{users.length ? 'Nenhum resultado para esta busca.' : 'Ainda não há usuários cadastrados.'}</td></tr> : filteredUsers.map((member) => (
                 <tr key={member.id}>
                   <td><div className="user-cell"><span className={`user-avatar ${member.role === 'admin' ? 'user-avatar-admin' : ''}`}>{member.displayName.slice(0, 1).toUpperCase()}</span><span className="user-identity"><strong>{member.displayName}{member.id === user.id && <span className="you-tag">VOCÊ</span>}</strong><small>{member.email}</small></span></div></td>
                   <td>
@@ -1637,6 +1667,35 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                     </details>
                   )}</td>
                   <td><span className={`status-pill status-${member.status}`}><i />{member.status === 'active' ? 'Ativo' : member.status === 'invited' ? 'Convite enviado' : 'Suspenso'}</span></td>
+                  <td>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {member.hasPin || member.hasSignature ? (
+                        <>
+                          <span
+                            className={`status-pill ${member.isPinLocked ? 'status-suspended' : 'status-active'}`}
+                            title={member.isPinLocked ? 'PIN bloqueado temporariamente por excesso de tentativas incorretas' : 'Assinatura e PIN configurados'}
+                            style={{ fontSize: '11px', padding: '2px 8px' }}
+                          >
+                            {member.isPinLocked ? <Lock size={12} /> : <KeyRound size={12} />}
+                            {member.isPinLocked ? 'PIN Bloqueado' : 'Cadastrado'}
+                          </span>
+                          <button
+                            type="button"
+                            className="filter-clear-button"
+                            style={{ fontSize: '11px', padding: '3px 8px', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => void resetSignaturePin(member)}
+                            title="Resetar PIN de segurança e descartar assinatura atual deste usuário"
+                          >
+                            <RotateCcw size={12} /> Resetar
+                          </button>
+                        </>
+                      ) : (
+                        <span className="status-pill status-pending" style={{ fontSize: '11px', padding: '2px 8px' }}>
+                          Não configurado
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="last-seen">{member.role === 'admin' ? 'Conta principal' : formatDate(member.lastLoginAt)}</td>
                   <td className="action-cell">
                     {member.id !== user.id && (

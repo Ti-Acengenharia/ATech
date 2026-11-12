@@ -948,6 +948,7 @@ router.get('/', async (req, res, next) => {
   const selectedUnits = parseTextFilter(req.query.unit, 120)
   const selectedSubjects = parseTextFilter(req.query.subject, 240)
   const selectedSubsubjects = parseTextFilter(req.query.subsubject, 240)
+  const selectedStatuses = parseTextFilter(req.query.status, 240)
   const ticketTypes = parseRepeatedTextFilter(req.originalUrl, 'type', 20)
   if (
     selectedEnterprises === null ||
@@ -955,6 +956,7 @@ router.get('/', async (req, res, next) => {
     selectedUnits === null ||
     selectedSubjects === null ||
     selectedSubsubjects === null ||
+    selectedStatuses === null ||
     ticketTypes === null ||
     ticketTypes.some((type) => type !== 'client' && type !== 'condominium')
   ) {
@@ -1062,6 +1064,7 @@ router.get('/', async (req, res, next) => {
          AND (cardinality($6::text[]) = 0 OR (t.source_subject_id = 16 AND 'assistência técnica' = ANY($6::text[]))
            OR lower(btrim(t.subject)) = ANY($6::text[]))
          AND (cardinality($7::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($7::text[]))
+         AND (cardinality($15::text[]) = 0 OR t.source_status_id::text = ANY($15::text[]) OR lower(btrim(t.source_status_name)) = ANY($15::text[]))
          AND ($8::bigint IS NULL OR t.source_id = $8)
        ORDER BY CASE WHEN $12 <> '' AND t.source_id::text = $12 THEN 0 ELSE 1 END,
                 t.opened_at ASC NULLS LAST, t.protocol
@@ -1075,6 +1078,7 @@ router.get('/', async (req, res, next) => {
         search,
         idSearch ? 'id' : '',
         phoneToken,
+        selectedStatuses,
       ],
     )
 

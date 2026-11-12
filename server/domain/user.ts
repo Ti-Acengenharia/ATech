@@ -12,4 +12,7 @@ export interface ManagedUser extends SessionUser {
   status: UserStatus
   createdAt: string
   lastLoginAt: string | null
+  hasPin?: boolean
+  hasSignature?: boolean
+  isPinLocked?: boolean
 }
