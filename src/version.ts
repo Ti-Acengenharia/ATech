@@ -9,9 +9,47 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.4.4'
+export const APP_CURRENT_VERSION = 'v2.4.5'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.4.5',
+    date: '12/11/2026',
+    title: 'Reformulação Completa da UX Mobile & Tablet, Otimização de Kanbans, Filtro por Situação e Reset Administrativo de PIN',
+    tagline: 'Experiência mobile reestruturada com Bottom Navigation, visualização de cartões garantida sem cortes, alinhamentos desktop refinados, filtro por situação de chamados e gestão de recuperação de assinatura/PIN.',
+    changes: [
+      {
+        category: 'Design & UX',
+        items: [
+          'Reformulação completa da arquitetura visual para smartphones e tablets: introdução de Bottom Navigation Bar corporativa, cabeçalhos compactados e eliminação de barras duplas e botões redundantes de menu.',
+          'Otimização vertical severa dos quadros Kanban no mobile: painéis de filtros colapsáveis ultracompactos, seletores de etapas deslizáveis com navegação rápida (< / >) e garantia de visibilidade imediata de múltiplos cartões.',
+          'Correção definitiva da rolagem e alinhamento do menu lateral no Desktop: tela configurada em altura 100dvh fixa com rolagem interna independente, impedindo vãos brancos ou subida da barra lateral em páginas extensas (Minhas Atividades, Programação, Colaboradores, etc.).',
+          'Alinhamento perfeito da barra de filtros da tela de Chamados na Web: controles de ordenação, campos visíveis e exibição de inativos unificados na mesma linha horizontal do botão de filtros.',
+          'Eliminação de espaços excessivos e vãos verticais em dispositivos móveis na aba de Processos Jurídicos.',
+          'Padronização da nomenclatura do módulo de agenda para "Programação" em todos os pontos da aplicação (menu, barra de navegação e botões).',
+          'Quebra de linha e responsividade ajustadas na tela de Início (Equipe em Campo Hoje e Mural & Pessoas) prevenindo descolamento lateral em telas menores.',
+        ],
+      },
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Novo filtro avançado por "Situação" na tela de Chamados: seletor de múltipla escolha pesquisável no frontend integrado com filtragem SQL no backend por ID ou descrição da situação.',
+          'Atalhos e módulos restritos por permissão: a vitrine de áreas de trabalho na tela de Início e as buscas rápidas exibem estritamente as páginas autorizadas para o usuário logado, ocultando categorias e cabeçalhos vazios.',
+          'Correção na conclusão de programação de encarregados e disponibilidade imediata do download de relatórios em PDF sem necessidade de recarregar a página.',
+          'Aprimoramento no upload de imagens em chamados via mobile e permissão de exclusão de anexos.',
+        ],
+      },
+      {
+        category: 'Segurança',
+        items: [
+          'Reset administrativo de PIN e assinatura: recurso exclusivo para administradores na gestão de acessos para recuperação de credenciais de assinatura esquecidas.',
+          'Descarte automático e seguro da assinatura prévia e remoção de bloqueios por tentativas incorretas ao executar o reset de PIN.',
+          'Registro de log de auditoria automático para cada redefinição de assinatura e PIN realizada (user_signature_pin_reset).',
+          'Indicadores visuais de status da credencial ("Cadastrado", "PIN Bloqueado" ou "Não configurado") na tabela de colaboradores.',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.4.4',
     date: '10/11/2026',
