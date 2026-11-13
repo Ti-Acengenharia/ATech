@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import { useLiveSync } from '../api/liveSync'
 import { getCompanyLogoDataUrl } from '../utils/companyLogo'
@@ -632,28 +632,33 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
         <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
-        <div className="calendar-week-strip no-print">
-          {week.map((day) => {
-            const isHoliday = holidayMap.has(day.date)
-            const holiday = holidayMap.get(day.date)
-            const isWorkSat = workSaturdayMap.has(day.date)
-            const workSat = workSaturdayMap.get(day.date)
-            return (
-              <button
-                type="button"
-                key={day.date}
-                className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
-                onClick={() => setDate(day.date)}
-                aria-pressed={day.date === date}
-                title={isHoliday ? `Feriado: ${holiday?.description}` : isWorkSat ? `Compensação: ${workSat?.description}` : undefined}
-              >
-                <span>{day.shortName}</span>
-                <strong>{day.number}</strong>
-                {isHoliday && <span className="calendar-day-tag holiday-tag">Feriado</span>}
-                {isWorkSat && <span className="calendar-day-tag saturday-tag">Compensação</span>}
-              </button>
-            )
-          })}
+        <div className="calendar-week-strip-container no-print">
+          <div className="calendar-week-strip">
+            {week.map((day) => {
+              const isHoliday = holidayMap.has(day.date)
+              const holiday = holidayMap.get(day.date)
+              const isWorkSat = workSaturdayMap.has(day.date)
+              const workSat = workSaturdayMap.get(day.date)
+              return (
+                <button
+                  type="button"
+                  key={day.date}
+                  className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
+                  onClick={() => setDate(day.date)}
+                  aria-pressed={day.date === date}
+                  title={isHoliday ? `Feriado: ${holiday?.description}` : isWorkSat ? `Compensação: ${workSat?.description}` : undefined}
+                >
+                  <span>{day.shortName}</span>
+                  <strong>{day.number}</strong>
+                  {isHoliday && <span className="calendar-day-tag holiday-tag">Feriado</span>}
+                  {isWorkSat && <span className="calendar-day-tag saturday-tag">Compensação</span>}
+                </button>
+              )
+            })}
+          </div>
+          <div className="calendar-week-continuity-hint mobile-only-text" aria-hidden="true">
+            <span>Deslize para ver outros dias</span> <ChevronRight size={13} />
+          </div>
         </div>
         {holidayMap.has(date) && (
           <div className="calendar-day-notice holiday-notice no-print" role="alert">

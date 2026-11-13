@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent, type FormEvent } from 'react'
-import { ArrowLeft, Download, FileSignature, KeyRound, PenLine, RotateCcw, X } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, FileSignature, KeyRound, PenLine, RotateCcw, X } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import type { TicketSummary } from './types'
 import { createCompletionTermPdf } from './completion-term-pdf'
@@ -96,7 +96,7 @@ export default function CompletionTermModal({
   onClose: () => void
   onSaveSignedPdf: (bytes: Uint8Array, fileName: string) => Promise<void>
 }) {
-  const [stage, setStage] = useState<'details' | 'pin' | 'sign'>('details')
+  const [stage, setStage] = useState<'details' | 'pin' | 'preview' | 'sign' | 'completed'>('details')
   const [serviceStartDate, setServiceStartDate] = useState(localDate)
   const [activities, setActivities] = useState('')
   const [clientName, setClientName] = useState('')
@@ -106,6 +106,8 @@ export default function CompletionTermModal({
   const [profileSignature, setProfileSignature] = useState<string | null>(null)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [clientSignature, setClientSignature] = useState('')
+  const [signedPdfUrl, setSignedPdfUrl] = useState<string | null>(null)
+  const [_signedFileName, setSignedFileName] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -159,7 +161,7 @@ export default function CompletionTermModal({
         throw new Error('Não há assinatura salva. Cadastre uma assinatura no seu perfil.')
       }
       setProfileSignature(result.signatureBase64)
-      setStage('sign')
+      setStage('preview')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível validar o PIN.')
     } finally {
@@ -170,8 +172,6 @@ export default function CompletionTermModal({
   async function createPdf(signed: boolean) {
     setBusy(true)
     setError('')
-    let openedWindow: Window | null = null
-    if (signed) openedWindow = window.open('', '_blank')
     try {
       const bytes = await createCompletionTermPdf(ticket, {
         serviceStartDate,
@@ -195,12 +195,15 @@ export default function CompletionTermModal({
       document.body.append(anchor)
       anchor.click()
       anchor.remove()
-      if (signed && openedWindow) openedWindow.location.href = url
-      else if (signed) window.open(url, '_blank', 'noopener,noreferrer')
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
-      onClose()
+      if (signed) {
+        setSignedPdfUrl(url)
+        setSignedFileName(fileName)
+        setStage('completed')
+      } else {
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+        onClose()
+      }
     } catch (requestError) {
-      openedWindow?.close()
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível gerar o termo de finalização.')
     } finally {
       setBusy(false)
@@ -213,9 +216,24 @@ export default function CompletionTermModal({
     <div className="completion-term-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section className="completion-term-modal" role="dialog" aria-modal="true" aria-labelledby="completion-term-heading">
         <header className="completion-term-header">
-          <div><span className="eyebrow">PROTOCOLO #{ticket.protocol}</span><h2 id="completion-term-heading">{stage === 'details' ? 'Termo de finalização' : 'Assinar documento'}</h2><p>{ticket.enterprise || 'Empreendimento não informado'}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</p></div>
+          <div>
+            <span className="eyebrow">PROTOCOLO #{ticket.protocol}</span>
+            <h2 id="completion-term-heading">
+              {stage === 'details'
+                ? 'Termo de finalização'
+                : stage === 'pin'
+                  ? 'Identificação do Técnico'
+                  : stage === 'preview'
+                    ? 'Prévia do Termo de Finalização'
+                    : stage === 'sign'
+                      ? 'Assinatura do Cliente'
+                      : 'Termo Finalizado com Sucesso'}
+            </h2>
+            <p>{ticket.enterprise || 'Sem empreendimento'}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</p>
+          </div>
           <button type="button" className="close-modal-btn" onClick={onClose} aria-label="Fechar"><X size={19} /></button>
         </header>
+
         {stage === 'details' ? (
           <form className="completion-term-form" onSubmit={saveSignature}>
             <div className="completion-term-auto-fields"><span><small>Empreendimento</small><strong>{ticket.enterprise || 'Não informado'}</strong></span><span><small>Bloco</small><strong>{ticket.block || 'Não informado'}</strong></span><span><small>Unidade</small><strong>{ticket.unit || 'Não informado'}</strong></span><span><small>Protocolo</small><strong>{ticket.protocol}</strong></span></div>
@@ -229,8 +247,8 @@ export default function CompletionTermModal({
             {error && <p className="form-error" role="alert">{error}</p>}
             <footer className="completion-term-actions">
               <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-              <button type="button" className="secondary-button" disabled={busy || !serviceStartDate || !activities.trim() || !clientName.trim() || !clientDocument.trim()} onClick={() => void createPdf(false)}><Download size={15} /> {busy ? 'Gerando...' : 'Baixar Termo'}</button>
-              <button type="submit" className="primary-button" disabled={busy || !serviceStartDate || !activities.trim() || !clientName.trim() || !clientDocument.trim() || !profileLoaded}><FileSignature size={15} /> Assinar documento</button>
+              <button type="button" className="secondary-button" disabled={busy || !serviceStartDate || !activities.trim() || !clientName.trim() || !clientDocument.trim()} onClick={() => void createPdf(false)}><Download size={15} /> {busy ? 'Gerando...' : 'Baixar Termo em branco'}</button>
+              <button type="submit" className="primary-button" disabled={busy || !serviceStartDate || !activities.trim() || !clientName.trim() || !clientDocument.trim() || !profileLoaded}><FileSignature size={15} /> Prosseguir para Assinatura</button>
             </footer>
           </form>
         ) : stage === 'pin' ? (
@@ -241,13 +259,88 @@ export default function CompletionTermModal({
             {error && <p className="form-error" role="alert">{error}</p>}
             <footer className="completion-term-actions">
               <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-              <button type="submit" className="primary-button" disabled={busy || !/^\d{6,12}$/.test(pin)}><KeyRound size={14} /> {busy ? 'Verificando PIN...' : 'Desbloquear assinatura'}</button>
+              <button type="submit" className="primary-button" disabled={busy || !/^\d{6,12}$/.test(pin)}><KeyRound size={14} /> {busy ? 'Verificando PIN...' : 'Validar PIN e Ver Prévia'}</button>
             </footer>
           </form>
-        ) : (
+        ) : stage === 'preview' ? (
+          <div className="completion-term-form">
+            <button type="button" className="completion-back-button" onClick={() => setStage('details')}><ArrowLeft size={14} /> Corrigir dados</button>
+            
+            <div className="completion-preview-banner">
+              <FileCheck size={16} />
+              <span>Solicite ao cliente que leia os dados do termo abaixo antes de assinar.</span>
+            </div>
+
+            <div className="completion-term-preview-sheet">
+              <div className="completion-preview-doc-header">
+                <div>
+                  <span className="eyebrow">AC ENGENHARIA LTDA</span>
+                  <h3>TERMO DE FINALIZAÇÃO E ACEITE DE SERVIÇOS</h3>
+                </div>
+                <span className="preview-protocol-badge">Protocolo #{ticket.protocol}</span>
+              </div>
+
+              <div className="completion-preview-meta-grid">
+                <div className="completion-preview-meta-item">
+                  <small>Empreendimento</small>
+                  <strong>{ticket.enterprise || 'Sem empreendimento / Interno'}</strong>
+                </div>
+                <div className="completion-preview-meta-item">
+                  <small>Bloco / Unidade</small>
+                  <strong>{ticket.block || '-'} / {ticket.unit || '-'}</strong>
+                </div>
+                <div className="completion-preview-meta-item">
+                  <small>Data do Início do Serviço</small>
+                  <strong>{serviceStartDate ? new Date(serviceStartDate + 'T12:00:00').toLocaleDateString('pt-BR') : '-'}</strong>
+                </div>
+                <div className="completion-preview-meta-item">
+                  <small>Cliente / Solicitante</small>
+                  <strong>{clientName} · Doc: {clientDocument}</strong>
+                </div>
+              </div>
+
+              <div className="completion-preview-activities-box">
+                <small>Serviços e Atividades Executadas</small>
+                <p>{activities}</p>
+              </div>
+
+              <p className="completion-preview-legal-note">
+                "Declaro para os devidos fins que os serviços de assistência técnica especificados acima foram devidamente executados, vistoriados e aceitos nesta data, encontrando-se em conformidade."
+              </p>
+
+              <div className="completion-preview-signers">
+                <div className="completion-preview-signer-card is-verified">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#15803d', fontWeight: 600, marginBottom: '4px' }}>
+                    <CheckCircle2 size={14} /> Técnico Responsável
+                  </div>
+                  <div>AC Engenharia · {currentUserName}</div>
+                  <small style={{ color: '#16a34a' }}>Assinatura eletrônica autenticada via PIN</small>
+                </div>
+
+                <div className="completion-preview-signer-card">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0369a1', fontWeight: 600, marginBottom: '4px' }}>
+                    <FileSignature size={14} /> Cliente
+                  </div>
+                  <div>{clientName} · {clientDocument}</div>
+                  <small style={{ color: '#64748b' }}>Aguardando coleta da assinatura</small>
+                </div>
+              </div>
+            </div>
+
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <footer className="completion-term-actions">
+              <button type="button" className="secondary-button" onClick={() => setStage('details')}>
+                <ArrowLeft size={14} /> Corrigir dados
+              </button>
+              <button type="button" className="primary-button highlight" onClick={() => setStage('sign')}>
+                <FileSignature size={15} /> Assinar Documento
+              </button>
+            </footer>
+          </div>
+        ) : stage === 'sign' ? (
           <form className="completion-term-form" onSubmit={(event) => { event.preventDefault(); void createPdf(true) }}>
-            <button type="button" className="completion-back-button" onClick={() => setStage('details')}><ArrowLeft size={14} /> Voltar aos dados do termo</button>
-            <p className="completion-sign-intro"><PenLine size={15} /> A assinatura salva no perfil de {currentUserName} será aplicada como assinatura da AC Engenharia. Agora, colete a assinatura do cliente.</p>
+            <button type="button" className="completion-back-button" onClick={() => setStage('preview')}><ArrowLeft size={14} /> Voltar à prévia do documento</button>
+            <p className="completion-sign-intro"><PenLine size={15} /> Solicite ao cliente que desenhe sua assinatura no quadro abaixo para validar o termo.</p>
             <div className="completion-sign-grid completion-sign-grid-client">
               <section className="completion-signer">
                 <h3>Cliente · {clientName} · RG/CPF {clientDocument}</h3>
@@ -256,10 +349,26 @@ export default function CompletionTermModal({
             </div>
             {error && <p className="form-error" role="alert">{error}</p>}
             <footer className="completion-term-actions">
-              <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-              <button type="submit" className="primary-button" disabled={busy || !signaturesReady || !clientName.trim() || !clientDocument.trim()}><FileSignature size={15} /> {busy ? 'Gerando documento...' : 'Gerar documento assinado'}</button>
+              <button type="button" className="secondary-button" onClick={() => setStage('preview')}>Voltar</button>
+              <button type="submit" className="primary-button" disabled={busy || !signaturesReady || !clientName.trim() || !clientDocument.trim()}><CheckCircle2 size={15} /> {busy ? 'Gerando documento...' : 'Confirmar e Finalizar Termo'}</button>
             </footer>
           </form>
+        ) : (
+          <div className="completion-term-form completion-completed-wrap">
+            <CheckCircle2 size={48} color="#16a34a" />
+            <h3>Termo de finalização assinado com sucesso!</h3>
+            <p>O documento assinado foi gerado, baixado no seu dispositivo e arquivado no histórico do chamado #{ticket.protocol}.</p>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {signedPdfUrl && (
+                <a href={signedPdfUrl} target="_blank" rel="noopener noreferrer" className="primary-button">
+                  <ExternalLink size={15} /> Visualizar PDF Assinado
+                </a>
+              )}
+              <button type="button" className="secondary-button" onClick={onClose}>
+                Concluir e Fechar
+              </button>
+            </div>
+          </div>
         )}
       </section>
     </div>

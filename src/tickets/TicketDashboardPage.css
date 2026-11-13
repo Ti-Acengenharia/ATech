@@ -348,6 +348,10 @@
   .ticket-dashboard-actions { width: 100%; justify-content: flex-start; }
 }
 
+.mobile-table-scroll-hint {
+  display: none;
+}
+
 @media (max-width: 620px) {
   .ticket-dashboard-page { padding: 18px 13px 24px; }
   .ticket-dashboard-heading h1 { font-size: 23px; }
@@ -355,7 +359,55 @@
   .ticket-dashboard-filters, .ticket-dashboard-metrics { grid-template-columns: minmax(0, 1fr); }
   .ticket-dashboard-type-filter { justify-content: flex-start; }
   .ticket-dashboard-panel-heading { align-items: flex-start; flex-direction: column; }
-  .ticket-dashboard-table { min-width: 560px; }
-  .ticket-dashboard-status-table { min-width: 650px; }
+  .ticket-dashboard-table { min-width: 520px; }
+  .ticket-dashboard-status-table { min-width: 480px; }
   .panel-controls-group { width: 100%; justify-content: flex-start; }
+
+  .mobile-table-scroll-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin-bottom: 6px;
+    font-size: 10.5px;
+    color: #1d4ed8;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+
+  .ticket-dashboard-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #94a3b8 #f1f5f9 !important;
+    padding-bottom: 8px !important;
+  }
+
+  .ticket-dashboard-status-table th:first-child,
+  .ticket-dashboard-status-table td:first-child {
+    min-width: 120px !important;
+    max-width: 135px !important;
+    font-size: 10px !important;
+    padding: 7px 6px !important;
+    word-break: break-word !important;
+    white-space: normal !important;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05) !important;
+  }
+
+  .ticket-dashboard-status-table th,
+  .ticket-dashboard-status-table td {
+    padding: 7px 8px !important;
+    font-size: 10px !important;
+    min-width: 75px !important;
+  }
+
+  .ticket-dashboard-pct {
+    display: block !important;
+    margin-left: 0 !important;
+    font-size: 9px !important;
+    color: #64748b !important;
+    line-height: 1.2 !important;
+  }
 }

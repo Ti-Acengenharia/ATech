@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Sparkles, Calendar, Tag, CheckCircle2, ChevronRight, X, Shield, Wrench, Palette, Server } from 'lucide-react'
+import { Sparkles, Calendar, Tag, CheckCircle2, ChevronRight, X, Shield, Wrench, Palette, Server, ArrowLeft } from 'lucide-react'
 import { APP_CURRENT_VERSION, APP_VERSION_HISTORY, type VersionRelease } from './version'
 import './VersionHistoryModal.css'
 
 export default function VersionHistoryModal({ onClose }: { onClose: () => void }) {
   const [selectedVersion, setSelectedVersion] = useState<VersionRelease>(APP_VERSION_HISTORY[0])
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
 
   function getCategoryIcon(cat: string) {
     switch (cat) {
@@ -33,8 +34,8 @@ export default function VersionHistoryModal({ onClose }: { onClose: () => void }
         </header>
 
         <div className="version-modal-layout">
-          {/* Navegação lateral de versões */}
-          <aside className="version-sidebar">
+          {/* Navegação lateral de versões (no mobile exibido apenas se mobileView === 'list') */}
+          <aside className={`version-sidebar ${mobileView === 'detail' ? 'mobile-hidden' : ''}`}>
             <span className="version-sidebar-title">HISTÓRICO DE RELEASES</span>
             <div className="version-list">
               {APP_VERSION_HISTORY.map((rel) => {
@@ -45,7 +46,10 @@ export default function VersionHistoryModal({ onClose }: { onClose: () => void }
                     type="button"
                     key={rel.version}
                     className={`version-nav-item ${isActive ? 'is-active' : ''}`}
-                    onClick={() => setSelectedVersion(rel)}
+                    onClick={() => {
+                      setSelectedVersion(rel)
+                      setMobileView('detail')
+                    }}
                   >
                     <div className="version-nav-main">
                       <div className="version-nav-row">
@@ -53,6 +57,7 @@ export default function VersionHistoryModal({ onClose }: { onClose: () => void }
                         {isCurrent && <span className="version-pill-current">Atual</span>}
                       </div>
                       <small><Calendar size={11} /> {rel.date}</small>
+                      <span className="version-nav-title-snippet">{rel.title}</span>
                     </div>
                     <ChevronRight size={14} className="version-nav-chevron" />
                   </button>
@@ -61,8 +66,16 @@ export default function VersionHistoryModal({ onClose }: { onClose: () => void }
             </div>
           </aside>
 
-          {/* Conteúdo detalhado da versão selecionada */}
-          <section className="version-detail-content">
+          {/* Conteúdo detalhado da versão selecionada (no mobile exibido apenas se mobileView === 'detail') */}
+          <section className={`version-detail-content ${mobileView === 'list' ? 'mobile-hidden' : ''}`}>
+            <button
+              type="button"
+              className="version-mobile-back-btn"
+              onClick={() => setMobileView('list')}
+            >
+              <ArrowLeft size={14} /> Voltar à lista de versões
+            </button>
+
             <div className="version-detail-hero">
               <div className="version-detail-heading-row">
                 <span className="version-detail-tag"><Tag size={13} /> {selectedVersion.version}</span>

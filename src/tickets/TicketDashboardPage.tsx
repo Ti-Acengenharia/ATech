@@ -15,6 +15,7 @@ import {
   Filter,
   LayoutGrid,
   List,
+  MoveHorizontal,
   RefreshCw,
   Search,
   Ticket,
@@ -1027,6 +1028,10 @@ export default function TicketDashboardPage({
             </header>
 
             <div className="ticket-dashboard-table-wrap">
+              <div className="mobile-table-scroll-hint mobile-only-text" aria-hidden="true">
+                <MoveHorizontal size={13} />
+                <span>Deslize a tabela para ver todos os empreendimentos e totais</span>
+              </div>
               <table className="ticket-dashboard-table ticket-dashboard-status-table">
                 <thead>
                   <tr>

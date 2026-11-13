@@ -569,22 +569,32 @@ router.get('/filter-options', async (_req, res, next) => {
     }
     const [enterprises, blocks, units, subjects, subsubjects, years, dashboardSubjects] = await Promise.all([
       pool.query<{ value: string }>(
-        `SELECT min(btrim(enterprise)) AS value FROM tickets
-         WHERE ($1::boolean OR source_active = TRUE) AND btrim(enterprise) <> ''
-         GROUP BY lower(btrim(enterprise)) ORDER BY lower(min(btrim(enterprise)))`,
+        `SELECT CASE
+           WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'Sem empreendimento'
+           ELSE min(btrim(enterprise))
+         END AS value FROM tickets
+         WHERE ($1::boolean OR source_active = TRUE)
+         GROUP BY CASE
+           WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'sem empreendimento'
+           ELSE lower(btrim(enterprise))
+         END
+         ORDER BY CASE
+           WHEN (CASE WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'sem empreendimento' ELSE lower(btrim(enterprise)) END) = 'sem empreendimento' THEN 1
+           ELSE 0
+         END, value`,
         [includeInactive],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(block)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(block) <> ''
-           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]))
+           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (enterprise IS NULL OR btrim(enterprise) = '')))
          GROUP BY lower(btrim(block)) ORDER BY lower(min(btrim(block)))`,
         [includeInactive, selectedEnterprises],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(unit)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(unit) <> ''
-           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]))
+           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (enterprise IS NULL OR btrim(enterprise) = '')))
            AND (cardinality($3::text[]) = 0 OR lower(btrim(block)) = ANY($3::text[]))
          GROUP BY lower(btrim(unit)) ORDER BY lower(min(btrim(unit)))`,
         [includeInactive, selectedEnterprises, selectedBlocks],
@@ -753,7 +763,7 @@ router.get('/dashboard', async (req, res, next) => {
            OR (NOT t.source_active AND t.source_modified_at >= make_date($8::int, 1, 1))
            OR ($9::text IS NOT NULL AND $9::text <> '' AND NOT t.source_active AND t.source_modified_at >= ($9::text || '-01')::date)
          )
-           AND (cardinality($1::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($1::text[]))
+           AND (cardinality($1::text[]) = 0 OR lower(btrim(COALESCE(t.enterprise, ''))) = ANY($1::text[]) OR ('sem empreendimento' = ANY($1::text[]) AND (t.enterprise IS NULL OR btrim(t.enterprise) = '')))
            AND (cardinality($2::text[]) = 0 OR lower(btrim(t.block)) = ANY($2::text[]))
            AND (cardinality($3::text[]) = 0 OR lower(btrim(t.unit)) = ANY($3::text[]))
            AND ($4 = '' OR lower(t.customer_name) LIKE '%' || lower($4) || '%')
@@ -1057,7 +1067,7 @@ router.get('/', async (req, res, next) => {
                AND strpos(lower(t.source_creator_name), lower(btrim(t.enterprise))) > 0 THEN 'condominium'
              ELSE NULL
            END = ANY($11::text[]))
-         AND (cardinality($2::text[]) = 0 OR lower(btrim(t.enterprise)) = ANY($2::text[]))
+         AND (cardinality($2::text[]) = 0 OR lower(btrim(COALESCE(t.enterprise, ''))) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (t.enterprise IS NULL OR btrim(t.enterprise) = '')))
          AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
          AND (cardinality($4::text[]) = 0 OR lower(btrim(t.unit)) = ANY($4::text[]))
          AND ($5 = '' OR lower(t.customer_name) LIKE $5)
