@@ -421,6 +421,8 @@ async function findCollaboratorProgrammingConflicts(
   collaboratorId: number,
   startDateStr: string,
   endDateStr: string,
+  startTimeStr?: string | null,
+  endTimeStr?: string | null,
 ) {
   const result = await clientOrPool.query<{
     id: number
@@ -444,26 +446,41 @@ async function findCollaboratorProgrammingConflicts(
      ORDER BY p.starts_at ASC`,
     [collaboratorId, startDateStr, endDateStr],
   )
-  return result.rows.map((row) => {
-    const dateFormatted = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Maceio',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(row.starts_at)
-    return {
-      id: row.id,
-      ticketId: row.ticket_id,
-      legalProcessId: row.legal_process_id,
-      activityDescription: row.activity_description,
-      date: dateFormatted,
-      startsAt: row.starts_at.toISOString(),
-      endsAt: row.ends_at.toISOString(),
-      enterprise: row.enterprise ?? '',
-      protocol: row.protocol ?? '',
-      completed: row.completed,
-    }
+  const hasTimeFilter = Boolean(startTimeStr && endTimeStr)
+  const timeFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Maceio',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   })
+
+  return result.rows
+    .filter((row) => {
+      if (!hasTimeFilter) return true
+      const rowStarts = timeFormatter.format(row.starts_at)
+      const rowEnds = timeFormatter.format(row.ends_at)
+      return rowStarts < endTimeStr! && rowEnds > startTimeStr!
+    })
+    .map((row) => {
+      const dateFormatted = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Maceio',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(row.starts_at)
+      return {
+        id: row.id,
+        ticketId: row.ticket_id,
+        legalProcessId: row.legal_process_id,
+        activityDescription: row.activity_description,
+        date: dateFormatted,
+        startsAt: row.starts_at.toISOString(),
+        endsAt: row.ends_at.toISOString(),
+        enterprise: row.enterprise ?? '',
+        protocol: row.protocol ?? '',
+        completed: row.completed,
+      }
+    })
 }
 
 router.get('/absences', async (req, res, next) => {
@@ -507,6 +524,8 @@ router.get('/absences', async (req, res, next) => {
       start_date: string
       days_count: number
       end_date: string
+      start_time: string | null
+      end_time: string | null
       cid: string | null
       notes: string | null
       created_by_name: string
@@ -516,6 +535,7 @@ router.get('/absences', async (req, res, next) => {
               c.role AS collaborator_role, COALESCE(r.label, c.role) AS collaborator_role_label,
               c.registration_number, (c.photo_content IS NOT NULL) AS has_photo,
               a.type, a.start_date::text, a.days_count, a.end_date::text,
+              a.start_time, a.end_time,
               a.cid, a.notes, u.display_name AS created_by_name, a.created_at
        FROM collaborator_absences a
        JOIN collaborators c ON c.id = a.collaborator_id
@@ -547,6 +567,8 @@ router.get('/absences', async (req, res, next) => {
         startDate: row.start_date,
         daysCount: row.days_count,
         endDate: row.end_date,
+        startTime: row.start_time ?? null,
+        endTime: row.end_time ?? null,
         cid: row.cid ?? '',
         notes: row.notes ?? '',
         createdByName: row.created_by_name,
@@ -572,6 +594,13 @@ router.get('/:id/programming-conflicts', async (req, res, next) => {
   const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
   const startDate = dateSchema.safeParse(req.query.startDate)
   const daysCount = z.coerce.number().int().min(1).max(365).safeParse(req.query.daysCount ?? 1)
+  const startTime = typeof req.query.startTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(req.query.startTime)
+    ? req.query.startTime
+    : null
+  const endTime = typeof req.query.endTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(req.query.endTime)
+    ? req.query.endTime
+    : null
+
   if (!collaboratorId.success || !startDate.success || !daysCount.success) {
     res.status(400).json({ error: 'Parâmetros de data ou colaborador inválidos.' })
     return
@@ -583,7 +612,14 @@ router.get('/:id/programming-conflicts', async (req, res, next) => {
       [startDate.data, daysCount.data],
     )
     const endDateStr = endCalc.rows[0].end_date
-    const conflicts = await findCollaboratorProgrammingConflicts(pool, collaboratorId.data, startDate.data, endDateStr)
+    const conflicts = await findCollaboratorProgrammingConflicts(
+      pool,
+      collaboratorId.data,
+      startDate.data,
+      endDateStr,
+      startTime,
+      endTime,
+    )
     res.json({ conflicts, startDate: startDate.data, endDate: endDateStr, daysCount: daysCount.data })
   } catch (error) {
     next(error)
@@ -596,6 +632,8 @@ router.post('/absences', async (req, res, next) => {
     type: z.enum(['atestado', 'falta_injustificada']),
     startDate: dateSchema,
     daysCount: z.coerce.number().int().min(1).max(365),
+    startTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().nullable(),
+    endTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().nullable(),
     cid: z.string().trim().max(20).optional().nullable(),
     notes: z.string().trim().max(2000).optional().nullable(),
   })
@@ -606,8 +644,20 @@ router.post('/absences', async (req, res, next) => {
   }
 
   const { collaboratorId, type, startDate, daysCount } = parsed.data
+  const startTime = parsed.data.startTime ? parsed.data.startTime.trim() : null
+  const endTime = parsed.data.endTime ? parsed.data.endTime.trim() : null
   const cid = parsed.data.cid ? parsed.data.cid.trim() : null
   const notes = parsed.data.notes ? parsed.data.notes.trim() : null
+
+  if ((startTime && !endTime) || (!startTime && endTime)) {
+    res.status(400).json({ error: 'Informe tanto o horário de início quanto o de término, ou deixe em branco para dia inteiro.' })
+    return
+  }
+
+  if (startTime && endTime && daysCount === 1 && startTime >= endTime) {
+    res.status(400).json({ error: 'O horário de término deve ser posterior ao horário de início.' })
+    return
+  }
 
   const client = await pool.connect()
   try {
@@ -634,13 +684,20 @@ router.post('/absences', async (req, res, next) => {
       created_at: Date
     }>(
       `INSERT INTO collaborator_absences (
-        collaborator_id, type, start_date, days_count, end_date, cid, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        collaborator_id, type, start_date, days_count, end_date, start_time, end_time, cid, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id, created_at`,
-      [collaboratorId, type, startDate, daysCount, endDate, cid, notes, req.session.user!.id],
+      [collaboratorId, type, startDate, daysCount, endDate, startTime, endTime, cid, notes, req.session.user!.id],
     )
 
-    const conflicts = await findCollaboratorProgrammingConflicts(client, collaboratorId, startDate, endDate)
+    const conflicts = await findCollaboratorProgrammingConflicts(
+      client,
+      collaboratorId,
+      startDate,
+      endDate,
+      startTime,
+      endTime,
+    )
 
     await client.query('COMMIT')
     void broadcastSyncEvent({ scope: 'collaborators', action: 'absence', entityId: collaboratorId })
@@ -654,6 +711,8 @@ router.post('/absences', async (req, res, next) => {
         startDate,
         daysCount,
         endDate,
+        startTime,
+        endTime,
         cid: cid ?? '',
         notes: notes ?? '',
         createdAt: insertResult.rows[0].created_at.toISOString(),
@@ -662,6 +721,128 @@ router.post('/absences', async (req, res, next) => {
       hasConflicts: conflicts.length > 0,
       conflictMessage: conflicts.length > 0
         ? `Atenção: O colaborador ${collaboratorCheck.rows[0].name} possui ${conflicts.length} atividade(s) agendada(s) durante este período. Você precisa rever a programação prevista na aba de Programação.`
+        : null,
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.put('/absences/:id', async (req, res, next) => {
+  const absenceId = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!absenceId.success) {
+    res.status(400).json({ error: 'Identificador de ausência inválido.' })
+    return
+  }
+
+  const schema = z.object({
+    type: z.enum(['atestado', 'falta_injustificada']),
+    startDate: dateSchema,
+    daysCount: z.coerce.number().int().min(1).max(365),
+    startTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().nullable(),
+    endTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().nullable(),
+    cid: z.string().trim().max(20).optional().nullable(),
+    notes: z.string().trim().max(2000).optional().nullable(),
+  })
+  const parsed = schema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados de falta ou atestado inválidos. Verifique as informações.' })
+    return
+  }
+
+  const { type, startDate, daysCount } = parsed.data
+  const startTime = parsed.data.startTime ? parsed.data.startTime.trim() : null
+  const endTime = parsed.data.endTime ? parsed.data.endTime.trim() : null
+  const cid = parsed.data.cid ? parsed.data.cid.trim() : null
+  const notes = parsed.data.notes ? parsed.data.notes.trim() : null
+
+  if ((startTime && !endTime) || (!startTime && endTime)) {
+    res.status(400).json({ error: 'Informe tanto o horário de início quanto o de término, ou deixe em branco para dia inteiro.' })
+    return
+  }
+
+  if (startTime && endTime && daysCount === 1 && startTime >= endTime) {
+    res.status(400).json({ error: 'O horário de término deve ser posterior ao horário de início.' })
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    const existing = await client.query<{
+      id: string
+      collaborator_id: string
+      collaborator_name: string
+    }>(
+      `SELECT a.id, a.collaborator_id, c.name AS collaborator_name
+       FROM collaborator_absences a
+       JOIN collaborators c ON c.id = a.collaborator_id
+       WHERE a.id = $1`,
+      [absenceId.data],
+    )
+    if (existing.rowCount === 0) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Registro de ausência não encontrado.' })
+      return
+    }
+
+    const { collaborator_id: collaboratorId, collaborator_name: collaboratorName } = existing.rows[0]
+
+    const endCalc = await client.query<{ end_date: string }>(
+      "SELECT ($1::date + (($2::int - 1) * interval '1 day'))::text AS end_date",
+      [startDate, daysCount],
+    )
+    const endDate = endCalc.rows[0].end_date
+
+    await client.query(
+      `UPDATE collaborator_absences
+       SET type = $1,
+           start_date = $2,
+           days_count = $3,
+           end_date = $4,
+           start_time = $5,
+           end_time = $6,
+           cid = $7,
+           notes = $8,
+           updated_at = now()
+       WHERE id = $9`,
+      [type, startDate, daysCount, endDate, startTime, endTime, cid, notes, absenceId.data],
+    )
+
+    const conflicts = await findCollaboratorProgrammingConflicts(
+      client,
+      Number(collaboratorId),
+      startDate,
+      endDate,
+      startTime,
+      endTime,
+    )
+
+    await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'collaborators', action: 'absence', entityId: collaboratorId })
+
+    res.json({
+      absence: {
+        id: String(absenceId.data),
+        collaboratorId,
+        collaboratorName,
+        type,
+        startDate,
+        daysCount,
+        endDate,
+        startTime,
+        endTime,
+        cid: cid ?? '',
+        notes: notes ?? '',
+      },
+      conflicts,
+      hasConflicts: conflicts.length > 0,
+      conflictMessage: conflicts.length > 0
+        ? `Atenção: O colaborador ${collaboratorName} possui ${conflicts.length} atividade(s) agendada(s) durante este período. Você precisa rever a programação prevista na aba de Programação.`
         : null,
     })
   } catch (error) {
@@ -1454,12 +1635,15 @@ router.get('/:id/report', async (req, res, next) => {
       start_date: string
       days_count: number
       end_date: string
+      start_time: string | null
+      end_time: string | null
       cid: string | null
       notes: string | null
       created_by_name: string
       created_at: Date
     }>(
       `SELECT a.id, a.type, a.start_date::text, a.days_count, a.end_date::text,
+              a.start_time, a.end_time,
               a.cid, a.notes, u.display_name AS created_by_name, a.created_at
        FROM collaborator_absences a
        JOIN users u ON u.id = a.created_by
@@ -1569,6 +1753,8 @@ router.get('/:id/report', async (req, res, next) => {
           startDate: row.start_date,
           daysCount: row.days_count,
           endDate: row.end_date,
+          startTime: row.start_time ?? null,
+          endTime: row.end_time ?? null,
           cid: row.cid ?? '',
           notes: row.notes ?? '',
           createdByName: row.created_by_name,

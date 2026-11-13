@@ -195,6 +195,8 @@ interface HomeSummaryData {
     collaboratorRole: string
     startDate: string
     endDate: string
+    startTime?: string | null
+    endTime?: string | null
     cid?: string | null
   }>
   personalTasksCount: number | null
@@ -815,7 +817,8 @@ export default function HomeDashboard({
                 <div className="home-absence-pills">
                   {summary.absencesToday.map((abs) => (
                     <span key={abs.id} className="home-absence-pill">
-                      {abs.collaboratorName} ({abs.type === 'atestado' ? 'Atestado' : 'Falta'})
+                      {abs.collaboratorName} ({abs.type === 'atestado' ? 'Atestado' : 'Falta'}
+                      {abs.startTime && abs.endTime ? ` ${abs.startTime}-${abs.endTime}` : ''})
                       {abs.cid ? ` · CID ${abs.cid}` : ''}
                     </span>
                   ))}

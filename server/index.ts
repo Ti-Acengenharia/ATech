@@ -269,6 +269,9 @@ async function ensureDatabaseSchema() {
         ON collaborator_absences (collaborator_id, start_date DESC);
       CREATE INDEX IF NOT EXISTS collaborator_absences_date_range_idx
         ON collaborator_absences (start_date, end_date);
+      ALTER TABLE collaborator_absences
+        ADD COLUMN IF NOT EXISTS start_time VARCHAR(5),
+        ADD COLUMN IF NOT EXISTS end_time VARCHAR(5);
       CREATE TABLE IF NOT EXISTS application_settings (
         setting_key VARCHAR(100) PRIMARY KEY,
         setting_value JSONB NOT NULL,

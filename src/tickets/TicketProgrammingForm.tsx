@@ -264,7 +264,7 @@ export default function TicketProgrammingForm({
   const [availabilityState, setAvailabilityState] = useState<{
     requestKey: string
     appointments: Record<string, AvailabilityEntry[]>
-    absences: Record<string, Array<{ id: string; type: string; startDate: string; endDate: string; cid: string | null }>>
+    absences: Record<string, Array<{ id: string; type: string; startDate: string; endDate: string; startTime?: string | null; endTime?: string | null; cid: string | null }>>
     error: string | null
   }>({ requestKey: '', appointments: {}, absences: {}, error: null })
   const [loadingPeople, setLoadingPeople] = useState(true)
@@ -486,7 +486,7 @@ export default function TicketProgrammingForm({
       if (editingAppointment) params.set('excludeId', editingAppointment.id)
       const result = await apiRequest<{
         appointments: AvailabilityEntry[]
-        absences?: Array<{ id: string; type: string; startDate: string; endDate: string; cid: string | null }>
+        absences?: Array<{ id: string; type: string; startDate: string; endDate: string; startTime?: string | null; endTime?: string | null; cid: string | null }>
       }>(`/api/programming/availability?${params}`)
       return [collaboratorId, result.appointments, result.absences || []] as const
     }))
@@ -1066,7 +1066,7 @@ export default function TicketProgrammingForm({
                 const person = collaborators.find((c) => c.id === collabId)
                 return absList.map((abs) => (
                   <li key={abs.id}>
-                    <strong>{person?.name || 'Colaborador'}:</strong> {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}{abs.cid ? ` (CID ${abs.cid})` : ''} · {abs.startDate.split('-').reverse().join('/')} a {abs.endDate.split('-').reverse().join('/')} (Programação bloqueada)
+                    <strong>{person?.name || 'Colaborador'}:</strong> {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}{abs.cid ? ` (CID ${abs.cid})` : ''} · {abs.startDate.split('-').reverse().join('/')} a {abs.endDate.split('-').reverse().join('/')} {abs.startTime && abs.endTime ? `(das ${abs.startTime} às ${abs.endTime})` : '(Dia inteiro bloqueado)'}
                   </li>
                 ))
               })}

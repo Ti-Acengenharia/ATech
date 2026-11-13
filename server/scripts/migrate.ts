@@ -76,6 +76,7 @@ try {
     '054_enterprise_work_status.sql',
     '055_whatsapp_settings.sql',
     '056_clean_api_validation_access.sql',
+    '057_collaborator_absence_times.sql',
   ]
 
   let newlyAppliedCount = 0

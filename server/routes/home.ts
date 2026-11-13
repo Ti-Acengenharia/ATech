@@ -286,9 +286,11 @@ router.get('/summary', async (req, res, next) => {
             collaborator_role: string
             start_date: string
             end_date: string
+            start_time: string | null
+            end_time: string | null
             cid: string | null
           }>(
-            `SELECT a.id, a.type, a.start_date, a.end_date, a.cid,
+            `SELECT a.id, a.type, a.start_date, a.end_date, a.start_time, a.end_time, a.cid,
                     c.id AS collaborator_id, c.name AS collaborator_name, c.role AS collaborator_role
              FROM collaborator_absences a
              JOIN collaborators c ON c.id = a.collaborator_id
@@ -378,6 +380,8 @@ router.get('/summary', async (req, res, next) => {
         collaboratorRole: abs.collaborator_role,
         startDate: abs.start_date,
         endDate: abs.end_date,
+        startTime: abs.start_time ?? null,
+        endTime: abs.end_time ?? null,
         cid: abs.cid,
       })),
       personalTasksCount: personalTasks,

@@ -140,6 +140,8 @@ interface CollaboratorReport {
     startDate: string
     daysCount: number
     endDate: string
+    startTime?: string | null
+    endTime?: string | null
     cid: string
     notes: string
     createdByName: string
@@ -165,6 +167,8 @@ interface CollaboratorAbsence {
   startDate: string
   daysCount: number
   endDate: string
+  startTime: string | null
+  endTime: string | null
   cid: string
   notes: string
   createdByName: string
@@ -383,11 +387,15 @@ export default function CollaboratorsPage({
   const [deliverySubmitting, setDeliverySubmitting] = useState(false)
   const [deliveryError, setDeliveryError] = useState('')
   const [absenceModalOpen, setAbsenceModalOpen] = useState(false)
+  const [editingAbsenceId, setEditingAbsenceId] = useState<string | null>(null)
   const [absenceForm, setAbsenceForm] = useState<{
     collaboratorId: string
     type: 'atestado' | 'falta_injustificada'
     startDate: string
     daysCount: number
+    isFullDay: boolean
+    startTime: string
+    endTime: string
     cid: string
     notes: string
   }>(() => ({
@@ -395,6 +403,9 @@ export default function CollaboratorsPage({
     type: 'atestado',
     startDate: localDateString(new Date()),
     daysCount: 1,
+    isFullDay: true,
+    startTime: '',
+    endTime: '',
     cid: '',
     notes: '',
   }))
@@ -539,15 +550,30 @@ export default function CollaboratorsPage({
     setFormOpen(true)
   }
 
-  async function checkScheduleConflicts(collaboratorId: string, startDate: string, daysCount: number) {
+  async function checkScheduleConflicts(
+    collaboratorId: string,
+    startDate: string,
+    daysCount: number,
+    isFullDay?: boolean,
+    startTime?: string,
+    endTime?: string,
+  ) {
     if (!collaboratorId || !startDate) {
       setAbsenceConflicts([])
       return
     }
     setCheckingConflicts(true)
     try {
+      const params = new URLSearchParams({
+        startDate,
+        daysCount: String(daysCount || 1),
+      })
+      if (!isFullDay && startTime && endTime) {
+        params.set('startTime', startTime)
+        params.set('endTime', endTime)
+      }
       const res = await apiRequest<{ conflicts: ProgrammingConflict[] }>(
-        `/api/collaborators/${collaboratorId}/programming-conflicts?startDate=${startDate}&daysCount=${daysCount || 1}`
+        `/api/collaborators/${collaboratorId}/programming-conflicts?${params.toString()}`
       )
       setAbsenceConflicts(res.conflicts || [])
     } catch {
@@ -560,26 +586,80 @@ export default function CollaboratorsPage({
   function openAbsenceModal(collaboratorId?: string) {
     const targetCollabId = collaboratorId ?? (collaborators[0]?.id || '')
     const defaultStart = localDateString(new Date())
+    setEditingAbsenceId(null)
     setAbsenceForm({
       collaboratorId: targetCollabId,
       type: 'atestado',
       startDate: defaultStart,
       daysCount: 1,
+      isFullDay: true,
+      startTime: '',
+      endTime: '',
       cid: '',
       notes: '',
     })
     setAbsenceConflicts([])
     setAbsenceModalOpen(true)
     if (targetCollabId) {
-      void checkScheduleConflicts(targetCollabId, defaultStart, 1)
+      void checkScheduleConflicts(targetCollabId, defaultStart, 1, true, '', '')
+    }
+  }
+
+  function openEditAbsenceModal(
+    abs: {
+      id: string
+      collaboratorId?: string
+      type: 'atestado' | 'falta_injustificada'
+      startDate: string
+      daysCount: number
+      endDate: string
+      startTime?: string | null
+      endTime?: string | null
+      cid?: string | null
+      notes?: string | null
+    },
+    fallbackCollabId?: string,
+  ) {
+    setEditingAbsenceId(abs.id)
+    const targetCollabId = String(abs.collaboratorId || fallbackCollabId || report?.id || '')
+    const isFullDay = !abs.startTime && !abs.endTime
+    setAbsenceForm({
+      collaboratorId: targetCollabId,
+      type: abs.type,
+      startDate: abs.startDate,
+      daysCount: abs.daysCount || 1,
+      isFullDay,
+      startTime: abs.startTime || '',
+      endTime: abs.endTime || '',
+      cid: abs.cid || '',
+      notes: abs.notes || '',
+    })
+    setAbsenceConflicts([])
+    setAbsenceModalOpen(true)
+    if (targetCollabId) {
+      void checkScheduleConflicts(
+        targetCollabId,
+        abs.startDate,
+        abs.daysCount || 1,
+        isFullDay,
+        abs.startTime || '',
+        abs.endTime || '',
+      )
     }
   }
 
   function updateAbsenceField<K extends keyof typeof absenceForm>(key: K, value: typeof absenceForm[K]) {
     setAbsenceForm((curr) => {
       const next = { ...curr, [key]: value }
-      if (key === 'collaboratorId' || key === 'startDate' || key === 'daysCount') {
-        void checkScheduleConflicts(next.collaboratorId, next.startDate, next.daysCount)
+      if (['collaboratorId', 'startDate', 'daysCount', 'isFullDay', 'startTime', 'endTime'].includes(key as string)) {
+        void checkScheduleConflicts(
+          next.collaboratorId,
+          next.startDate,
+          next.daysCount,
+          next.isFullDay,
+          next.startTime,
+          next.endTime,
+        )
       }
       return next
     })
@@ -591,23 +671,44 @@ export default function CollaboratorsPage({
       setNotice({ kind: 'error', text: 'Selecione o colaborador.' })
       return
     }
+
+    if (!absenceForm.isFullDay) {
+      if (!absenceForm.startTime || !absenceForm.endTime) {
+        setNotice({ kind: 'error', text: 'Informe tanto o horário de início quanto o horário de término, ou marque a opção de dia inteiro.' })
+        return
+      }
+      if (absenceForm.daysCount === 1 && absenceForm.startTime >= absenceForm.endTime) {
+        setNotice({ kind: 'error', text: 'O horário de término deve ser posterior ao horário de início.' })
+        return
+      }
+    }
+
     setAbsenceSubmitting(true)
     try {
+      const payload = {
+        collaboratorId: Number(absenceForm.collaboratorId),
+        type: absenceForm.type,
+        startDate: absenceForm.startDate,
+        daysCount: Number(absenceForm.daysCount),
+        startTime: !absenceForm.isFullDay && absenceForm.startTime ? absenceForm.startTime : null,
+        endTime: !absenceForm.isFullDay && absenceForm.endTime ? absenceForm.endTime : null,
+        cid: absenceForm.cid.trim() || null,
+        notes: absenceForm.notes.trim() || null,
+      }
+
+      const endpoint = editingAbsenceId
+        ? `/api/collaborators/absences/${editingAbsenceId}`
+        : '/api/collaborators/absences'
+      const method = editingAbsenceId ? 'PUT' : 'POST'
+
       const result = await apiRequest<{
         absence: CollaboratorAbsence
         conflicts: ProgrammingConflict[]
         hasConflicts: boolean
         conflictMessage: string | null
-      }>('/api/collaborators/absences', {
-        method: 'POST',
-        body: JSON.stringify({
-          collaboratorId: Number(absenceForm.collaboratorId),
-          type: absenceForm.type,
-          startDate: absenceForm.startDate,
-          daysCount: Number(absenceForm.daysCount),
-          cid: absenceForm.cid.trim() || null,
-          notes: absenceForm.notes.trim() || null,
-        }),
+      }>(endpoint, {
+        method,
+        body: JSON.stringify(payload),
       })
 
       setAbsenceModalOpen(false)
@@ -621,12 +722,12 @@ export default function CollaboratorsPage({
         })
         setNotice({
           kind: 'warning',
-          text: `Atestado/falta cadastrado com sucesso! ATENÇÃO: O colaborador possui ${result.conflicts.length} atividade(s) agendada(s) no período de ausência. Você precisa rever a programação prevista na aba de Programação.`,
+          text: `${editingAbsenceId ? 'Ausência atualizada' : 'Atestado/falta cadastrado'} com sucesso! ATENÇÃO: O colaborador possui ${result.conflicts.length} atividade(s) agendada(s) no período de ausência. Você precisa rever a programação prevista na aba de Programação.`,
         })
       } else {
         setNotice({
           kind: 'success',
-          text: `${absenceForm.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'} cadastrado com sucesso.`,
+          text: `${absenceForm.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'} ${editingAbsenceId ? 'atualizado' : 'cadastrado'} com sucesso.`,
         })
       }
 
@@ -639,7 +740,7 @@ export default function CollaboratorsPage({
     } catch (error) {
       setNotice({
         kind: 'error',
-        text: error instanceof Error ? error.message : 'Não foi possível cadastrar a ausência.',
+        text: error instanceof Error ? error.message : `Não foi possível ${editingAbsenceId ? 'atualizar' : 'cadastrar'} a ausência.`,
       })
     } finally {
       setAbsenceSubmitting(false)
@@ -807,7 +908,8 @@ export default function CollaboratorsPage({
         }
 
         document.setTextColor(51, 65, 85)
-        document.text(`${formatDate(item.startDate)} a ${formatDate(item.endDate)}`, margin + 146, y + 3)
+        const timeNote = item.startTime && item.endTime ? ` (${item.startTime}-${item.endTime})` : ''
+        document.text(`${formatDate(item.startDate)}${item.startDate !== item.endDate ? ` a ${formatDate(item.endDate)}` : ''}${timeNote}`, margin + 146, y + 3)
         document.text(`${item.daysCount} d`, margin + 191, y + 3)
         document.text(item.cid || '—', margin + 206, y + 3)
         document.text(document.splitTextToSize(item.createdByName, 36).slice(0, 1), margin + 228, y + 3)
@@ -1571,12 +1673,28 @@ export default function CollaboratorsPage({
                           {report.absences.map((abs) => (
                             <tr key={abs.id}>
                               <td><span className={`absence-badge ${abs.type === 'atestado' ? 'absence-badge-atestado' : 'absence-badge-falta'}`}>{abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}</span></td>
-                              <td>{formatDate(abs.startDate)} a {formatDate(abs.endDate)}</td>
+                              <td>
+                                <div>{formatDate(abs.startDate)} {abs.startDate !== abs.endDate ? `a ${formatDate(abs.endDate)}` : ''}</div>
+                                {abs.startTime && abs.endTime ? (
+                                  <small style={{ color: '#0369a1', fontWeight: 600, display: 'block' }}>
+                                    {abs.startTime} às {abs.endTime}
+                                  </small>
+                                ) : (
+                                  <small style={{ color: '#64748b', display: 'block' }}>Dia inteiro</small>
+                                )}
+                              </td>
                               <td>{abs.daysCount} {abs.daysCount === 1 ? 'dia' : 'dias'}</td>
                               <td>{abs.cid || '—'}</td>
                               <td>{abs.notes || '—'}</td>
                               <td><small>{abs.createdByName}<br />{formatDate(abs.createdAt)}</small></td>
-                              <td><button className="icon-button danger-button" type="button" title="Remover registro de ausência" onClick={() => void deleteAbsence(abs.id, report.id)}><Trash2 size={14} /></button></td>
+                              <td style={{ whiteSpace: 'nowrap' }}>
+                                <button className="icon-button" type="button" title="Editar registro de ausência e horários" onClick={() => openEditAbsenceModal(abs, report.id)} style={{ marginRight: '4px' }}>
+                                  <Pencil size={14} />
+                                </button>
+                                <button className="icon-button danger-button" type="button" title="Remover registro de ausência" onClick={() => void deleteAbsence(abs.id, report.id)}>
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1703,9 +1821,9 @@ export default function CollaboratorsPage({
           <section className="collaborator-report-picker" style={{ width: 'min(100%, 620px)' }} role="dialog" aria-modal="true" aria-labelledby="absence-modal-title">
             <header>
               <div>
-                <span className="eyebrow">REGISTRO DE AUSÊNCIA</span>
-                <h2 id="absence-modal-title">Cadastrar falta ou atestado</h2>
-                <p>Lance afastamentos médicos ou faltas injustificadas da equipe.</p>
+                <span className="eyebrow">{editingAbsenceId ? 'EDIÇÃO DE AUSÊNCIA' : 'REGISTRO DE AUSÊNCIA'}</span>
+                <h2 id="absence-modal-title">{editingAbsenceId ? 'Editar falta ou atestado' : 'Cadastrar falta ou atestado'}</h2>
+                <p>{editingAbsenceId ? 'Ajuste os horários, datas e observações da ausência.' : 'Lance afastamentos médicos ou faltas injustificadas da equipe.'}</p>
               </div>
               <button className="icon-button" type="button" aria-label="Fechar" onClick={() => setAbsenceModalOpen(false)}><X size={18} /></button>
             </header>
@@ -1716,6 +1834,7 @@ export default function CollaboratorsPage({
                   <select
                     value={absenceForm.collaboratorId}
                     onChange={(e) => updateAbsenceField('collaboratorId', e.target.value)}
+                    disabled={Boolean(editingAbsenceId)}
                     required
                   >
                     <option value="">Selecione um colaborador</option>
@@ -1770,6 +1889,43 @@ export default function CollaboratorsPage({
 
                 <div style={{ fontSize: '11px', color: '#475569', background: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                   <strong>Período calculado:</strong> {formatDate(absenceForm.startDate)} até {formatDate(calculateEndDate(absenceForm.startDate, absenceForm.daysCount))} ({absenceForm.daysCount} {absenceForm.daysCount === 1 ? 'dia' : 'dias'})
+                </div>
+
+                <div style={{ display: 'grid', gap: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
+                    <input
+                      type="checkbox"
+                      checked={absenceForm.isFullDay}
+                      onChange={(e) => updateAbsenceField('isFullDay', e.target.checked)}
+                      style={{ width: '16px', height: '16px', accentColor: '#2563eb' }}
+                    />
+                    <span>Ausência para o dia inteiro (sem horário específico)</span>
+                  </label>
+                  {!absenceForm.isFullDay && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid #e2e8f0' }}>
+                      <label className="form-field" style={{ margin: 0 }}>
+                        <span>Horário de início *</span>
+                        <input
+                          type="time"
+                          value={absenceForm.startTime}
+                          onChange={(e) => updateAbsenceField('startTime', e.target.value)}
+                          required={!absenceForm.isFullDay}
+                        />
+                      </label>
+                      <label className="form-field" style={{ margin: 0 }}>
+                        <span>Horário de término *</span>
+                        <input
+                          type="time"
+                          value={absenceForm.endTime}
+                          onChange={(e) => updateAbsenceField('endTime', e.target.value)}
+                          required={!absenceForm.isFullDay}
+                        />
+                      </label>
+                      <small style={{ gridColumn: '1 / -1', color: '#64748b', fontSize: '11px', marginTop: '2px' }}>
+                        Defina o intervalo exato (ex.: 08:00 às 12:00). Atividades fora desse horário não serão bloqueadas.
+                      </small>
+                    </div>
+                  )}
                 </div>
 
                 {absenceForm.type === 'atestado' && (
@@ -1852,7 +2008,7 @@ export default function CollaboratorsPage({
               <footer className="dialog-footer" style={{ marginTop: '16px' }}>
                 <button className="secondary-button" type="button" onClick={() => setAbsenceModalOpen(false)}>Cancelar</button>
                 <button className="primary-button" type="submit" disabled={absenceSubmitting || !absenceForm.collaboratorId}>
-                  {absenceSubmitting ? 'Salvando...' : 'Salvar registro'}
+                  {absenceSubmitting ? 'Salvando...' : editingAbsenceId ? 'Salvar alterações' : 'Salvar registro'}
                 </button>
               </footer>
             </form>
@@ -1956,12 +2112,30 @@ export default function CollaboratorsPage({
                             {item.type === 'atestado' ? 'Atestado' : 'Falta'}
                           </span>
                         </td>
-                        <td>{formatDate(item.startDate)} a {formatDate(item.endDate)}</td>
+                        <td>
+                          <div>{formatDate(item.startDate)} {item.startDate !== item.endDate ? `a ${formatDate(item.endDate)}` : ''}</div>
+                          {item.startTime && item.endTime ? (
+                            <small style={{ color: '#0369a1', fontWeight: 600, display: 'block' }}>
+                              {item.startTime} às {item.endTime}
+                            </small>
+                          ) : (
+                            <small style={{ color: '#64748b', display: 'block' }}>Dia inteiro</small>
+                          )}
+                        </td>
                         <td><strong>{item.daysCount}</strong> {item.daysCount === 1 ? 'dia' : 'dias'}</td>
                         <td>{item.cid || '—'}</td>
                         <td>{item.notes || '—'}</td>
                         <td><small>{item.createdByName}<br />{formatDate(item.createdAt)}</small></td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Editar ausência e horários"
+                            onClick={() => openEditAbsenceModal(item)}
+                            style={{ marginRight: '4px' }}
+                          >
+                            <Pencil size={13} />
+                          </button>
                           <button
                             className="icon-button danger-button"
                             type="button"

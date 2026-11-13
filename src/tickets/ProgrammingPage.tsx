@@ -60,6 +60,8 @@ interface CollaboratorAbsenceInfo {
   type: 'atestado' | 'falta_injustificada'
   startDate: string
   endDate: string
+  startTime?: string | null
+  endTime?: string | null
   cid?: string | null
   notes?: string | null
 }
@@ -713,7 +715,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                           {roleName(collaborator.role, collaborator.role_label)}
                           {collaborator.absence ? (
                             <span className="schedule-absence-header-badge">
-                              {` · Bloqueado (${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'})`}
+                              {collaborator.absence.startTime && collaborator.absence.endTime
+                                ? ` · ${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'} (${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
+                                : ` · Bloqueado (${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'})`}
                             </span>
                           ) : collaborator.is_on_leave ? ' · Afastado' : ''}
                         </small>
@@ -721,22 +725,27 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                     </header>
 
                     {collaborator.absence && (
-                      <div className={`schedule-card-absence-banner ${collaborator.appointments.length ? 'has-conflict' : 'is-blocked'}`}>
+                      <div className={`schedule-card-absence-banner ${collaborator.appointments.length && !collaborator.absence.startTime ? 'has-conflict' : 'is-blocked'}`}>
                         <div className="schedule-card-absence-banner-title">
-                          {collaborator.appointments.length ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+                          {collaborator.appointments.length && !collaborator.absence.startTime ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
                           <strong>
-                            {collaborator.appointments.length
+                            {collaborator.appointments.length && !collaborator.absence.startTime
                               ? '⚠️ ATENÇÃO: Ausência com atividades pendentes de reprogramação!'
-                              : `PROGRAMAÇÃO BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
+                              : collaborator.absence.startTime && collaborator.absence.endTime
+                                ? `AUSÊNCIA EM HORÁRIO ESPECÍFICO · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`
+                                : `PROGRAMAÇÃO BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
                           </strong>
                         </div>
                         <p>
                           {collaborator.absence.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}
                           {collaborator.absence.cid ? ` (CID ${collaborator.absence.cid})` : ''} · Período de{' '}
-                          {formatDatePt(collaborator.absence.startDate)} a {formatDatePt(collaborator.absence.endDate)}.
+                          {formatDatePt(collaborator.absence.startDate)} a {formatDatePt(collaborator.absence.endDate)}
+                          {collaborator.absence.startTime && collaborator.absence.endTime
+                            ? ` (das ${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
+                            : ''}.
                         </p>
                         {collaborator.absence.notes && <small className="schedule-absence-notes">Obs: {collaborator.absence.notes}</small>}
-                        {collaborator.appointments.length > 0 && (
+                        {collaborator.appointments.length > 0 && !collaborator.absence.startTime && (
                           <p className="schedule-card-absence-action-hint">
                             Existem <strong>{collaborator.appointments.length} atividade(s)</strong> agendada(s) hoje que precisam ser reprogramadas ou excluídas.
                           </p>
@@ -773,7 +782,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                           : appointment.block || appointment.unit
                             ? `Bloco ${appointment.block || '—'} · Unidade ${appointment.unit || '—'}`
                             : 'Local não especificado')}</span>
-                        <small>{appointment.activity_description}</small>
+                        <small className="schedule-appointment-description">{appointment.activity_description}</small>
                         {[
                           ['Materiais', appointment.materials],
                           ['Equipamentos', appointment.equipment],

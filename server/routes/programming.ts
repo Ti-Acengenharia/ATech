@@ -333,16 +333,20 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       absence_type: 'atestado' | 'falta_injustificada' | null
       absence_start_date: string | null
       absence_end_date: string | null
+      absence_start_time: string | null
+      absence_end_time: string | null
       absence_cid: string | null
       absence_notes: string | null
     }>(
       `SELECT c.id, c.name, c.nickname, c.role, r.label AS role_label,
               (c.photo_content IS NOT NULL) AS has_photo,
-              (c.is_on_leave OR abs.id IS NOT NULL) AS is_on_leave,
+              (c.is_on_leave OR (abs.id IS NOT NULL AND abs.start_time IS NULL)) AS is_on_leave,
               abs.id AS absence_id,
               abs.type AS absence_type,
               abs.start_date::text AS absence_start_date,
               abs.end_date::text AS absence_end_date,
+              abs.start_time AS absence_start_time,
+              abs.end_time AS absence_end_time,
               abs.cid AS absence_cid,
               abs.notes AS absence_notes
        FROM collaborators c
@@ -426,6 +430,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
         type: collaborator.absence_type,
         startDate: collaborator.absence_start_date,
         endDate: collaborator.absence_end_date,
+        startTime: collaborator.absence_start_time ?? null,
+        endTime: collaborator.absence_end_time ?? null,
         cid: collaborator.absence_cid,
         notes: collaborator.absence_notes,
       } : null,
@@ -483,9 +489,11 @@ router.get('/availability', async (req, res, next) => {
         type: 'atestado' | 'falta_injustificada'
         start_date: string
         end_date: string
+        start_time: string | null
+        end_time: string | null
         cid: string | null
       }>(
-        `SELECT id, type, start_date::text, end_date::text, cid
+        `SELECT id, type, start_date::text, end_date::text, start_time, end_time, cid
          FROM collaborator_absences
          WHERE collaborator_id = $1
            AND start_date <= $3::date AND end_date >= $2::date
@@ -505,14 +513,16 @@ router.get('/availability', async (req, res, next) => {
     for (const absence of absencesResult.rows) {
       const cur = new Date(`${absence.start_date < startDate.data ? startDate.data : absence.start_date}T12:00:00Z`)
       const maxDate = new Date(`${absence.end_date > endDate.data ? endDate.data : absence.end_date}T12:00:00Z`)
+      const sTime = absence.start_time || '08:00'
+      const eTime = absence.end_time || '18:00'
       while (cur <= maxDate) {
         const dayIso = cur.toISOString().slice(0, 10)
         appointments.push({
           id: `absence-${absence.id}-${dayIso}`,
           ticket_id: null,
           legal_process_id: null,
-          starts_at: `${dayIso}T08:00:00-03:00`,
-          ends_at: `${dayIso}T18:00:00-03:00`,
+          starts_at: `${dayIso}T${sTime}:00-03:00`,
+          ends_at: `${dayIso}T${eTime}:00-03:00`,
         })
         cur.setUTCDate(cur.getUTCDate() + 1)
       }
@@ -525,6 +535,8 @@ router.get('/availability', async (req, res, next) => {
         type: row.type,
         startDate: row.start_date,
         endDate: row.end_date,
+        startTime: row.start_time ?? null,
+        endTime: row.end_time ?? null,
         cid: row.cid,
       })),
     })
@@ -648,24 +660,38 @@ async function validateAvailability(
     type: 'atestado' | 'falta_injustificada'
     start_date: string
     end_date: string
+    start_time: string | null
+    end_time: string | null
     cid: string | null
   }>(
-    `SELECT type, start_date::text, end_date::text, cid
+    `SELECT type, start_date::text, end_date::text, start_time, end_time, cid
      FROM collaborator_absences
      WHERE collaborator_id = $1
        AND start_date <= ($3::timestamptz AT TIME ZONE '${programmingTimeZone}')::date
-       AND end_date >= ($2::timestamptz AT TIME ZONE '${programmingTimeZone}')::date
-     LIMIT 1`,
+       AND end_date >= ($2::timestamptz AT TIME ZONE '${programmingTimeZone}')::date`,
     [collaboratorId, startsAt, endsAt],
   )
-  if (absenceOverlap.rows[0]) {
-    const abs = absenceOverlap.rows[0]
+  for (const abs of absenceOverlap.rows) {
+    if (abs.start_time && abs.end_time) {
+      const timeFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: programmingTimeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+      const aptStart = timeFormatter.format(new Date(startsAt))
+      const aptEnd = timeFormatter.format(new Date(endsAt))
+      if (!(aptStart < abs.end_time && aptEnd > abs.start_time)) {
+        continue
+      }
+    }
     const typeLabel = abs.type === 'atestado' ? 'atestado médico' : 'falta injustificada'
     const cidStr = abs.cid ? ` (CID ${abs.cid})` : ''
     const [sY, sM, sD] = abs.start_date.split('-')
     const [eY, eM, eD] = abs.end_date.split('-')
     const periodStr = abs.start_date === abs.end_date ? `${sD}/${sM}/${sY}` : `${sD}/${sM}/${sY} a ${eD}/${eM}/${eY}`
-    throw new Error(`Agenda bloqueada: o colaborador ${collaborator.rows[0].name} possui ${typeLabel}${cidStr} registrado no período (${periodStr}).`)
+    const timeStr = abs.start_time && abs.end_time ? ` das ${abs.start_time} às ${abs.end_time}` : ''
+    throw new Error(`Agenda bloqueada: o colaborador ${collaborator.rows[0].name} possui ${typeLabel}${cidStr} registrado no período (${periodStr}${timeStr}).`)
   }
 
   if (ticketId !== null) {

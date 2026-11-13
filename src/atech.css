@@ -2786,9 +2786,9 @@ body, .workspace-shell { background: #f4f7fb; }
 .schedule-staff-card .schedule-person { align-items: center; padding: 0 0 9px; border-bottom: 1px solid #edf2f6; }
 .schedule-staff-card .schedule-person strong { color: #244662; font-size: 12px; }
 .schedule-staff-card .schedule-person small { color: #587894; font-size: 10px; }
-.schedule-staff-card .schedule-appointment-summary { grid-template-columns: 1fr; gap: 5px; margin-top: 8px; padding: 9px; border-left: 3px solid #347fb7; }
-.schedule-staff-card .schedule-appointment-summary strong { font-size: 10px; }
-.schedule-staff-card .schedule-appointment-summary span, .schedule-staff-card .schedule-appointment-summary small { overflow: visible; white-space: normal; font-size: 9px; }
+.schedule-staff-card .schedule-appointment-summary { grid-template-columns: 1fr; gap: 5px; margin-top: 8px; padding: 9px; border-left: 3px solid #347fb7; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; }
+.schedule-staff-card .schedule-appointment-summary strong { font-size: 10px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.schedule-staff-card .schedule-appointment-summary span, .schedule-staff-card .schedule-appointment-summary small { overflow: visible; white-space: normal; font-size: 9px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .schedule-staff-card .schedule-appointment-summary small { grid-column: 1; line-height: 1.45; }
 .schedule-staff-card .schedule-kit-line { color: #48647c; }
 .schedule-staff-card .schedule-kit-line strong { color: #315975; }
@@ -3410,10 +3410,12 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .schedule-avatar { width: 48px !important; height: 48px !important; border: 2px solid #e3eef7; }
 .schedule-staff-card .schedule-person strong { color: #243f58; font-size: 13px; }
 .schedule-staff-card .schedule-person small { margin-top: 4px; color: #6a8296; font-size: 10px; }
-.schedule-staff-card .schedule-appointment-summary { position: relative; gap: 6px; margin-top: 10px; padding: 11px 12px; background: #f5f9fc; border: 1px solid #e5edf4; border-left: 3px solid #3680b6; border-radius: 6px; }
-.schedule-staff-card .schedule-appointment-summary > strong { color: #245984; font-size: 10px; }
-.schedule-staff-card .schedule-appointment-summary > span { color: #536e84; font-size: 10px; line-height: 1.45; }
-.schedule-staff-card .schedule-appointment-summary > small { color: #405d75; font-size: 10px; line-height: 1.55; }
+.schedule-staff-card .schedule-appointment-summary { position: relative; gap: 6px; margin-top: 10px; padding: 11px 12px; background: #f5f9fc; border: 1px solid #e5edf4; border-left: 3px solid #3680b6; border-radius: 6px; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; }
+.schedule-staff-card .schedule-appointment-summary > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+.schedule-staff-card .schedule-appointment-summary > strong { color: #245984; font-size: 10px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.schedule-staff-card .schedule-appointment-summary > span { color: #536e84; font-size: 10px; line-height: 1.45; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.schedule-staff-card .schedule-appointment-summary > small,
+.schedule-appointment-description { color: #405d75; font-size: 10px; line-height: 1.55; min-width: 0; max-width: 100%; overflow-wrap: anywhere !important; word-break: break-word !important; white-space: pre-wrap !important; }
 .schedule-staff-card .schedule-appointment-actions { margin-top: 4px; }
 .schedule-staff-card .schedule-appointment-actions .text-action-btn { padding: 5px 7px; font-size: 9px; }
 .schedule-completion-check { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; padding: 4px 6px; color: #64788b; border-radius: 4px; font-size: 9px; cursor: pointer; }
@@ -4110,6 +4112,10 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
   color: #64748b !important;
   font-size: 9px !important;
   line-height: 1.4 !important;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
 }
 .ticket-programming-footer {
   display: flex;
