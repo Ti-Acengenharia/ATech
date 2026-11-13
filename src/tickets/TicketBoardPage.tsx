@@ -164,7 +164,7 @@ export function resolveInitialTicketView(savedViewMode: TicketViewMode): {
 
 interface SavedTicketFilters {
   search: string
-  types: ('client' | 'condominium')[]
+  types: ('client' | 'condominium' | 'internal')[]
   enterprises: string[]
   block: string[]
   unit: string[]
@@ -204,7 +204,7 @@ function readTicketFilters(userId: number): SavedTicketFilters {
       .slice(0, 50)
     return {
       search: typeof saved.search === 'string' ? saved.search.slice(0, 100) : '',
-      types: values(saved.types, 20).filter((type): type is 'client' | 'condominium' => type === 'client' || type === 'condominium'),
+      types: values(saved.types, 20).filter((type): type is 'client' | 'condominium' | 'internal' => type === 'client' || type === 'condominium' || type === 'internal'),
       enterprises: values(saved.enterprises, 240),
       block: values(saved.block, 120),
       unit: values(saved.unit, 120),
@@ -355,7 +355,7 @@ export default function TicketBoardPage({
   const [syncState, setSyncState] = useState<SyncState | null>(null)
   const [configured, setConfigured] = useState(false)
   const [search, setSearch] = useState(savedFilters.search)
-  const [ticketTypes, setTicketTypes] = useState<('client' | 'condominium')[]>(savedFilters.types)
+  const [ticketTypes, setTicketTypes] = useState<('client' | 'condominium' | 'internal')[]>(savedFilters.types)
   const [enterpriseFilters, setEnterpriseFilters] = useState<string[]>(savedFilters.enterprises)
   const [blockFilter, setBlockFilter] = useState<string[]>(savedFilters.block)
   const [unitFilter, setUnitFilter] = useState<string[]>(savedFilters.unit)
@@ -1260,7 +1260,7 @@ export default function TicketBoardPage({
                   <div className="ticket-filter-field ticket-type-filter" role="group" aria-label="Tipo de chamado">
                     <span>Tipo de chamado</span>
                     <div className="ticket-type-options">
-                      {(['client', 'condominium'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : 'Condomínio'}</span></label>)}
+                      {(['client', 'condominium', 'internal'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : type === 'condominium' ? 'Condomínio' : 'Interno'}</span></label>)}
                     </div>
                   </div>
                 </div>

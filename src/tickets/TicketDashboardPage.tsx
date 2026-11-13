@@ -39,6 +39,7 @@ interface EnterpriseCount {
   enterprise: string
   clients: number
   condominiums: number
+  internals?: number
   total: number
 }
 
@@ -142,7 +143,7 @@ function loadSavedTicketDashboardFilters(): SavedTicketDashboardFilters {
   }
 }
 
-type EnterpriseSortField = 'enterprise' | 'clients' | 'condominiums' | 'total'
+type EnterpriseSortField = 'enterprise' | 'clients' | 'condominiums' | 'internals' | 'total'
 type SortOrder = 'asc' | 'desc'
 type StatusSortField = 'status' | 'total'
 type MonthSortField = 'date' | 'created' | 'completed' | 'canceled' | 'closedTotal' | 'balance'
@@ -170,7 +171,14 @@ export default function TicketDashboardPage({
   const [units, setUnits] = useState<string[]>(() => initialFilters.units ?? [])
   const [subjects, setSubjects] = useState<string[]>(() => initialFilters.subjects ?? [])
   const [subsubjects, setSubsubjects] = useState<string[]>(() => initialFilters.subsubjects ?? [])
-  const [types, setTypes] = useState<string[]>(() => initialFilters.types ?? ['client', 'condominium'])
+  const [types, setTypes] = useState<string[]>(() => {
+    const saved = initialFilters.types
+    if (!saved || saved.length === 0) return ['client', 'condominium', 'internal']
+    if (saved.length === 2 && saved.includes('client') && saved.includes('condominium') && !saved.includes('internal')) {
+      return ['client', 'condominium', 'internal']
+    }
+    return saved
+  })
   const [customer, setCustomer] = useState(() => initialFilters.customerQuery ?? '')
   const [customerQuery, setCustomerQuery] = useState(() => initialFilters.customerQuery ?? '')
   const [fromYear, setFromYear] = useState<number>(() => initialFilters.fromYear ?? 2021)
@@ -184,6 +192,7 @@ export default function TicketDashboardPage({
   const [enterpriseSortOrder, setEnterpriseSortOrder] = useState<SortOrder>('desc')
   const [showClientsCol, setShowClientsCol] = useState(true)
   const [showCondoCol, setShowCondoCol] = useState(true)
+  const [showInternalsCol, setShowInternalsCol] = useState(true)
 
   // Controles da Tabela de Situações
   const [statusSearch, setStatusSearch] = useState('')
@@ -367,7 +376,7 @@ export default function TicketDashboardPage({
       if (enterpriseSortField === 'enterprise') {
         cmp = a.enterprise.localeCompare(b.enterprise, 'pt-BR')
       } else {
-        cmp = a[enterpriseSortField] - b[enterpriseSortField]
+        cmp = (a[enterpriseSortField] ?? 0) - (b[enterpriseSortField] ?? 0)
       }
       return enterpriseSortOrder === 'asc' ? cmp : -cmp
     })
@@ -465,10 +474,11 @@ export default function TicketDashboardPage({
         (totals, entry) => ({
           clients: totals.clients + entry.clients,
           condominiums: totals.condominiums + entry.condominiums,
+          internals: totals.internals + (entry.internals ?? 0),
           total: totals.total + entry.total,
         }),
-        { clients: 0, condominiums: 0, total: 0 },
-      ) ?? { clients: 0, condominiums: 0, total: 0 }
+        { clients: 0, condominiums: 0, internals: 0, total: 0 },
+      ) ?? { clients: 0, condominiums: 0, internals: 0, total: 0 }
     )
   }, [activeByEnterprise])
 
@@ -484,7 +494,7 @@ export default function TicketDashboardPage({
     setUnits([])
     setSubjects([])
     setSubsubjects([])
-    setTypes(['client', 'condominium'])
+    setTypes(['client', 'condominium', 'internal'])
     setCustomerQuery('')
     setCustomer('')
     const defaultYear = options.years[0] ?? new Date().getFullYear()
@@ -545,7 +555,7 @@ export default function TicketDashboardPage({
     subjects.length ||
     subsubjects.length ||
     customerQuery.trim() ||
-    types.length !== 2 ||
+    types.length !== 3 ||
     (options.years.length && fromYear !== options.years[0]) ||
     referenceMonth,
   )
@@ -689,6 +699,14 @@ export default function TicketDashboardPage({
                   onChange={() => toggleType('condominium')}
                 />{' '}
                 Condomínio
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={types.includes('internal')}
+                  onChange={() => toggleType('internal')}
+                />{' '}
+                Interno
               </label>
             </div>
           </div>
@@ -848,6 +866,14 @@ export default function TicketDashboardPage({
                     />
                     <span>Condomínio</span>
                   </label>
+                  <label className="panel-col-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showInternalsCol}
+                      onChange={(e) => setShowInternalsCol(e.target.checked)}
+                    />
+                    <span>Internos</span>
+                  </label>
                 </div>
                 <strong>{countFormat.format(enterpriseTotals.total)} ativos</strong>
               </div>
@@ -909,6 +935,24 @@ export default function TicketDashboardPage({
                         )}
                       </th>
                     )}
+                    {showInternalsCol && (
+                      <th
+                        className="sortable-th"
+                        onClick={() => handleEnterpriseSort('internals')}
+                        title="Clique para ordenar por chamados internos"
+                      >
+                        Internos
+                        {enterpriseSortField === 'internals' ? (
+                          enterpriseSortOrder === 'asc' ? (
+                            <ArrowUp size={11} className="sort-icon" />
+                          ) : (
+                            <ArrowDown size={11} className="sort-icon" />
+                          )
+                        ) : (
+                          <ArrowUpDown size={11} className="sort-icon-inactive" />
+                        )}
+                      </th>
+                    )}
                     <th
                       className="sortable-th"
                       onClick={() => handleEnterpriseSort('total')}
@@ -931,6 +975,7 @@ export default function TicketDashboardPage({
                   {filteredAndSortedEnterprises.map((entry) => {
                     const clientsPct = entry.total > 0 ? entry.clients / entry.total : 0
                     const condoPct = entry.total > 0 ? entry.condominiums / entry.total : 0
+                    const internalsPct = entry.total > 0 ? (entry.internals ?? 0) / entry.total : 0
                     const totalPct = enterpriseTotals.total > 0 ? entry.total / enterpriseTotals.total : 0
                     return (
                       <tr key={entry.enterprise}>
@@ -951,6 +996,14 @@ export default function TicketDashboardPage({
                             </span>
                           </td>
                         )}
+                        {showInternalsCol && (
+                          <td>
+                            {countFormat.format(entry.internals ?? 0)}
+                            <span className="ticket-dashboard-pct" title={`${percentFormat.format(internalsPct)} de chamados internos neste empreendimento`}>
+                              ({percentFormat.format(internalsPct)})
+                            </span>
+                          </td>
+                        )}
                         <td>
                           <strong>{countFormat.format(entry.total)}</strong>
                           <span className="ticket-dashboard-pct" title={`${percentFormat.format(totalPct)} do total de chamados ativos`}>
@@ -962,7 +1015,7 @@ export default function TicketDashboardPage({
                   })}
                   {!filteredAndSortedEnterprises.length && (
                     <tr>
-                      <td colSpan={2 + (showClientsCol ? 1 : 0) + (showCondoCol ? 1 : 0)} className="ticket-dashboard-empty">
+                      <td colSpan={2 + (showClientsCol ? 1 : 0) + (showCondoCol ? 1 : 0) + (showInternalsCol ? 1 : 0)} className="ticket-dashboard-empty">
                         Nenhum empreendimento encontrado para a busca ou filtros selecionados.
                       </td>
                     </tr>
@@ -984,6 +1037,14 @@ export default function TicketDashboardPage({
                         {countFormat.format(enterpriseTotals.condominiums)}
                         <span className="ticket-dashboard-pct">
                           ({percentFormat.format(enterpriseTotals.total > 0 ? enterpriseTotals.condominiums / enterpriseTotals.total : 0)})
+                        </span>
+                      </th>
+                    )}
+                    {showInternalsCol && (
+                      <th>
+                        {countFormat.format(enterpriseTotals.internals)}
+                        <span className="ticket-dashboard-pct">
+                          ({percentFormat.format(enterpriseTotals.total > 0 ? enterpriseTotals.internals / enterpriseTotals.total : 0)})
                         </span>
                       </th>
                     )}

@@ -699,7 +699,7 @@ router.get('/dashboard', async (req, res, next) => {
     .safeParse(typeof req.query.referenceMonth === 'string' && req.query.referenceMonth ? req.query.referenceMonth : undefined)
   if ([enterprises, blocks, units, subjects, subsubjects, ticketTypes].some((filter) => filter === null) ||
       !customer.success || !fromYear.success || !referenceMonth.success ||
-      (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium')) {
+      (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium' && type !== 'internal')) {
     res.status(400).json({ error: 'Um ou mais filtros do dashboard são inválidos.' })
     return
   }
@@ -745,7 +745,7 @@ router.get('/dashboard', async (req, res, next) => {
       average_days: number | null
       average_days_this_month: number | null
       last_updated: Date | null
-      active_by_enterprise: Array<{ enterprise: string; clients: number; condominiums: number; total: number }>
+      active_by_enterprise: Array<{ enterprise: string; clients: number; condominiums: number; internals: number; total: number }>
       status_summary: Array<{ enterprise: string; status: string; count: number }>
       months: Array<{ month: string; year: number; created: number; completed: number; canceled: number; balance: number }>
     }>(
@@ -756,7 +756,7 @@ router.get('/dashboard', async (req, res, next) => {
                   WHEN btrim(t.block) <> '' AND btrim(t.unit) <> '' THEN 'client'
                   WHEN btrim(t.block) = '' AND btrim(t.unit) = '' AND btrim(t.enterprise) <> ''
                     AND strpos(lower(t.source_creator_name), lower(btrim(t.enterprise))) > 0 THEN 'condominium'
-                  ELSE NULL
+                  ELSE 'internal'
                 END AS ticket_type
          FROM tickets t
          WHERE (
@@ -784,8 +784,7 @@ router.get('/dashboard', async (req, res, next) => {
        ),
        selected_tickets AS (
          SELECT * FROM filtered
-         WHERE ticket_type IS NOT NULL
-           AND (cardinality($7::text[]) = 0 OR ticket_type = ANY($7::text[]))
+         WHERE (cardinality($7::text[]) = 0 OR ticket_type = ANY($7::text[]))
        ),
        terminal_events AS (
          SELECT h.ticket_id,
@@ -822,6 +821,7 @@ router.get('/dashboard', async (req, res, next) => {
          SELECT COALESCE(NULLIF(btrim(enterprise), ''), 'Sem empreendimento') AS enterprise,
                 count(*) FILTER (WHERE ticket_type = 'client')::int AS clients,
                 count(*) FILTER (WHERE ticket_type = 'condominium')::int AS condominiums,
+                count(*) FILTER (WHERE ticket_type = 'internal')::int AS internals,
                 count(*)::int AS total
          FROM selected_tickets
          WHERE source_active
@@ -969,7 +969,7 @@ router.get('/', async (req, res, next) => {
     selectedSubsubjects === null ||
     selectedStatuses === null ||
     ticketTypes === null ||
-    ticketTypes.some((type) => type !== 'client' && type !== 'condominium')
+    ticketTypes.some((type) => type !== 'client' && type !== 'condominium' && type !== 'internal')
   ) {
     res.status(400).json({ error: 'Um ou mais filtros de chamados são inválidos.' })
     return
@@ -1066,7 +1066,7 @@ router.get('/', async (req, res, next) => {
              WHEN btrim(t.block) <> '' AND btrim(t.unit) <> '' THEN 'client'
              WHEN btrim(t.block) = '' AND btrim(t.unit) = '' AND btrim(t.enterprise) <> ''
                AND strpos(lower(t.source_creator_name), lower(btrim(t.enterprise))) > 0 THEN 'condominium'
-             ELSE NULL
+             ELSE 'internal'
            END = ANY($11::text[]))
          AND (cardinality($2::text[]) = 0 OR lower(btrim(COALESCE(t.enterprise, ''))) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (t.enterprise IS NULL OR btrim(t.enterprise) = '')))
          AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
@@ -1137,7 +1137,7 @@ router.get('/', async (req, res, next) => {
             : !ticket.block.trim() && !ticket.unit.trim() && ticket.enterprise.trim() &&
                 ticket.source_creator_name.toLocaleLowerCase('pt-BR').includes(ticket.enterprise.toLocaleLowerCase('pt-BR'))
               ? [{ id: 'system-condominium', name: 'Condomínio', color: '#7862a8' }]
-              : []),
+              : [{ id: 'system-internal', name: 'Interno', color: '#64748b' }]),
           ...ticket.custom_tags,
         ],
         priority: ticket.priority,
