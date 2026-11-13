@@ -1106,3 +1106,402 @@
   }
 }
 
+/* ==========================================================================
+   Quadro Dinâmico de Alocação por Centro de Custo (Equipe em Campo)
+   ========================================================================== */
+
+.home-fieldteam-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.home-fieldteam-view-tabs {
+  display: inline-flex;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  padding: 3px;
+  gap: 3px;
+  align-self: flex-start;
+}
+
+.home-fieldteam-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-fieldteam-tab:hover {
+  color: #1e293b;
+}
+
+.home-fieldteam-tab.is-active {
+  color: #1d4ed8;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.home-fieldteam-period-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.home-period-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-period-pill:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.home-period-pill.is-active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.06);
+}
+
+.home-period-pill .pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  background: #e2e8f0;
+  color: #334155;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 14px;
+}
+
+.home-period-pill.is-active .pill-count {
+  background: #bfdbfe;
+  color: #1e40af;
+}
+
+.live-pulse-dot {
+  width: 7px;
+  height: 7px;
+  background: #16a34a;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.25);
+  animation: pulse-dot 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.3); }
+  50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.15); }
+  100% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.3); }
+}
+
+/* Grid de Centros de Custo */
+.home-cost-centers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.home-cost-center-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-top: 3px solid #2563eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.home-cost-center-card:hover {
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+
+.home-cost-center-card.is-type-legal {
+  border-top-color: #8b5cf6;
+}
+
+.home-cost-center-card.is-type-standalone {
+  border-top-color: #f59e0b;
+}
+
+.home-cost-center-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.home-cost-center-title-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.home-cost-center-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.is-type-legal .home-cost-center-icon {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.is-type-standalone .home-cost-center-icon {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.home-cost-center-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.home-cost-center-type-badge {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.home-cost-center-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.home-cost-center-workers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.home-cc-worker-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.home-cc-worker-row:hover {
+  background: #f1f5f9;
+}
+
+.home-cc-worker-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+
+.home-cc-worker-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-cc-worker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.home-cc-worker-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #1e293b;
+  word-break: break-word;
+}
+
+.home-cc-worker-hours {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #0369a1;
+  background: #e0f2fe;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--mono);
+}
+
+.home-cc-worker-role {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: capitalize;
+}
+
+.home-cc-worker-service {
+  font-size: 10.5px;
+  color: #334155;
+  margin-top: 1px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.home-cc-worker-subloc {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.home-cc-transition-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.home-cc-transition-tag.is-outgoing {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.home-cc-transition-tag.is-incoming {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.home-cc-transition-tag.is-full {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.home-fieldteam-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 18px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  gap: 6px;
+}
+
+.home-fieldteam-empty-icon {
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.home-fieldteam-empty strong {
+  font-size: 13px;
+  color: #334155;
+}
+
+.home-fieldteam-empty p {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
+  max-width: 440px;
+  line-height: 1.45;
+}
+
+.home-fieldteam-btn-reset {
+  margin-top: 8px;
+  padding: 6px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-fieldteam-btn-reset:hover {
+  background: #dbeafe;
+}
+
+@media (max-width: 680px) {
+  .home-fieldteam-view-tabs {
+    width: 100% !important;
+  }
+  .home-fieldteam-tab {
+    flex: 1 !important;
+    justify-content: center !important;
+    font-size: 10.5px !important;
+    padding: 6px 8px !important;
+  }
+  .home-cost-centers-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+

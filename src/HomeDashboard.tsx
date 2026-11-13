@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight,
+  ArrowRightLeft,
   Award,
   BriefcaseBusiness,
   Building2,
@@ -15,12 +16,15 @@ import {
   History,
   Info,
   Layers,
+  List,
   ListTodo,
   MapPin,
   Package,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Sun,
+  Sunset,
   TriangleAlert,
   UserCheck,
   UsersRound,
@@ -89,6 +93,58 @@ interface DashboardCelebrations {
   }
 }
 
+type FieldTeamPeriod = 'now' | 'morning' | 'afternoon' | 'all'
+type FieldTeamView = 'cost-center' | 'list'
+
+interface CostCenterWorker {
+  id: string
+  name: string
+  role: string
+  startsAt: string
+  endsAt: string
+  timeRange: { start: string; end: string }
+  service: string
+  completed: boolean
+  sublocation: string | null
+  ticketProtocol: string | null
+  legalProcessNumber: string | null
+  transitionTag: {
+    type: 'outgoing' | 'incoming' | 'full' | 'neutral'
+    text: string
+  } | null
+}
+
+interface CostCenterGroup {
+  name: string
+  type: 'ticket' | 'legal' | 'standalone'
+  badge: string
+  sublocation: string | null
+  workers: CostCenterWorker[]
+}
+
+const AVATAR_COLORS = [
+  { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
+  { bg: '#fdf4ff', text: '#86198f', border: '#f5d0fe' },
+  { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa' },
+  { bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd' },
+  { bg: '#fefce8', text: '#a16207', border: '#fef08a' },
+]
+
+function getWorkerAvatarStyle(name: string) {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = (hash << 5) - hash + name.charCodeAt(i)
+  const index = Math.abs(hash) % AVATAR_COLORS.length
+  return AVATAR_COLORS[index]
+}
+
+function getWorkerInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
 interface HomeSummaryData {
   user: {
     id: number
@@ -114,6 +170,9 @@ interface HomeSummaryData {
       block: string | null
       unit: string | null
       location: string | null
+      standaloneLocation?: string | null
+      commonAreaLocation?: string | null
+      collaboratorId?: string | number
       collaboratorName: string
       collaboratorRole: string
       ticketProtocol: string | null
@@ -275,6 +334,14 @@ export default function HomeDashboard({
   const [schedulePage, setSchedulePage] = useState(1)
   const SCHEDULE_PAGE_SIZE = 5
 
+  const [fieldTeamView, setFieldTeamView] = useState<FieldTeamView>('cost-center')
+  const [fieldTeamPeriod, setFieldTeamPeriod] = useState<FieldTeamPeriod>(() => {
+    const hour = new Date().getHours()
+    if (hour >= 7 && hour < 12) return 'morning'
+    if (hour >= 12 && hour < 18) return 'afternoon'
+    return 'all'
+  })
+
   const allAppointments = summary?.schedule?.todayAppointments ?? []
   const totalSchedulePages = Math.max(1, Math.ceil(allAppointments.length / SCHEDULE_PAGE_SIZE))
   const validSchedulePage = Math.min(Math.max(1, schedulePage), totalSchedulePages)
@@ -282,6 +349,210 @@ export default function HomeDashboard({
     (validSchedulePage - 1) * SCHEDULE_PAGE_SIZE,
     validSchedulePage * SCHEDULE_PAGE_SIZE,
   )
+
+  // Agrupa agendamentos por colaborador para rastrear transições de rota ao longo do dia
+  const appointmentsByWorker = useMemo(() => {
+    const map = new Map<string, typeof allAppointments>()
+    for (const app of allAppointments) {
+      const list = map.get(app.collaboratorName) || []
+      list.push(app)
+      map.set(app.collaboratorName, list)
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+    }
+    return map
+  }, [allAppointments])
+
+  function resolveCostCenter(app: (typeof allAppointments)[0]) {
+    if (app.enterprise && app.enterprise.trim() && app.enterprise.toLowerCase() !== 'atividade avulsa') {
+      return {
+        name: app.enterprise.trim(),
+        type: 'ticket' as const,
+        badge: app.ticketProtocol ? `Chamado #${app.ticketProtocol}` : 'Chamado',
+        sublocation: [app.block ? `Bl. ${app.block}` : null, app.unit ? `Un. ${app.unit}` : null].filter(Boolean).join(' · ') || null,
+      }
+    }
+
+    if (app.legalProcessTitle?.trim() || app.legalProcessNumber?.trim()) {
+      const name = app.enterprise?.trim() || app.legalProcessTitle?.trim() || `Processo #${app.legalProcessNumber}`
+      return {
+        name,
+        type: 'legal' as const,
+        badge: app.legalProcessNumber ? `Jurídico #${app.legalProcessNumber}` : 'Jurídico',
+        sublocation: app.enterprise && app.legalProcessTitle ? app.legalProcessTitle : (app.location || null),
+      }
+    }
+
+    const loc = app.standaloneLocation?.trim() || app.commonAreaLocation?.trim() || (app.location !== 'Local a definir' && app.location !== 'Atividade avulsa' ? app.location?.trim() : null)
+    return {
+      name: loc || 'Atividades Avulsas / Sede',
+      type: 'standalone' as const,
+      badge: 'Atividade Avulsa',
+      sublocation: app.enterprise && app.enterprise !== 'Atividade avulsa' ? app.enterprise : null,
+    }
+  }
+
+  // Contagens para os botões/pills de período
+  const periodCounts = useMemo(() => {
+    const now = new Date()
+    const nowMs = now.getTime()
+    const nowWorkers = new Set<string>()
+    const morningWorkers = new Set<string>()
+    const afternoonWorkers = new Set<string>()
+    const allWorkers = new Set<string>()
+
+    for (const app of allAppointments) {
+      allWorkers.add(app.collaboratorName)
+      try {
+        const s = new Date(app.startsAt)
+        const e = new Date(app.endsAt)
+        const sHour = s.getHours() + s.getMinutes() / 60
+        const eHour = e.getHours() + e.getMinutes() / 60
+
+        if (nowMs >= s.getTime() && nowMs <= e.getTime()) {
+          nowWorkers.add(app.collaboratorName)
+        }
+        if (sHour < 12) {
+          morningWorkers.add(app.collaboratorName)
+        }
+        if (eHour > 12 && (sHour >= 12 || eHour > 13)) {
+          afternoonWorkers.add(app.collaboratorName)
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      now: nowWorkers.size,
+      morning: morningWorkers.size,
+      afternoon: afternoonWorkers.size,
+      all: allWorkers.size,
+    }
+  }, [allAppointments])
+
+  // Agrupamento dos Centros de Custo para o período selecionado
+  const costCenterGroups = useMemo(() => {
+    const now = new Date()
+    const nowMs = now.getTime()
+
+    // 1. Filtra agendamentos pelo período
+    const filteredApps = allAppointments.filter((app) => {
+      try {
+        const s = new Date(app.startsAt)
+        const e = new Date(app.endsAt)
+        const sHour = s.getHours() + s.getMinutes() / 60
+        const eHour = e.getHours() + e.getMinutes() / 60
+
+        if (fieldTeamPeriod === 'now') {
+          return nowMs >= s.getTime() && nowMs <= e.getTime()
+        }
+        if (fieldTeamPeriod === 'morning') {
+          return sHour < 12
+        }
+        if (fieldTeamPeriod === 'afternoon') {
+          return eHour > 12 && (sHour >= 12 || eHour > 13)
+        }
+        return true
+      } catch {
+        return true
+      }
+    })
+
+    // 2. Agrupa por Centro de Custo
+    const groupsMap = new Map<string, CostCenterGroup>()
+
+    for (const app of filteredApps) {
+      const cc = resolveCostCenter(app)
+      if (!groupsMap.has(cc.name)) {
+        groupsMap.set(cc.name, {
+          name: cc.name,
+          type: cc.type,
+          badge: cc.badge,
+          sublocation: cc.sublocation,
+          workers: [],
+        })
+      }
+      const group = groupsMap.get(cc.name)!
+
+      // 3. Analisa transições de rota deste colaborador
+      const workerAllApps = appointmentsByWorker.get(app.collaboratorName) || []
+      let transitionTag: CostCenterWorker['transitionTag'] = null
+
+      if (workerAllApps.length > 1) {
+        const otherApps = workerAllApps.filter((o) => resolveCostCenter(o).name !== cc.name)
+        if (otherApps.length > 0) {
+          const nextApp = workerAllApps.find(
+            (o) => new Date(o.startsAt).getTime() >= new Date(app.endsAt).getTime() && resolveCostCenter(o).name !== cc.name,
+          )
+          const prevApp = workerAllApps.find(
+            (o) => new Date(o.endsAt).getTime() <= new Date(app.startsAt).getTime() && resolveCostCenter(o).name !== cc.name,
+          )
+
+          if ((fieldTeamPeriod === 'morning' || fieldTeamPeriod === 'now') && nextApp) {
+            transitionTag = {
+              type: 'outgoing',
+              text: `À tarde vai para: ${resolveCostCenter(nextApp).name}`,
+            }
+          } else if ((fieldTeamPeriod === 'afternoon' || fieldTeamPeriod === 'now') && prevApp) {
+            transitionTag = {
+              type: 'incoming',
+              text: `De manhã estava em: ${resolveCostCenter(prevApp).name}`,
+            }
+          } else if (fieldTeamPeriod === 'all') {
+            if (nextApp) {
+              transitionTag = {
+                type: 'outgoing',
+                text: `Também vai para: ${resolveCostCenter(nextApp).name}`,
+              }
+            } else if (prevApp) {
+              transitionTag = {
+                type: 'incoming',
+                text: `Veio de: ${resolveCostCenter(prevApp).name}`,
+              }
+            }
+          }
+        }
+      } else {
+        try {
+          const s = new Date(app.startsAt).getHours()
+          const e = new Date(app.endsAt).getHours()
+          if (s <= 8 && e >= 16) {
+            transitionTag = {
+              type: 'full',
+              text: 'Dia todo neste local',
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const existing = group.workers.find((w) => w.name === app.collaboratorName)
+      if (!existing) {
+        const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
+        group.workers.push({
+          id: app.id,
+          name: app.collaboratorName,
+          role: app.collaboratorRole.replace(/_/g, ' '),
+          startsAt: app.startsAt,
+          endsAt: app.endsAt,
+          timeRange: { start, end },
+          service: app.service || 'Serviço geral',
+          completed: app.completed,
+          sublocation: [app.block ? `Bl. ${app.block}` : null, app.unit ? `Un. ${app.unit}` : null].filter(Boolean).join(' · ') || null,
+          ticketProtocol: app.ticketProtocol,
+          legalProcessNumber: app.legalProcessNumber,
+          transitionTag,
+        })
+      }
+    }
+
+    return Array.from(groupsMap.values()).sort(
+      (a, b) => b.workers.length - a.workers.length || a.name.localeCompare(b.name, 'pt-BR'),
+    )
+  }, [allAppointments, fieldTeamPeriod, appointmentsByWorker])
 
   return (
     <div className="home-dashboard-v2">
@@ -426,13 +697,15 @@ export default function HomeDashboard({
               </div>
             </div>
             <div className="home-kpi-body">
-              <div className="home-kpi-value">{summary?.schedule?.totalToday ?? '0'}</div>
+              <div className="home-kpi-value">{summary?.schedule?.collaboratorsCount ?? '0'}</div>
             </div>
             <div className="home-kpi-footer">
               <span>
-                {summary?.schedule?.collaboratorsCount
-                  ? `${summary.schedule.collaboratorsCount} colaboradores escalados hoje`
-                  : 'Atividades agendadas para hoje'}
+                {summary?.schedule?.totalToday != null
+                  ? summary.schedule.totalToday === 1
+                    ? '1 atividade agendada hoje'
+                    : `${summary.schedule.totalToday} atividades agendadas hoje`
+                  : 'Colaboradores com programação hoje'}
               </span>
               <ArrowRight size={14} className="home-kpi-arrow" />
             </div>
@@ -551,96 +824,265 @@ export default function HomeDashboard({
             </div>
           )}
 
-          {/* Lista de Atividades de Hoje */}
-          {allAppointments.length > 0 ? (
-            <>
-              <div className="home-appointments-list">
-                {pagedAppointments.map((app) => {
-                  const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
-                  return (
-                    <div
-                      key={app.id}
-                      className={`home-appointment-card ${app.completed ? 'home-appointment-completed' : ''}`}
-                    >
-                      <div className="home-appointment-time">
-                        <span>{start}</span>
-                        <small>{end}</small>
-                      </div>
-                      <div className="home-appointment-details">
-                        <div className="home-appointment-title">
-                          <span className="home-appointment-worker">{app.collaboratorName}</span>
-                          <span className="home-appointment-role">{app.collaboratorRole.replace(/_/g, ' ')}</span>
-                        </div>
-                        <div className="home-appointment-desc">{app.service || 'Serviço técnico geral'}</div>
-                        <div className="home-appointment-meta">
-                          {app.enterprise && (
-                            <span className="home-appointment-meta-item" title="Empreendimento / Obra">
-                              <Building2 size={11} /> {app.enterprise}
-                            </span>
-                          )}
-                          {app.block && (
-                            <span className="home-appointment-meta-item" title="Bloco">
-                              <strong>Bl.</strong> {app.block}
-                            </span>
-                          )}
-                          {app.unit && (
-                            <span className="home-appointment-meta-item" title="Unidade">
-                              <strong>Un.</strong> {app.unit}
-                            </span>
-                          )}
-                          {!app.enterprise && !app.block && !app.unit && app.location && (
-                            <span className="home-appointment-meta-item">
-                              <MapPin size={11} /> {app.location}
-                            </span>
-                          )}
-                          {app.ticketProtocol && (
-                            <span className="home-appointment-meta-item">
-                              <ClipboardList size={11} /> #{app.ticketProtocol}
-                            </span>
-                          )}
-                          {app.legalProcessNumber && (
-                            <span className="home-appointment-meta-item">
-                              <BriefcaseBusiness size={11} /> Proc. {app.legalProcessNumber}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+          {/* Controles da Equipe em Campo (Alternância de Visão e Filtro de Período) */}
+          {allAppointments.length > 0 && (
+            <div className="home-fieldteam-controls">
+              <div className="home-fieldteam-view-tabs" role="tablist" aria-label="Modo de visualização">
+                <button
+                  type="button"
+                  className={`home-fieldteam-tab ${fieldTeamView === 'cost-center' ? 'is-active' : ''}`}
+                  onClick={() => setFieldTeamView('cost-center')}
+                  role="tab"
+                  aria-selected={fieldTeamView === 'cost-center'}
+                >
+                  <Building2 size={13} /> Por Centro de Custo
+                </button>
+                <button
+                  type="button"
+                  className={`home-fieldteam-tab ${fieldTeamView === 'list' ? 'is-active' : ''}`}
+                  onClick={() => setFieldTeamView('list')}
+                  role="tab"
+                  aria-selected={fieldTeamView === 'list'}
+                >
+                  <List size={13} /> Lista de Atividades
+                </button>
               </div>
 
-              {totalSchedulePages > 1 && (
-                <div className="home-schedule-pagination">
-                  <span className="home-schedule-pagination-info">
-                    Mostrando {(validSchedulePage - 1) * SCHEDULE_PAGE_SIZE + 1}–{Math.min(validSchedulePage * SCHEDULE_PAGE_SIZE, allAppointments.length)} de {allAppointments.length} programações
-                  </span>
-                  <div className="home-schedule-pagination-controls">
-                    <button
-                      type="button"
-                      className="home-schedule-page-btn"
-                      disabled={validSchedulePage === 1}
-                      onClick={() => setSchedulePage((p) => Math.max(1, p - 1))}
-                      title="Página anterior"
-                    >
-                      <ChevronLeft size={13} /> Anterior
-                    </button>
-                    <span className="home-schedule-page-current">
-                      {validSchedulePage} / {totalSchedulePages}
-                    </span>
-                    <button
-                      type="button"
-                      className="home-schedule-page-btn"
-                      disabled={validSchedulePage === totalSchedulePages}
-                      onClick={() => setSchedulePage((p) => Math.min(totalSchedulePages, p + 1))}
-                      title="Próxima página"
-                    >
-                      Próxima <ChevronRight size={13} />
-                    </button>
-                  </div>
+              {fieldTeamView === 'cost-center' && (
+                <div className="home-fieldteam-period-pills" role="group" aria-label="Período do dia">
+                  <button
+                    type="button"
+                    className={`home-period-pill ${fieldTeamPeriod === 'now' ? 'is-active' : ''}`}
+                    onClick={() => setFieldTeamPeriod('now')}
+                    title="Colaboradores atuando exatamente neste minuto"
+                  >
+                    <span className="live-pulse-dot" />
+                    <strong>Agora</strong>
+                    <span className="pill-count">{periodCounts.now}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`home-period-pill ${fieldTeamPeriod === 'morning' ? 'is-active' : ''}`}
+                    onClick={() => setFieldTeamPeriod('morning')}
+                    title="Colaboradores alocados no turno da manhã (até 12:00)"
+                  >
+                    <Sun size={12} />
+                    <span>Manhã</span>
+                    <span className="pill-count">{periodCounts.morning}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`home-period-pill ${fieldTeamPeriod === 'afternoon' ? 'is-active' : ''}`}
+                    onClick={() => setFieldTeamPeriod('afternoon')}
+                    title="Colaboradores alocados no turno da tarde (após 12:00)"
+                  >
+                    <Sunset size={12} />
+                    <span>Tarde</span>
+                    <span className="pill-count">{periodCounts.afternoon}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`home-period-pill ${fieldTeamPeriod === 'all' ? 'is-active' : ''}`}
+                    onClick={() => setFieldTeamPeriod('all')}
+                    title="Visão geral consolidada do dia todo"
+                  >
+                    <CalendarDays size={12} />
+                    <span>Dia Todo</span>
+                    <span className="pill-count">{periodCounts.all}</span>
+                  </button>
                 </div>
               )}
-            </>
+            </div>
+          )}
+
+          {/* Conteúdo: Quadro por Centro de Custo OU Lista Tradicional */}
+          {allAppointments.length > 0 ? (
+            fieldTeamView === 'cost-center' ? (
+              costCenterGroups.length > 0 ? (
+                <div className="home-cost-centers-grid">
+                  {costCenterGroups.map((group) => (
+                    <div key={group.name} className={`home-cost-center-card is-type-${group.type}`}>
+                      <div className="home-cost-center-header">
+                        <div className="home-cost-center-title-group">
+                          <div className="home-cost-center-icon">
+                            {group.type === 'legal' ? (
+                              <BriefcaseBusiness size={14} />
+                            ) : group.type === 'standalone' ? (
+                              <MapPin size={14} />
+                            ) : (
+                              <Building2 size={14} />
+                            )}
+                          </div>
+                          <div>
+                            <h4 className="home-cost-center-name">{group.name}</h4>
+                            <span className="home-cost-center-type-badge">{group.badge}</span>
+                          </div>
+                        </div>
+                        <span className="home-cost-center-count-badge">
+                          <UsersRound size={12} />
+                          <strong>{group.workers.length}</strong> {group.workers.length === 1 ? 'pessoa' : 'pessoas'}
+                        </span>
+                      </div>
+
+                      <div className="home-cost-center-workers-list">
+                        {group.workers.map((worker) => {
+                          const avatar = getWorkerAvatarStyle(worker.name)
+                          return (
+                            <div key={worker.id + worker.name} className="home-cc-worker-row">
+                              <div
+                                className="home-cc-worker-avatar"
+                                style={{ background: avatar.bg, color: avatar.text, borderColor: avatar.border }}
+                                title={worker.name}
+                              >
+                                {getWorkerInitials(worker.name)}
+                              </div>
+
+                              <div className="home-cc-worker-info">
+                                <div className="home-cc-worker-heading">
+                                  <span className="home-cc-worker-name">{worker.name}</span>
+                                  <span className="home-cc-worker-hours">
+                                    <Clock size={10} /> {worker.timeRange.start} – {worker.timeRange.end}
+                                  </span>
+                                </div>
+
+                                <div className="home-cc-worker-role">{worker.role}</div>
+
+                                <div className="home-cc-worker-service">
+                                  {worker.service}
+                                  {worker.sublocation && <span className="home-cc-worker-subloc"> · {worker.sublocation}</span>}
+                                </div>
+
+                                {worker.transitionTag && (
+                                  <div className={`home-cc-transition-tag is-${worker.transitionTag.type}`}>
+                                    <ArrowRightLeft size={10} />
+                                    <span>{worker.transitionTag.text}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="home-fieldteam-empty">
+                  <Clock size={28} className="home-fieldteam-empty-icon" />
+                  <strong>
+                    {fieldTeamPeriod === 'now'
+                      ? 'Nenhum colaborador com atividade no minuto atual'
+                      : 'Nenhum colaborador com escala para o período selecionado'}
+                  </strong>
+                  <p>
+                    {fieldTeamPeriod === 'now'
+                      ? 'Pode ser horário de intervalo/almoço ou fora do expediente. Selecione "Manhã", "Tarde" ou "Dia Todo" para visualizar as alocações.'
+                      : 'Não foram encontradas programações para este horário hoje.'}
+                  </p>
+                  {fieldTeamPeriod === 'now' && (
+                    <button
+                      type="button"
+                      className="home-fieldteam-btn-reset"
+                      onClick={() => setFieldTeamPeriod('all')}
+                    >
+                      Ver escala completa do Dia ({periodCounts.all})
+                    </button>
+                  )}
+                </div>
+              )
+            ) : (
+              <>
+                <div className="home-appointments-list">
+                  {pagedAppointments.map((app) => {
+                    const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
+                    return (
+                      <div
+                        key={app.id}
+                        className={`home-appointment-card ${app.completed ? 'home-appointment-completed' : ''}`}
+                      >
+                        <div className="home-appointment-time">
+                          <span>{start}</span>
+                          <small>{end}</small>
+                        </div>
+                        <div className="home-appointment-details">
+                          <div className="home-appointment-title">
+                            <span className="home-appointment-worker">{app.collaboratorName}</span>
+                            <span className="home-appointment-role">{app.collaboratorRole.replace(/_/g, ' ')}</span>
+                          </div>
+                          <div className="home-appointment-desc">{app.service || 'Serviço técnico geral'}</div>
+                          <div className="home-appointment-meta">
+                            {app.enterprise && (
+                              <span className="home-appointment-meta-item" title="Empreendimento / Obra">
+                                <Building2 size={11} /> {app.enterprise}
+                              </span>
+                            )}
+                            {app.block && (
+                              <span className="home-appointment-meta-item" title="Bloco">
+                                <strong>Bl.</strong> {app.block}
+                              </span>
+                            )}
+                            {app.unit && (
+                              <span className="home-appointment-meta-item" title="Unidade">
+                                <strong>Un.</strong> {app.unit}
+                              </span>
+                            )}
+                            {!app.enterprise && !app.block && !app.unit && app.location && (
+                              <span className="home-appointment-meta-item">
+                                <MapPin size={11} /> {app.location}
+                              </span>
+                            )}
+                            {app.ticketProtocol && (
+                              <span className="home-appointment-meta-item">
+                                <ClipboardList size={11} /> #{app.ticketProtocol}
+                              </span>
+                            )}
+                            {app.legalProcessNumber && (
+                              <span className="home-appointment-meta-item">
+                                <BriefcaseBusiness size={11} /> Proc. {app.legalProcessNumber}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {totalSchedulePages > 1 && (
+                  <div className="home-schedule-pagination">
+                    <span className="home-schedule-pagination-info">
+                      Mostrando {(validSchedulePage - 1) * SCHEDULE_PAGE_SIZE + 1}–{Math.min(validSchedulePage * SCHEDULE_PAGE_SIZE, allAppointments.length)} de {allAppointments.length} programações
+                    </span>
+                    <div className="home-schedule-pagination-controls">
+                      <button
+                        type="button"
+                        className="home-schedule-page-btn"
+                        disabled={validSchedulePage === 1}
+                        onClick={() => setSchedulePage((p) => Math.max(1, p - 1))}
+                        title="Página anterior"
+                      >
+                        <ChevronLeft size={13} /> Anterior
+                      </button>
+                      <span className="home-schedule-page-current">
+                        {validSchedulePage} / {totalSchedulePages}
+                      </span>
+                      <button
+                        type="button"
+                        className="home-schedule-page-btn"
+                        disabled={validSchedulePage === totalSchedulePages}
+                        onClick={() => setSchedulePage((p) => Math.min(totalSchedulePages, p + 1))}
+                        title="Próxima página"
+                      >
+                        Próxima <ChevronRight size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )
           ) : (
             <div className="home-empty-state">
               <CalendarDays size={28} />
