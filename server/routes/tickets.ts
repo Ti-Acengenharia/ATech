@@ -569,19 +569,20 @@ router.get('/filter-options', async (_req, res, next) => {
     }
     const [enterprises, blocks, units, subjects, subsubjects, years, dashboardSubjects] = await Promise.all([
       pool.query<{ value: string }>(
-        `SELECT CASE
-           WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'Sem empreendimento'
-           ELSE min(btrim(enterprise))
-         END AS value FROM tickets
-         WHERE ($1::boolean OR source_active = TRUE)
-         GROUP BY CASE
-           WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'sem empreendimento'
-           ELSE lower(btrim(enterprise))
-         END
-         ORDER BY CASE
-           WHEN (CASE WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'sem empreendimento' ELSE lower(btrim(enterprise)) END) = 'sem empreendimento' THEN 1
-           ELSE 0
-         END, value`,
+        `SELECT min(clean_enterprise) AS value
+         FROM (
+           SELECT
+             CASE
+               WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'Sem empreendimento'
+               ELSE btrim(enterprise)
+             END AS clean_enterprise
+           FROM tickets
+           WHERE ($1::boolean OR source_active = TRUE)
+         ) t
+         GROUP BY lower(clean_enterprise)
+         ORDER BY
+           CASE WHEN lower(clean_enterprise) = 'sem empreendimento' THEN 1 ELSE 0 END,
+           lower(min(clean_enterprise))`,
         [includeInactive],
       ),
       pool.query<{ value: string }>(
