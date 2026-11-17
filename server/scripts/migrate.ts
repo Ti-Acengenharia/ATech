@@ -77,6 +77,11 @@ try {
     '055_whatsapp_settings.sql',
     '056_clean_api_validation_access.sql',
     '057_collaborator_absence_times.sql',
+    '058_sienge_daily_request_usage.sql',
+    '059_sienge_stock_snapshots_and_movements.sql',
+    '060_sienge_allow_negative_stock_balances.sql',
+    '061_sienge_snapshot_item_identifiers.sql',
+    '062_sienge_stock_movement_batches_and_uniforms.sql',
   ]
 
   let newlyAppliedCount = 0

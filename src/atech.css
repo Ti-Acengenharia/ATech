@@ -670,6 +670,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .text-button:hover { color: var(--forest); }
 .back-to-google { margin-top: 7px; }
 .form-error { margin: 10px 0 0; color: #b91c1c; font-size: 12px; }
+.ticket-programming-form .form-error { white-space: pre-line; }
 .notice { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border: 1px solid; border-radius: 6px; font-size: 12px; line-height: 1.45; }
 .notice-warning, .notice-error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
 .login-content > .notice { margin-top: 20px; }
@@ -765,6 +766,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .workspace-main:has(.ticket-board-page.ticket-board-kanban),
   .workspace-main:has(.legal-page.legal-board-page) {
     overflow-y: hidden;
+  }
+  .workspace-main:has(.ticket-detail-page) .page-content {
+    height: calc(100dvh - 56px);
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    box-sizing: border-box;
   }
   .topbar {
     position: sticky;
@@ -3270,6 +3279,10 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .calendar-controls { gap: 7px; }
 .calendar-controls .secondary-button { min-height: 37px; border-radius: 6px; font-size: 10px; }
 .calendar-controls .icon-button { width: 36px; height: 36px; border-radius: 6px; }
+.schedule-collaborator-search { min-height: 40px; display: flex; align-items: center; gap: 9px; margin: 0 16px 14px; padding: 0 11px; color: #6d8498; background: #fff; border: 1px solid #d5e1eb; border-radius: 7px; }
+.schedule-collaborator-search:focus-within { border-color: #77a9ce; box-shadow: 0 0 0 3px rgba(52, 127, 183, .1); }
+.schedule-collaborator-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: #304d65; background: transparent; font: inherit; font-size: 11px; }
+.schedule-collaborator-search input::placeholder { color: #91a1af; }
 .calendar-date-picker { min-height: 37px; padding: 0 10px; border: 1px solid #dce5ed; border-radius: 6px; }
 .calendar-week-strip { gap: 7px; padding: 0 20px 15px; border-color: #e8eef4; }
 .calendar-day { min-height: 56px; background: #f8fafc; border-radius: 7px; cursor: pointer; transition: .16s ease; }
@@ -3608,6 +3621,19 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 .collaborator-uniform-editor .children-editor-heading { padding-bottom: 10px; }
 .collaborator-uniform-editor .children-editor-heading p { margin: 3px 0 0; color: #7b8fa1; font-size: 9px; }
 .collaborator-uniform-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.collaborator-uniform-stock-search { display: flex; align-items: flex-end; gap: 8px; }
+.collaborator-uniform-stock-search .form-field { flex: 1; }
+.collaborator-uniform-stock-results { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; margin-top: 8px; }
+.collaborator-uniform-stock-results > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid #e3eaf0; border-radius: 5px; background: #fff; }
+.collaborator-uniform-stock-results > div > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.collaborator-uniform-stock-results strong, .collaborator-uniform-stock-selected > div > strong { color: #35536c; font-size: 10px; }
+.collaborator-uniform-stock-results small { color: #71869a; font-size: 8px; line-height: 1.4; }
+.collaborator-uniform-stock-results p { margin: 0; padding: 8px; color: #71869a; font-size: 9px; }
+.collaborator-uniform-stock-selected { display: grid; gap: 7px; margin-top: 12px; }
+.collaborator-uniform-stock-selected h4 { margin: 0; color: #35536c; font-size: 10px; }
+.collaborator-uniform-stock-selected > div { display: grid; gap: 8px; padding: 9px; border: 1px solid #e3eaf0; border-radius: 5px; background: #fff; }
+.collaborator-uniform-stock-selected .collaborator-uniform-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.collaborator-uniform-stock-selected .secondary-button { justify-self: end; min-height: 28px; }
 .collaborator-size-create, .collaborator-pin-form { display: flex; align-items: flex-end; gap: 9px; margin-top: 11px; }
 .collaborator-size-create .form-field, .collaborator-pin-form .form-field { flex: 1; }
 .collaborator-size-create .secondary-button, .collaborator-pin-form .secondary-button { min-height: 36px; white-space: nowrap; }
@@ -3628,6 +3654,8 @@ option:checked { color: #174f7d; background-color: #e7f2fb; }
 @media (max-width: 600px) {
   .ticket-board-filters { grid-template-columns: minmax(0, 1fr); padding: 10px 0 0; }
   .ticket-board-filters > .searchable-multiselect { grid-column: 1; }
+  .collaborator-uniform-stock-search { align-items: stretch; flex-direction: column; }
+  .collaborator-uniform-stock-selected .collaborator-uniform-fields { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) and (orientation: landscape) {
   .personal-column { min-height: 48vh; }

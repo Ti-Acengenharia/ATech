@@ -16,7 +16,7 @@ import enterpriseInformationRoutes from './routes/enterprise-information.js'
 import warrantyRoutes from './routes/warranties.js'
 import legalProcessRoutes from './routes/legal-processes.js'
 import personalActivityRoutes from './routes/personal-activities.js'
-import inventoryRoutes from './routes/inventory.js'
+import siengeStockRoutes from './routes/sienge-stock.js'
 import homeRoutes from './routes/home.js'
 import syncRoutes from './routes/sync.js'
 import settingsRoutes from './routes/settings.js'
@@ -215,7 +215,6 @@ app.use('/api', apiLimiter)
 app.use('/api/auth/admin/login', authLimiter)
 app.use('/api/auth/google', authLimiter)
 app.use('/api/profile/signature', pinLimiter)
-app.use('/api/inventory/documents', pinLimiter)
 app.use('/api/tickets/import-csv', heavyMutationLimiter)
 app.use('/api/tickets/sync', heavyMutationLimiter)
 app.use('/api/tickets/integration/import-all', heavyMutationLimiter)
@@ -232,7 +231,7 @@ app.use('/api/enterprise-information', enterpriseInformationRoutes)
 app.use('/api/warranties', warrantyRoutes)
 app.use('/api/legal-processes', legalProcessRoutes)
 app.use('/api/personal-activities', personalActivityRoutes)
-app.use('/api/inventory', inventoryRoutes)
+app.use('/api/inventory/sienge', siengeStockRoutes)
 app.use('/api/home', homeRoutes)
 app.use('/api/sync', syncRoutes)
 app.use('/api/settings', settingsRoutes)

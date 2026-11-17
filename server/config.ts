@@ -36,6 +36,22 @@ const envSchema = z.object({
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().min(10).optional(),
   ),
+  SIENGE_SUBDOMAIN: z.preprocess(
+    (value) => {
+      if (typeof value !== 'string' || value.trim() === '') return undefined
+      const host = value.trim().replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0]
+      return host.replace(/\.sienge\.com\.br$/i, '')
+    },
+    z.string().regex(/^[a-z\d-]+$/i).optional(),
+  ),
+  SIENGE_API_USERNAME: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
+  SIENGE_API_PASSWORD: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
   EVOLUTION_API_URL: z.preprocess(
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().url().optional(),
@@ -64,6 +80,19 @@ const envSchema = z.object({
     }
     return value
   }, z.boolean().default(true)),
+}).superRefine((config, context) => {
+  const siengeSettings = [
+    config.SIENGE_SUBDOMAIN,
+    config.SIENGE_API_USERNAME,
+    config.SIENGE_API_PASSWORD,
+  ]
+  if (siengeSettings.some(Boolean) && !siengeSettings.every(Boolean)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Configure SIENGE_SUBDOMAIN, SIENGE_API_USERNAME e SIENGE_API_PASSWORD juntos.',
+      path: ['SIENGE_SUBDOMAIN'],
+    })
+  }
 })
 
 const parsedEnv = envSchema.safeParse(process.env)

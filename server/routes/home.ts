@@ -96,7 +96,6 @@ router.get('/summary', async (req, res, next) => {
       scheduleCount,
       todayAppointments,
       legalSummary,
-      inventorySummary,
       absencesToday,
       personalTasks,
     ] = await Promise.all([
@@ -249,33 +248,6 @@ router.get('/summary', async (req, res, next) => {
           })
         : Promise.resolve(null),
 
-      // Inventory Low Stock
-      canAccess('inventory')
-        ? pool.query<{ low_stock_count: number }>(
-            `SELECT COUNT(*)::int AS low_stock_count
-             FROM (
-               SELECT item.id, item.minimum_stock,
-                      COALESCE(SUM(CASE
-                        WHEN document.document_type IN ('entry', 'tool_return') THEN line.base_quantity
-                        WHEN document.document_type = 'transfer' THEN 0
-                        ELSE -line.base_quantity END), 0) AS stock_quantity
-               FROM inventory_items item
-               LEFT JOIN inventory_document_items line ON line.item_id = item.id
-               LEFT JOIN inventory_documents document ON document.id = line.document_id
-               WHERE item.is_active = true AND item.minimum_stock > 0
-               GROUP BY item.id, item.minimum_stock
-               HAVING COALESCE(SUM(CASE
-                        WHEN document.document_type IN ('entry', 'tool_return') THEN line.base_quantity
-                        WHEN document.document_type = 'transfer' THEN 0
-                        ELSE -line.base_quantity END), 0) <= item.minimum_stock
-             ) low_stock`,
-          ).then((r) => r.rows[0]?.low_stock_count ?? 0)
-          .catch((err) => {
-            console.error('Erro ao consultar estoque baixo:', err)
-            return 0
-          })
-        : Promise.resolve(null),
-
       // Absences Today
       canAccess('collaborators')
         ? pool.query<{
@@ -365,11 +337,6 @@ router.get('/summary', async (req, res, next) => {
         ? {
             activeTotal: legalSummary.active_total,
             upcomingDeadlinesCount: legalSummary.upcoming_deadlines_count,
-          }
-        : null,
-      inventory: inventorySummary !== null
-        ? {
-            lowStockCount: inventorySummary,
           }
         : null,
       absencesToday: absencesToday.map((abs) => ({

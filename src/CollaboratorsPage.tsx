@@ -124,11 +124,12 @@ interface CollaboratorReport {
     delivererName: string
     delivererSignatureBase64: string
     recipientSignatureBase64: string
+    stockItems?: { name: string; quantity: number; unitName: string }[]
   }[]
   inventoryDeliveries: {
     id: number
     deliveryDate: string
-    type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+    type: 'epi_delivery'
     delivererName: string
     delivererSignatureBase64: string
     recipientSignatureBase64: string
@@ -213,6 +214,33 @@ interface UniformDeliveryForm {
   bootQty: number
 }
 
+interface UniformStockCenter {
+  costCenterId: number
+  locationName: string
+  needsRefresh: boolean
+  synchronizedAt: string | null
+}
+
+interface UniformStockItem {
+  snapshotItemId: number
+  costCenterId: number
+  resourceId: number
+  resourceDescription: string
+  detailId: number | null
+  detailDescription: string | null
+  trademarkId: number | null
+  trademarkDescription: string | null
+  quantity: number
+  unitOfMeasure: string
+}
+
+interface UniformMovementLine {
+  item: UniformStockItem
+  quantity: string
+  buildingUnitId: string
+  sheetItemId: string
+}
+
 interface CollaboratorForm {
   name: string
   nickname: string
@@ -273,6 +301,14 @@ function toLocalDateStr(dateVal: string | Date): string {
     month: '2-digit',
     day: '2-digit',
   }).format(d)
+}
+
+function createRequestKey() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 function formatDate(value: string | null) {
@@ -384,6 +420,14 @@ export default function CollaboratorsPage({
   const [deliveryPin, setDeliveryPin] = useState('')
   const [delivererSignatureUnlocked, setDelivererSignatureUnlocked] = useState(false)
   const [recipientSignature, setRecipientSignature] = useState<string | null>(null)
+  const [uniformRequestKey, setUniformRequestKey] = useState('')
+  const [uniformStockCenters, setUniformStockCenters] = useState<UniformStockCenter[]>([])
+  const [uniformStockItems, setUniformStockItems] = useState<UniformStockItem[]>([])
+  const [uniformCostCenterId, setUniformCostCenterId] = useState('')
+  const [uniformStockSearch, setUniformStockSearch] = useState('')
+  const [appliedUniformStockSearch, setAppliedUniformStockSearch] = useState('')
+  const [uniformMovementLines, setUniformMovementLines] = useState<UniformMovementLine[]>([])
+  const [uniformStockLoading, setUniformStockLoading] = useState(false)
   const [deliverySubmitting, setDeliverySubmitting] = useState(false)
   const [deliveryError, setDeliveryError] = useState('')
   const [absenceModalOpen, setAbsenceModalOpen] = useState(false)
@@ -507,6 +551,42 @@ export default function CollaboratorsPage({
       .then(setUniformOptions)
       .catch((error: unknown) => setNotice({ kind: 'error', text: error instanceof Error ? error.message : 'Não foi possível carregar os tamanhos de fardamento.' }))
   }, [])
+
+  useEffect(() => {
+    if (!deliveryCollaborator) return
+    let cancelled = false
+    apiRequest<{ costCenters: UniformStockCenter[] }>('/api/inventory/sienge/uniform-stock-options')
+      .then((result) => {
+        if (cancelled) return
+        setUniformStockCenters(result.costCenters)
+        const usableCenter = result.costCenters.find((center) => !center.needsRefresh)
+        setUniformCostCenterId(usableCenter ? String(usableCenter.costCenterId) : '')
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setDeliveryError(error instanceof Error ? error.message : 'Não foi possível carregar os centros de estoque Sienge.')
+      })
+    return () => { cancelled = true }
+  }, [deliveryCollaborator])
+
+  useEffect(() => {
+    if (!deliveryCollaborator || !uniformCostCenterId) {
+      setUniformStockItems([])
+      return
+    }
+    let cancelled = false
+    const params = new URLSearchParams({
+      costCenterId: uniformCostCenterId,
+      search: appliedUniformStockSearch,
+    })
+    setUniformStockLoading(true)
+    apiRequest<{ items: UniformStockItem[] }>(`/api/inventory/sienge/uniform-stock-options?${params}`)
+      .then((result) => { if (!cancelled) setUniformStockItems(result.items) })
+      .catch((error: unknown) => {
+        if (!cancelled) setDeliveryError(error instanceof Error ? error.message : 'Não foi possível buscar os itens Sienge.')
+      })
+      .finally(() => { if (!cancelled) setUniformStockLoading(false) })
+    return () => { cancelled = true }
+  }, [deliveryCollaborator, uniformCostCenterId, appliedUniformStockSearch])
 
   useEffect(() => {
     if (reportPickerOpen) reportPickerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -1057,7 +1137,29 @@ export default function CollaboratorsPage({
     setDeliveryPin('')
     setDelivererSignatureUnlocked(false)
     setRecipientSignature(null)
+    setUniformRequestKey(createRequestKey())
+    setUniformStockCenters([])
+    setUniformStockItems([])
+    setUniformCostCenterId('')
+    setUniformStockSearch('')
+    setAppliedUniformStockSearch('')
+    setUniformMovementLines([])
     setDeliveryError('')
+  }
+
+  function addUniformMovementItem(item: UniformStockItem) {
+    if (uniformMovementLines.some((line) => line.item.snapshotItemId === item.snapshotItemId)) return
+    setUniformMovementLines((current) => [...current, {
+      item,
+      quantity: '',
+      buildingUnitId: '',
+      sheetItemId: '',
+    }])
+  }
+
+  function editUniformMovementLine(index: number, field: keyof Omit<UniformMovementLine, 'item'>, value: string) {
+    setUniformMovementLines((lines) => lines.map((line, current) =>
+      current === index ? { ...line, [field]: value } : line))
   }
 
   function confirmDelivererPin() {
@@ -1118,15 +1220,44 @@ export default function CollaboratorsPage({
       setDeliveryError('Desbloqueie a assinatura de quem entrega e colete a assinatura de quem recebe.')
       return
     }
+    if (!uniformCostCenterId || !uniformMovementLines.length) {
+      setDeliveryError('Selecione um centro de custo e ao menos um insumo Sienge para baixar.')
+      return
+    }
+    if (uniformMovementLines.some((line) => !line.quantity || Number(line.quantity) <= 0 ||
+        Number(line.quantity) > line.item.quantity || !/^\d+$/.test(line.buildingUnitId) ||
+        Number(line.buildingUnitId) < 1 || !/^\d+$/.test(line.sheetItemId) || Number(line.sheetItemId) < 1)) {
+      setDeliveryError('Informe quantidades dentro do saldo e uma unidade construtiva e item de orçamento válidos para cada insumo.')
+      return
+    }
     setDeliverySubmitting(true)
     setDeliveryError('')
     try {
-      await apiRequest(`/api/collaborators/${deliveryCollaborator.id}/uniform-deliveries`, {
+      await apiRequest('/api/inventory/sienge/movements', {
         method: 'POST',
-        body: JSON.stringify({ ...deliveryForm, delivererPin: deliveryPin, recipientSignatureBase64: recipientSignature }),
+        body: JSON.stringify({
+          requestKey: uniformRequestKey,
+          confirmed: true,
+          operationType: 'uniform_delivery',
+          transactionDate: deliveryForm.deliveryDate,
+          costCenterId: Number(uniformCostCenterId),
+          items: uniformMovementLines.map((line) => ({
+            snapshotItemId: line.item.snapshotItemId,
+            quantity: Number(line.quantity),
+            sourceBuildingAppropriations: [{
+              buildingUnitId: Number(line.buildingUnitId),
+              sheetItemId: Number(line.sheetItemId),
+              percentage: 100,
+            }],
+          })),
+          collaboratorId: Number(deliveryCollaborator.id),
+          delivererPin: deliveryPin,
+          recipientSignatureBase64: recipientSignature,
+          uniformDetails: deliveryForm,
+        }),
       })
       setDeliveryCollaborator(null)
-      setNotice({ kind: 'success', text: `Entrega de fardamento registrada para ${deliveryCollaborator.name}.` })
+      setNotice({ kind: 'success', text: `Entrega de fardamento registrada e enviada ao Sienge para ${deliveryCollaborator.name}.` })
       if (report?.id === deliveryCollaborator.id) {
         setReport(null)
         setReportOpen(false)
@@ -1340,7 +1471,7 @@ export default function CollaboratorsPage({
         }
         for (const delivery of report.uniformDeliveries) {
           const details = document.splitTextToSize(
-            `${formatDate(delivery.deliveryDate)} · Camisa ${delivery.shirtSize ?? '—'} (curta ${delivery.shirtShortSleeveQty}, longa ${delivery.shirtLongSleeveQty}) · Calça ${delivery.pantsSize ?? '—'} (${delivery.pantsQty}) · Bota ${delivery.bootSize ?? '—'} (${delivery.bootQty}) · Entregue por ${delivery.delivererName}`,
+            `${formatDate(delivery.deliveryDate)} · Camisa ${delivery.shirtSize ?? '—'} (curta ${delivery.shirtShortSleeveQty}, longa ${delivery.shirtLongSleeveQty}) · Calça ${delivery.pantsSize ?? '—'} (${delivery.pantsQty}) · Bota ${delivery.bootSize ?? '—'} (${delivery.bootQty}) · Entregue por ${delivery.delivererName}${delivery.stockItems?.length ? ` · Baixa Sienge: ${delivery.stockItems.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join('; ')}` : ''}`,
             contentWidth - 8,
           ) as string[]
           ensureSpace(details.length * 4 + 30)
@@ -1356,19 +1487,17 @@ export default function CollaboratorsPage({
           document.addImage(`data:image/png;base64,${delivery.recipientSignatureBase64}`, 'PNG', margin + 91, y + 4, 72, 18)
           y += 27
         }
-        drawSection('Histórico de EPI e ferramentas')
+        drawSection('Histórico de EPI')
         if (!report.inventoryDeliveries.length) {
           document.setFont('helvetica', 'normal')
           document.setFontSize(8)
           document.setTextColor(112, 132, 151)
-          document.text('Nenhuma entrega de EPI ou ferramenta registrada.', margin + 2, y)
+          document.text('Nenhuma entrega de EPI registrada.', margin + 2, y)
           y += 7
         }
         for (const delivery of report.inventoryDeliveries) {
-          const label = delivery.type === 'epi_delivery' ? 'Entrega de EPI'
-            : delivery.type === 'tool_delivery' ? 'Entrega de ferramentas' : 'Devolução de ferramentas'
           const details = document.splitTextToSize(
-            `${formatDate(delivery.deliveryDate)} · ${label} · ${delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por ${delivery.delivererName}`,
+            `${formatDate(delivery.deliveryDate)} · Entrega de EPI via Sienge · ${delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por ${delivery.delivererName}`,
             contentWidth - 8,
           ) as string[]
           ensureSpace(details.length * 4 + 30)
@@ -1702,8 +1831,8 @@ export default function CollaboratorsPage({
                     </div>
                   ) : <p>Nenhum atestado ou falta registrado para este colaborador.</p>}
                 </section>
-                <section className="collaborator-history-section"><h3>Entregas de fardamento</h3>{report.uniformDeliveries.length ? report.uniformDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={delivery.id}><p>{formatDate(delivery.deliveryDate)} · Camisa {delivery.shirtSize ?? '—'} (curta {delivery.shirtShortSleeveQty}, longa {delivery.shirtLongSleeveQty}) · Calça {delivery.pantsSize ?? '—'} ({delivery.pantsQty}) · Bota {delivery.bootSize ?? '—'} ({delivery.bootQty}) · Entregue por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
-                <section className="collaborator-history-section"><h3>Histórico de EPI e ferramentas</h3>{report.inventoryDeliveries.length ? report.inventoryDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={`inventory-${delivery.id}`}><p>{formatDate(delivery.deliveryDate)} · {delivery.type === 'epi_delivery' ? 'Entrega de EPI' : delivery.type === 'tool_delivery' ? 'Entrega de ferramentas' : 'Devolução de ferramentas'} · {delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega de EPI ou ferramenta registrada.</p>}</section>
+                        <section className="collaborator-history-section"><h3>Entregas de fardamento</h3>{report.uniformDeliveries.length ? report.uniformDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={delivery.id}><p>{formatDate(delivery.deliveryDate)} · Camisa {delivery.shirtSize ?? '—'} (curta {delivery.shirtShortSleeveQty}, longa {delivery.shirtLongSleeveQty}) · Calça {delivery.pantsSize ?? '—'} ({delivery.pantsQty}) · Bota {delivery.bootSize ?? '—'} ({delivery.bootQty}) · Entregue por {delivery.delivererName}{delivery.stockItems?.length ? ` · Baixa Sienge: ${delivery.stockItems.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')}` : ''}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
+                        <section className="collaborator-history-section"><h3>Histórico de EPI no Sienge</h3>{report.inventoryDeliveries.length ? report.inventoryDeliveries.map((delivery) => <div className="collaborator-delivery-record" key={`inventory-${delivery.id}`}><p>{formatDate(delivery.deliveryDate)} · {delivery.items.map((item) => `${item.name} (${item.quantity} ${item.unitName})`).join(' · ')} · Registrado por {delivery.delivererName}</p><div><span>Quem entrega<img src={`data:image/png;base64,${delivery.delivererSignatureBase64}`} alt={`Assinatura de quem entregou em ${formatDate(delivery.deliveryDate)}`} /></span><span>Quem recebe<img src={`data:image/png;base64,${delivery.recipientSignatureBase64}`} alt={`Assinatura de quem recebeu em ${formatDate(delivery.deliveryDate)}`} /></span></div></div>) : <p>Nenhuma entrega registrada.</p>}</section>
                 <footer className="dialog-footer"><button className="secondary-button danger-button" type="button" disabled={deletingId === report.id} onClick={() => void deleteCollaborator(report.id, report.name)}><Trash2 size={15} />{deletingId === report.id ? 'Excluindo...' : 'Excluir colaborador'}</button><button className="secondary-button" type="button" onClick={() => void downloadPdf('report')}>Ficha do colaborador (PDF)</button><button className="secondary-button" type="button" onClick={editReport}><Pencil size={15} /> Editar cadastro</button><button className="primary-button" type="button" onClick={closeReport}>Concluir</button></footer>
               </>
             )}
@@ -1803,6 +1932,51 @@ export default function CollaboratorsPage({
             <label className="form-field"><span>Tamanho da bota</span><select value={deliveryForm.bootSize ?? ''} onChange={(event) => setDeliveryForm((current) => ({ ...current, bootSize: event.target.value ? Number(event.target.value) : null }))}><option value="">Não informado</option>{uniformOptions.bootSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
             <label className="form-field"><span>Quantidade de botas</span><input type="number" min="0" max="99" value={deliveryForm.bootQty} onChange={(event) => setDeliveryForm((current) => ({ ...current, bootQty: Number(event.target.value) }))} /></label>
           </div>
+          <section className="collaborator-uniform-editor" aria-label="Baixa dos itens de fardamento no Sienge">
+            <div className="children-editor-heading"><div><h3>Baixa no estoque Sienge</h3><p>Selecione os insumos correspondentes às peças desta entrega. Todos devem sair de um único centro de custo.</p></div></div>
+            <label className="form-field">
+              <span>Centro de custo de origem *</span>
+              <select value={uniformCostCenterId} onChange={(event) => {
+                setUniformCostCenterId(event.target.value)
+                setAppliedUniformStockSearch('')
+                setUniformStockSearch('')
+                setUniformMovementLines([])
+              }} required>
+                <option value="">Selecione o centro</option>
+                {uniformStockCenters.map((center) => <option key={center.costCenterId} value={center.costCenterId} disabled={center.needsRefresh}>
+                  {center.locationName} · centro {center.costCenterId}{center.needsRefresh ? ' · sincronização necessária' : ''}
+                </option>)}
+              </select>
+            </label>
+            <form className="collaborator-uniform-stock-search" onSubmit={(event) => {
+              event.preventDefault()
+              setAppliedUniformStockSearch(uniformStockSearch.trim())
+            }}>
+              <label className="form-field"><span>Buscar insumo, detalhe, marca ou código</span><input type="search" value={uniformStockSearch} onChange={(event) => setUniformStockSearch(event.target.value)} /></label>
+              <button className="secondary-button" type="submit" disabled={!uniformCostCenterId || uniformStockLoading}><Search size={14} /> Buscar</button>
+            </form>
+            <div className="collaborator-uniform-stock-results">
+              {uniformStockLoading ? <p>Carregando itens do centro...</p> : uniformStockItems.length ? uniformStockItems.map((item) => {
+                const added = uniformMovementLines.some((line) => line.item.snapshotItemId === item.snapshotItemId)
+                return <div key={item.snapshotItemId}>
+                  <span><strong>{item.resourceDescription || `Insumo ${item.resourceId}`}</strong><small>resourceId {item.resourceId} · {item.detailDescription || 'Sem detalhe'} · {item.trademarkDescription || 'Sem marca'} · saldo {new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(item.quantity)} {item.unitOfMeasure}</small></span>
+                  <button className="secondary-button" type="button" disabled={added || item.quantity <= 0} onClick={() => addUniformMovementItem(item)}><Plus size={14} /> {added ? 'Adicionado' : 'Adicionar'}</button>
+                </div>
+              }) : <p>{uniformCostCenterId ? 'Nenhum insumo encontrado. Confira a sincronização ou altere a busca.' : 'Selecione um centro de custo para procurar os insumos.'}</p>}
+            </div>
+            {uniformMovementLines.length > 0 && <div className="collaborator-uniform-stock-selected">
+              <h4>Itens que serão baixados</h4>
+              {uniformMovementLines.map((line, index) => <div key={line.item.snapshotItemId}>
+                <strong>{line.item.resourceDescription} · resourceId {line.item.resourceId}</strong>
+                <div className="collaborator-uniform-fields">
+                  <label className="form-field"><span>Quantidade ({line.item.unitOfMeasure}) *</span><input type="number" min="0.0001" step="0.0001" max={line.item.quantity} value={line.quantity} onChange={(event) => editUniformMovementLine(index, 'quantity', event.target.value)} required /></label>
+                  <label className="form-field"><span>Unidade construtiva *</span><input type="number" min="1" step="1" value={line.buildingUnitId} onChange={(event) => editUniformMovementLine(index, 'buildingUnitId', event.target.value)} required /></label>
+                  <label className="form-field"><span>Item do orçamento *</span><input type="number" min="1" step="1" value={line.sheetItemId} onChange={(event) => editUniformMovementLine(index, 'sheetItemId', event.target.value)} required /></label>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => setUniformMovementLines((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 size={14} /> Remover</button>
+              </div>)}
+            </div>}
+          </section>
           <section className="collaborator-signature-section">
             <h3>Assinatura de quem entrega</h3>
             {delivererSignatureUnlocked ? <div className="signature-confirmation"><ShieldAlert size={16} /> PIN informado; o servidor verificará o PIN e recuperará a assinatura protegida ao registrar.</div> : <div className="collaborator-pin-form"><label className="form-field"><span>PIN de assinatura *</span><input type="password" inputMode="numeric" autoComplete="current-password" value={deliveryPin} onChange={(event) => { setDeliveryPin(event.target.value); setDelivererSignatureUnlocked(false) }} required /></label><button className="secondary-button" type="button" onClick={confirmDelivererPin}>Confirmar PIN</button></div>}
@@ -1811,7 +1985,7 @@ export default function CollaboratorsPage({
             <button className="secondary-button" type="button" onClick={() => { recipientCanvasRef.current?.getContext('2d')?.clearRect(0, 0, 720, 180); recipientInk.current = false; setRecipientSignature(null) }}>Limpar assinatura</button>
           </section>
           {deliveryError && <p className="form-error" role="alert">{deliveryError}</p>}
-          <footer className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDeliveryCollaborator(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={deliverySubmitting}>{deliverySubmitting ? 'Salvando entrega...' : 'Registrar entrega'}</button></footer>
+          <footer className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDeliveryCollaborator(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={deliverySubmitting || !uniformMovementLines.length}>{deliverySubmitting ? 'Enviando ao Sienge...' : 'Registrar e baixar no Sienge'}</button></footer>
         </form>
       </section>
     )}

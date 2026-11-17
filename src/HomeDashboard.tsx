@@ -184,9 +184,6 @@ interface HomeSummaryData {
     activeTotal: number
     upcomingDeadlinesCount: number
   } | null
-  inventory: {
-    lowStockCount: number
-  } | null
   absencesToday: Array<{
     id: string
     type: 'atestado' | 'falta_injustificada'
@@ -737,26 +734,16 @@ export default function HomeDashboard({
           </article>
         )}
 
-        {/* KPI 4: Alertas Operacionais (Estoque Baixo & Atestados) */}
-        {(canAccessInventory || canAccessCollaborators) && (
+        {/* KPI 4: Ausências registradas hoje */}
+        {canAccessCollaborators && (
           <article
-            className={`home-kpi-card ${
-              (summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0
-                ? 'home-kpi-amber'
-                : 'home-kpi-emerald'
-            }`}
-            onClick={() => {
-              if ((summary?.inventory?.lowStockCount ?? 0) > 0 && canAccessInventory) {
-                onOpenPage('inventory')
-              } else if ((summary?.absencesToday?.length ?? 0) > 0 && canAccessCollaborators) {
-                onOpenCollaborators()
-              }
-            }}
+            className={`home-kpi-card ${(summary?.absencesToday?.length ?? 0) > 0 ? 'home-kpi-amber' : 'home-kpi-emerald'}`}
+            onClick={() => { if ((summary?.absencesToday?.length ?? 0) > 0) onOpenCollaborators() }}
           >
             <div className="home-kpi-header">
-              <span className="home-kpi-label">Alertas Operacionais</span>
+              <span className="home-kpi-label">Ausências hoje</span>
               <div className="home-kpi-icon">
-                {(summary?.inventory?.lowStockCount ?? 0) > 0 || (summary?.absencesToday?.length ?? 0) > 0 ? (
+                {(summary?.absencesToday?.length ?? 0) > 0 ? (
                   <TriangleAlert size={18} />
                 ) : (
                   <CheckCircle2 size={18} />
@@ -765,16 +752,14 @@ export default function HomeDashboard({
             </div>
             <div className="home-kpi-body">
               <div className="home-kpi-value">
-                {(summary?.inventory?.lowStockCount ?? 0) + (summary?.absencesToday?.length ?? 0)}
+                {summary?.absencesToday?.length ?? 0}
               </div>
             </div>
             <div className="home-kpi-footer">
               <span>
-                {(summary?.inventory?.lowStockCount ?? 0) > 0
-                  ? `${summary?.inventory?.lowStockCount} insumos em nível crítico`
-                  : (summary?.absencesToday?.length ?? 0) > 0
-                    ? `${summary?.absencesToday.length} ausências registradas hoje`
-                    : 'Suprimentos e escalas em conformidade'}
+                {(summary?.absencesToday?.length ?? 0) > 0
+                  ? `${summary?.absencesToday.length} ausência(s) registrada(s) hoje`
+                  : 'Nenhuma ausência registrada hoje'}
               </span>
               <ArrowRight size={14} className="home-kpi-arrow" />
             </div>
@@ -1369,8 +1354,8 @@ export default function HomeDashboard({
                       <Package size={18} />
                     </div>
                     <div className="home-module-content">
-                      <strong>Gestão de Estoque</strong>
-                      <small>Insumos, EPIs, entregas com PIN e ferramentas</small>
+                      <strong>Estoque Sienge</strong>
+                      <small>Saldo por centro de custo e local, baixas e transferências</small>
                     </div>
                     <ChevronRight size={15} className="home-module-arrow" />
                   </div>

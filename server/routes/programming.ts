@@ -569,6 +569,33 @@ router.get('/ticket/:ticketId', async (req, res, next) => {
   }
 })
 
+interface ScheduleConflict {
+  id: string
+  collaboratorId: number
+  collaboratorName: string
+  date: string
+  dateLabel: string
+  activity: string
+  description: string
+  starts: string
+  ends: string
+}
+
+function formatScheduleConflicts(conflicts: ScheduleConflict[]) {
+  const unique = new Map(conflicts.map((conflict) => [
+    `${conflict.id}:${conflict.collaboratorId}`,
+    conflict,
+  ]))
+  const ordered = [...unique.values()].sort((left, right) =>
+    left.date.localeCompare(right.date) ||
+    left.collaboratorName.localeCompare(right.collaboratorName, 'pt-BR') ||
+    left.starts.localeCompare(right.starts),
+  )
+  return `Conflitos de agenda:\n${ordered.map((conflict) =>
+    `• ${conflict.dateLabel} · ${conflict.collaboratorName}: ${conflict.activity}${conflict.description ? ` — ${conflict.description}` : ''}, das ${conflict.starts} às ${conflict.ends}.`,
+  ).join('\n')}`
+}
+
 async function validateAvailability(
   client: import('pg').PoolClient,
   collaboratorId: number,
@@ -577,7 +604,7 @@ async function validateAvailability(
   startsAt: Date,
   endsAt: Date,
   excludeId?: number,
-) {
+): Promise<ScheduleConflict[]> {
   const collaborator = await client.query<{ name: string; is_on_leave: boolean; role: string }>(
     `SELECT name, is_on_leave, role FROM collaborators
      WHERE id = $1 AND (termination_date IS NULL OR termination_date > CURRENT_DATE)
@@ -706,33 +733,53 @@ async function validateAvailability(
     id: string
     protocol: string | null
     legal_process_number: string | null
+    activity_description: string
     starts_at: Date
     ends_at: Date
   }>(
-    `SELECT p.id, t.protocol, lp.title AS legal_process_number, p.starts_at, p.ends_at
+    `SELECT p.id, t.protocol, lp.title AS legal_process_number,
+            p.activity_description, p.starts_at, p.ends_at
      FROM ticket_programming p
      LEFT JOIN tickets t ON t.source_id = p.ticket_id
      LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
      WHERE p.collaborator_id = $1 AND p.starts_at < $3 AND p.ends_at > $2
        AND ($4::bigint IS NULL OR p.id <> $4)
-     LIMIT 1`,
+     ORDER BY p.starts_at
+     `,
     [collaboratorId, startsAt, endsAt, excludeId ?? null],
   )
-  if (conflict.rows[0]) {
-    const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: programmingTimeZone,
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-    const starts = timeFormatter.format(conflict.rows[0].starts_at)
-    const ends = timeFormatter.format(conflict.rows[0].ends_at)
-    const activity = conflict.rows[0].protocol
-      ? `o chamado ${conflict.rows[0].protocol}`
-      : conflict.rows[0].legal_process_number
-        ? `o processo jurídico ${conflict.rows[0].legal_process_number}`
-        : 'uma atividade avulsa'
-    throw new Error(`Conflito com ${activity}, programado das ${starts} às ${ends}.`)
-  }
+  const conflictTimeFormatter = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: programmingTimeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: programmingTimeZone,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+  const dateIsoFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: programmingTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  return conflict.rows.map((row) => ({
+    id: row.id,
+    collaboratorId,
+    collaboratorName: collaborator.rows[0].name,
+    date: dateIsoFormatter.format(row.starts_at),
+    dateLabel: dateFormatter.format(row.starts_at),
+    activity: row.protocol
+      ? `chamado ${row.protocol}`
+      : row.legal_process_number
+        ? `processo jurídico ${row.legal_process_number}`
+        : 'atividade avulsa',
+    description: row.activity_description.trim(),
+    starts: conflictTimeFormatter.format(row.starts_at),
+    ends: conflictTimeFormatter.format(row.ends_at),
+  }))
 }
 
 async function validateLegalProcess(client: import('pg').PoolClient, legalProcessId: number | null | undefined) {
@@ -766,21 +813,23 @@ router.post('/', async (req, res, next) => {
     )
     const collaboratorNameById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.name]))
     const collaboratorRoleById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.role]))
+    const conflicts: ScheduleConflict[] = []
     for (const collaboratorId of collaboratorIds) {
       const collaboratorProgrammingType = collaboratorRoleById.get(collaboratorId) === 'encarregado'
         ? 'foreman'
         : 'general'
       for (const occurrence of data.occurrences) {
-        await validateAvailability(
+        conflicts.push(...await validateAvailability(
           client,
           collaboratorId,
           collaboratorProgrammingType,
           data.ticketId ?? null,
           new Date(occurrence.startsAt),
           new Date(occurrence.endsAt),
-        )
+        ))
       }
     }
+    if (conflicts.length) throw new Error(formatScheduleConflicts(conflicts))
 
     const ids: string[] = []
     for (const collaboratorId of collaboratorIds) {
@@ -887,7 +936,7 @@ router.put('/:id', async (req, res, next) => {
     await validateLegalProcess(client, data.legalProcessId)
     const collabRoleQuery = await client.query<{ role: string }>('SELECT role FROM collaborators WHERE id = $1', [data.collaboratorId])
     const inferredProgrammingType = collabRoleQuery.rows[0]?.role === 'encarregado' ? 'foreman' : 'general'
-    await validateAvailability(
+    const conflicts = await validateAvailability(
       client,
       data.collaboratorId,
       inferredProgrammingType,
@@ -896,6 +945,7 @@ router.put('/:id', async (req, res, next) => {
       new Date(data.endsAt),
       programmingId.data,
     )
+    if (conflicts.length) throw new Error(formatScheduleConflicts(conflicts))
     const result = await client.query<{ ticket_id: string | null; legal_process_id: string | null }>(
       `UPDATE ticket_programming SET ticket_id = $1, legal_process_id = $2, collaborator_id = $3,
          activity_description = $4, starts_at = $5, ends_at = $6, enterprise = $7, block = $8,

@@ -113,7 +113,7 @@ const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
 const configuredDomain = import.meta.env.VITE_CORPORATE_DOMAIN ?? 'empresa.com.br'
 const CollaboratorsPage = lazy(() => import('./CollaboratorsPage'))
 const HomeDashboard = lazy(() => import('./HomeDashboard'))
-const InventoryPage = lazy(() => import('./InventoryPage'))
+const InventoryPage = lazy(() => import('./SiengeInventoryPage'))
 const TicketBoardPage = lazy(() => import('./tickets/TicketBoardPage'))
 const TicketLetterPage = lazy(() => import('./tickets/TicketLetterPage'))
 const ProgrammingPage = lazy(() => import('./tickets/ProgrammingPage'))
@@ -126,6 +126,7 @@ const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 const HomepageTicketsFilterSettings = lazy(() => import('./HomepageTicketsFilterSettings'))
 const SessionTimeoutSettings = lazy(() => import('./SessionTimeoutSettings'))
 const WhatsAppSettings = lazy(() => import('./WhatsAppSettings'))
+const SiengeSettings = lazy(() => import('./SiengeSettings'))
 const AuditLogsPage = lazy(() => import('./AuditLogsPage'))
 const CalendarManagementPage = lazy(() => import('./CalendarManagementPage'))
 const StockUnitsPage = lazy(() => import('./StockUnitsPage'))
@@ -1099,7 +1100,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     warranties: 'Prazos de garantia',
     'legal-processes': 'Processos Jurídicos',
     'personal-activities': 'Minhas atividades',
-    inventory: 'Gestão de estoque',
+    inventory: 'Estoque Sienge',
     'stock-units': 'Unidades em estoque',
     logs: 'Auditoria & Logs',
     'work-calendar': 'Expediente e Calendário',
@@ -1536,7 +1537,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
             <span className="topbar-admin">{user.role === 'admin' ? 'Administração' : 'Workspace'}</span>
           </div>
         </header>
-        <div className={`page-content ${(page === 'tickets' && ticketView === 'kanban') || (page === 'legal-processes' && legalView === 'board') ? 'page-content-kanban' : ''}`}>
+        <div className={`page-content ${page === 'tickets' && ticketView === 'kanban' ? 'page-content-kanban' : ''}`}>
           <Suspense fallback={<ATechLoading message="Carregando página..." subtitle="Preparando ambiente de trabalho..." />}>
           {page === 'not-found' ? (
             <NotFoundPage onGoHome={() => openPage('home')} onGoTickets={() => openPage('tickets')} />
@@ -1571,7 +1572,7 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               onCollaboratorOpened={clearInitialCollaborator}
             />
           ) : page === 'inventory' && canAccessPage('inventory') ? (
-            <InventoryPage />
+            <InventoryPage isAdmin={user.role === 'admin'} />
           ) : page === 'stock-units' && canAccessPage('stock-units') ? (
             <StockUnitsPage
               currentUser={user}
@@ -1616,6 +1617,10 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
 
           <Suspense fallback={null}>
             <WhatsAppSettings />
+          </Suspense>
+
+          <Suspense fallback={null}>
+            <SiengeSettings />
           </Suspense>
 
           <section className="metrics" aria-label="Resumo de acessos">
@@ -1965,7 +1970,7 @@ function FutureModulePage({ page }: { page: AdminPage }) {
     'personal-activities': { title: 'Minhas atividades', description: 'Seu quadro privado para organizar atividades.', icon: ListTodo },
     home: { title: 'Início', description: '', icon: LayoutDashboard },
     collaborators: { title: 'Colaboradores', description: '', icon: ContactRound },
-    inventory: { title: 'Gestão de estoque', description: 'Insumos, movimentações, EPIs e ferramentas.', icon: Package },
+    inventory: { title: 'Estoque Sienge', description: 'Saldos por obra e local, baixas e transferências.', icon: Package },
     'stock-units': { title: 'Unidades em estoque', description: 'Controle de vistorias e unidades não vendidas via CV CRM.', icon: Building2 },
     logs: { title: 'Auditoria & Logs', description: 'Trilha de auditoria e segurança do sistema.', icon: History },
     'work-calendar': { title: 'Expediente e Calendário', description: 'Feriados, sábados trabalhados e jornada da assistência técnica.', icon: CalendarClock },

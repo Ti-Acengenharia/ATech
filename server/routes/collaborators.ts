@@ -1,5 +1,4 @@
 import { Router } from 'express'
-import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
@@ -91,32 +90,6 @@ const uniformSchema = z.object({
     context.addIssue({ code: 'custom', path: ['bootSize'], message: 'O tamanho da bota deve estar entre 34 e 48.' })
   }
 })
-const uniformDeliverySchema = z.object({
-  deliveryDate: dateSchema,
-  shirtSizeId: z.coerce.number().int().positive().nullable(),
-  shirtShortSleeveQty: z.number().int().min(0).max(99),
-  shirtLongSleeveQty: z.number().int().min(0).max(99),
-  pantsSize: z.number().int().min(32).max(58).nullable(),
-  pantsQty: z.number().int().min(0).max(99),
-  bootSize: z.number().int().min(34).max(48).nullable(),
-  bootQty: z.number().int().min(0).max(99),
-  delivererPin: z.string().regex(/^\d{6,12}$/),
-  recipientSignatureBase64: z.string().min(4).max(140_000),
-}).superRefine((value, context) => {
-  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty > 0 && !value.shirtSizeId) {
-    context.addIssue({ code: 'custom', path: ['shirtSizeId'], message: 'Selecione o tamanho da camisa entregue.' })
-  }
-  if (value.pantsQty > 0 && value.pantsSize === null) {
-    context.addIssue({ code: 'custom', path: ['pantsSize'], message: 'Selecione o tamanho da calça entregue.' })
-  }
-  if (value.bootQty > 0 && value.bootSize === null) {
-    context.addIssue({ code: 'custom', path: ['bootSize'], message: 'Selecione o tamanho da bota entregue.' })
-  }
-  if (value.shirtShortSleeveQty + value.shirtLongSleeveQty + value.pantsQty + value.bootQty === 0) {
-    context.addIssue({ code: 'custom', path: ['shirtShortSleeveQty'], message: 'Informe ao menos um item entregue.' })
-  }
-})
-
 const collaboratorSchema = z.object({
   name: z.string().trim().min(2).max(160),
   nickname: z.string().trim().max(80).default(''),
@@ -191,15 +164,6 @@ function isDuplicateCpf(error: unknown) {
 function isDuplicateRegistrationNumber(error: unknown) {
   return typeof error === 'object' && error !== null && 'code' in error && 'constraint' in error
     && error.code === '23505' && error.constraint === 'collaborators_registration_number_unique'
-}
-
-function decodeSignature(value: string) {
-  const bytes = Buffer.from(value, 'base64')
-  if (!bytes.length || bytes.length > 100 * 1024 || bytes.toString('base64') !== value ||
-    !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return null
-  }
-  return bytes
 }
 
 router.get('/birthdays', requireAuth, async (_req, res, next) => {
@@ -931,118 +895,6 @@ router.put('/:id/uniform', async (req, res, next) => {
   }
 })
 
-router.post('/:id/uniform-deliveries', async (req, res, next) => {
-  const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
-  const parsed = uniformDeliverySchema.safeParse(req.body)
-  if (!collaboratorId.success || !parsed.success) {
-    res.status(400).json({ error: parsed.success ? 'Identificador inválido.' : parsed.error.issues[0]?.message ?? 'Dados de entrega inválidos.' })
-    return
-  }
-  if (!isPersonalDataEncryptionConfigured()) {
-    res.status(503).json({ error: 'Configure PII_ENCRYPTION_KEY para registrar a entrega e suas assinaturas.' })
-    return
-  }
-  const recipientSignature = decodeSignature(parsed.data.recipientSignatureBase64)
-  if (!recipientSignature) {
-    res.status(400).json({ error: 'A assinatura de quem recebe deve ser uma imagem PNG válida de até 100 KiB.' })
-    return
-  }
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const collaborator = await client.query('SELECT 1 FROM collaborators WHERE id = $1 FOR UPDATE', [collaboratorId.data])
-    if (!collaborator.rowCount) {
-      await client.query('ROLLBACK')
-      res.status(404).json({ error: 'Colaborador não encontrado.' })
-      return
-    }
-    const deliverer = await client.query<{
-      signature_data_ciphertext: string | null
-      signature_pin_hash: string | null
-      signature_pin_failed_attempts: number
-      signature_pin_locked_until: Date | null
-    }>(
-      `SELECT signature_data_ciphertext, signature_pin_hash,
-              signature_pin_failed_attempts, signature_pin_locked_until
-       FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
-      [req.session.user!.id],
-    )
-    const profile = deliverer.rows[0]
-    if (!profile?.signature_pin_hash || !profile.signature_data_ciphertext) {
-      await client.query('ROLLBACK')
-      res.status(409).json({ error: 'Cadastre uma assinatura e um PIN no perfil antes de registrar entregas.' })
-      return
-    }
-    if (profile.signature_pin_locked_until && profile.signature_pin_locked_until > new Date()) {
-      await client.query('ROLLBACK')
-      res.status(429).json({ error: 'PIN temporariamente bloqueado após várias tentativas. Aguarde 15 minutos.' })
-      return
-    }
-    if (!await bcrypt.compare(parsed.data.delivererPin, profile.signature_pin_hash)) {
-      const attempts = profile.signature_pin_locked_until && profile.signature_pin_locked_until <= new Date()
-        ? 1
-        : profile.signature_pin_failed_attempts + 1
-      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
-      await client.query(
-        `UPDATE users SET signature_pin_failed_attempts = $1, signature_pin_locked_until = $2
-         WHERE id = $3`,
-        [attempts, lockedUntil, req.session.user!.id],
-      )
-      await client.query('COMMIT')
-      res.status(401).json({
-        error: lockedUntil
-          ? 'PIN incorreto. O acesso à assinatura foi bloqueado por 15 minutos.'
-          : `PIN incorreto. Restam ${5 - attempts} tentativa(s).`,
-      })
-      return
-    }
-    const delivererSignatureBase64 = decryptPersonalData(profile.signature_data_ciphertext, 'user-signature')
-    const delivererSignature = decodeSignature(delivererSignatureBase64)
-    if (!delivererSignature) {
-      await client.query('ROLLBACK')
-      res.status(409).json({ error: 'A assinatura do perfil está inválida. Atualize-a antes de registrar a entrega.' })
-      return
-    }
-    await client.query(
-      `UPDATE users SET signature_pin_failed_attempts = 0, signature_pin_locked_until = NULL
-       WHERE id = $1`,
-      [req.session.user!.id],
-    )
-    if (parsed.data.shirtSizeId) {
-      const size = await client.query('SELECT 1 FROM collaborator_shirt_sizes WHERE id = $1', [parsed.data.shirtSizeId])
-      if (!size.rowCount) {
-        await client.query('ROLLBACK')
-        res.status(400).json({ error: 'O tamanho de camisa selecionado não existe.' })
-        return
-      }
-    }
-    const inserted = await client.query<{ id: string }>(
-      `INSERT INTO collaborator_uniform_deliveries (
-         collaborator_id, delivery_date, shirt_size_id, shirt_short_sleeve_qty, shirt_long_sleeve_qty,
-         pants_size, pants_qty, boot_size, boot_qty, deliverer_user_id,
-         deliverer_signature_ciphertext, recipient_signature_ciphertext
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING id`,
-      [
-        collaboratorId.data, parsed.data.deliveryDate, parsed.data.shirtSizeId,
-        parsed.data.shirtShortSleeveQty, parsed.data.shirtLongSleeveQty,
-        parsed.data.pantsSize, parsed.data.pantsQty, parsed.data.bootSize, parsed.data.bootQty,
-        req.session.user!.id,
-        encryptPersonalData(delivererSignatureBase64, 'uniform-delivery-signature'),
-        encryptPersonalData(parsed.data.recipientSignatureBase64, 'uniform-delivery-signature'),
-      ],
-    )
-    await client.query('COMMIT')
-    void broadcastSyncEvent({ scope: 'collaborators', action: 'delivery', entityId: collaboratorId.data })
-    res.status(201).json({ id: Number(inserted.rows[0].id) })
-  } catch (error) {
-    await client.query('ROLLBACK')
-    next(error)
-  } finally {
-    client.release()
-  }
-})
-
 router.put('/:id/photo', async (req, res, next) => {
   const collaboratorId = z.coerce.number().int().positive().safeParse(req.params.id)
   const parsed = z.object({
@@ -1605,10 +1457,52 @@ router.get('/:id/report', async (req, res, next) => {
        ORDER BY delivery.delivery_date DESC, delivery.id DESC`,
       [collaboratorId.data],
     )
+    const siengeUniformDeliveries = await client.query<{
+      id: string
+      delivery_date: string
+      uniform_details: {
+        shirtSizeId: number | null
+        shirtShortSleeveQty: number
+        shirtLongSleeveQty: number
+        pantsSize: number | null
+        pantsQty: number
+        bootSize: number | null
+        bootQty: number
+      }
+      stock_items: { name: string; quantity: number; unitName: string }[] | null
+      shirt_size: string | null
+      deliverer_name: string
+      deliverer_signature_ciphertext: string
+      recipient_signature_ciphertext: string
+    }>(
+      `      SELECT movement.id, movement.transaction_date::text AS delivery_date,
+             movement.uniform_details, stock_lines.stock_items, shirt.name AS shirt_size,
+              user_account.display_name AS deliverer_name,
+              movement.deliverer_signature_ciphertext, movement.recipient_signature_ciphertext
+       FROM sienge_stock_movements movement
+       LEFT JOIN collaborator_shirt_sizes shirt
+         ON shirt.id = (movement.uniform_details->>'shirtSizeId')::bigint
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(jsonb_build_object(
+                  'name', concat_ws(' · ', line.resource_description, line.detail_description,
+                                    line.trademark_description),
+                  'quantity', line.quantity,
+                  'unitName', line.unit_of_measure
+                ) ORDER BY line.line_number) AS stock_items
+         FROM sienge_stock_movement_items line
+         WHERE line.movement_id = movement.id
+       ) stock_lines ON TRUE
+       JOIN users user_account ON user_account.id = movement.actor_user_id
+       WHERE movement.collaborator_id = $1
+         AND movement.operation_type = 'uniform_delivery'
+         AND movement.status = 'succeeded'
+       ORDER BY movement.transaction_date DESC, movement.id DESC`,
+      [collaboratorId.data],
+    )
     const inventoryHistory = await client.query<{
       id: string
       transaction_date: string
-      document_type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+      document_type: 'epi_delivery'
       deliverer_name: string
       deliverer_signature_ciphertext: string
       recipient_signature_ciphertext: string
@@ -1616,17 +1510,19 @@ router.get('/:id/report', async (req, res, next) => {
       quantity: string
       unit_name: string
     }>(
-      `SELECT document.id, document.transaction_date::text, document.document_type,
+      `SELECT movement.id, movement.transaction_date::text, movement.operation_type AS document_type,
               user_account.display_name AS deliverer_name,
-              document.deliverer_signature_ciphertext, document.recipient_signature_ciphertext,
-              item.name AS item_name, line.quantity::text, line.unit_name
-       FROM inventory_documents document
-       JOIN users user_account ON user_account.id = document.created_by
-       JOIN inventory_document_items line ON line.document_id = document.id
-       JOIN inventory_items item ON item.id = line.item_id
-       WHERE document.collaborator_id = $1
-         AND document.document_type IN ('epi_delivery', 'tool_delivery', 'tool_return')
-       ORDER BY document.transaction_date DESC, document.id DESC, line.id`,
+              movement.deliverer_signature_ciphertext, movement.recipient_signature_ciphertext,
+              concat_ws(' · ', line.resource_description, line.detail_description,
+                        line.trademark_description) AS item_name,
+              line.quantity::text, line.unit_of_measure AS unit_name
+       FROM sienge_stock_movements movement
+       JOIN users user_account ON user_account.id = movement.actor_user_id
+       JOIN sienge_stock_movement_items line ON line.movement_id = movement.id
+       WHERE movement.collaborator_id = $1
+         AND movement.operation_type = 'epi_delivery'
+         AND movement.status = 'succeeded'
+       ORDER BY movement.transaction_date DESC, movement.id DESC, line.line_number`,
       [collaboratorId.data],
     )
     const absencesResult = await client.query<{
@@ -1662,7 +1558,7 @@ router.get('/:id/report', async (req, res, next) => {
     const inventoryDeliveries = new Map<number, {
       id: number
       deliveryDate: string
-      type: 'epi_delivery' | 'tool_delivery' | 'tool_return'
+      type: 'epi_delivery'
       delivererName: string
       delivererSignatureBase64: string
       recipientSignatureBase64: string
@@ -1673,9 +1569,9 @@ router.get('/:id/report', async (req, res, next) => {
       let record = inventoryDeliveries.get(id)
       if (!record) {
         record = {
-          id,
+          id: -id,
           deliveryDate: entry.transaction_date,
-          type: entry.document_type,
+          type: 'epi_delivery',
           delivererName: entry.deliverer_name,
           delivererSignatureBase64: decryptPersonalData(entry.deliverer_signature_ciphertext, 'inventory-delivery-signature'),
           recipientSignatureBase64: decryptPersonalData(entry.recipient_signature_ciphertext, 'inventory-delivery-signature'),
@@ -1745,7 +1641,21 @@ router.get('/:id/report', async (req, res, next) => {
           delivererName: delivery.deliverer_name,
           delivererSignatureBase64: decryptPersonalData(delivery.deliverer_signature_ciphertext, 'uniform-delivery-signature'),
           recipientSignatureBase64: decryptPersonalData(delivery.recipient_signature_ciphertext, 'uniform-delivery-signature'),
-        })),
+        })).concat(siengeUniformDeliveries.rows.map((delivery) => ({
+          id: -Number(delivery.id),
+          deliveryDate: delivery.delivery_date,
+          shirtSize: delivery.shirt_size,
+          shirtShortSleeveQty: delivery.uniform_details.shirtShortSleeveQty,
+          shirtLongSleeveQty: delivery.uniform_details.shirtLongSleeveQty,
+          pantsSize: delivery.uniform_details.pantsSize,
+          pantsQty: delivery.uniform_details.pantsQty,
+          bootSize: delivery.uniform_details.bootSize,
+          bootQty: delivery.uniform_details.bootQty,
+          stockItems: delivery.stock_items ?? [],
+          delivererName: delivery.deliverer_name,
+          delivererSignatureBase64: decryptPersonalData(delivery.deliverer_signature_ciphertext, 'inventory-delivery-signature'),
+          recipientSignatureBase64: decryptPersonalData(delivery.recipient_signature_ciphertext, 'inventory-delivery-signature'),
+        }))),
         inventoryDeliveries: [...inventoryDeliveries.values()],
         absences: absencesResult.rows.map((row) => ({
           id: row.id,

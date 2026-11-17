@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Search, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import { useLiveSync } from '../api/liveSync'
 import { getCompanyLogoDataUrl } from '../utils/companyLogo'
@@ -107,6 +107,10 @@ function displayTime(value: string) {
 
 function roleName(value: string, label?: string) {
   return label ?? value.replaceAll('_', ' ').replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
+}
+
+function normalizeSearch(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim()
 }
 
 async function createSchedulePdf(date: string, programmingType: 'general' | 'foreman', groups: { title: string; people: CollaboratorDay[] }[], dayEvents: number) {
@@ -367,6 +371,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     return () => window.removeEventListener('popstate', checkUrlDate)
   }, [date])
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
+  const [collaboratorSearch, setCollaboratorSearch] = useState('')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
   const [ticketsLoaded, setTicketsLoaded] = useState(false)
@@ -592,14 +597,22 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   }
 
   const week = weekdayStrip(date)
+  const roleOrder = ['pedreiro', 'ajudante', 'pintor', 'eletricista', 'analista', 'gestor', 'gerente']
   const roles = Array.from(new Map(staff.map((person) => [
     person.role,
     { key: person.role, title: roleName(person.role, person.role_label) },
-  ])).values()).sort((left, right) => left.title.localeCompare(right.title, 'pt-BR'))
+  ])).values()).sort((left, right) => {
+    const leftIndex = roleOrder.indexOf(normalizeSearch(left.key).replace(/[^a-z0-9]/g, ''))
+    const rightIndex = roleOrder.indexOf(normalizeSearch(right.key).replace(/[^a-z0-9]/g, ''))
+    const leftRank = leftIndex === -1 ? roleOrder.length : leftIndex
+    const rightRank = rightIndex === -1 ? roleOrder.length : rightIndex
+    return leftRank - rightRank || left.title.localeCompare(right.title, 'pt-BR')
+  })
   const visibleStaff = programmingType === 'foreman'
     ? staff
     : staff.filter((person) => !hiddenRoleKeys.has(person.role))
   const visibleDayEvents = visibleStaff.reduce((total, collaborator) => total + collaborator.appointments.length, 0)
+  const collaboratorSearchTerm = normalizeSearch(collaboratorSearch)
   const roleGroups = roles.filter((role) => programmingType === 'foreman' || !hiddenRoleKeys.has(role.key)).map((group) => ({
     ...group,
     people: visibleStaff.filter((person) => person.role === group.key)
@@ -608,6 +621,19 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     ...group,
     hasProgrammedPeople: group.people.some((person) => person.appointments.length > 0),
   }))
+  const filteredRoleGroups = roleGroups.map((group) => ({
+    ...group,
+    people: collaboratorSearchTerm
+      ? group.people.filter((person) =>
+        normalizeSearch(`${person.name} ${person.nickname}`).includes(collaboratorSearchTerm))
+      : group.people,
+  })).map((group) => ({
+    ...group,
+    hasProgrammedPeople: group.people.some((person) => person.appointments.length > 0),
+  })).filter((group) => group.people.length > 0)
+  const filteredStaffCount = filteredRoleGroups.reduce((total, group) => total + group.people.length, 0)
+  const filteredDayEvents = filteredRoleGroups.reduce((total, group) =>
+    total + group.people.reduce((groupTotal, person) => groupTotal + person.appointments.length, 0), 0)
 
   return (
     <section className="programming-page">
@@ -633,7 +659,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 }} />}</section>}
 
       <section className="programming-calendar" aria-label="Programação diária da equipe">
-        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {visibleStaff.length} colaboradores · {visibleDayEvents} atividades visíveis</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
+        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {collaboratorSearchTerm ? `${filteredStaffCount} colaborador(es) encontrado(s) · ${filteredDayEvents} atividade(s)` : `${visibleStaff.length} colaboradores · ${visibleDayEvents} atividades visíveis`}</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
         <div className="calendar-week-strip-container no-print">
           <div className="calendar-week-strip">
             {week.map((day) => {
@@ -662,6 +688,16 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
             <span>Deslize para ver outros dias</span> <ChevronRight size={13} />
           </div>
         </div>
+        <label className="schedule-collaborator-search no-print">
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            value={collaboratorSearch}
+            onChange={(event) => setCollaboratorSearch(event.target.value)}
+            placeholder="Buscar colaborador por nome ou apelido"
+            aria-label="Buscar programação por nome ou apelido do colaborador"
+          />
+        </label>
         {holidayMap.has(date) && (
           <div className="calendar-day-notice holiday-notice no-print" role="alert">
             <CalendarDays size={16} />
@@ -699,7 +735,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
         </div>}
         <p className="programming-print-date">{displayDate(date)} · {programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</p>
         <div className="schedule-day-content">
-          {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : roleGroups.map((group) => (
+          {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : collaboratorSearchTerm && filteredRoleGroups.length === 0 ? <p className="programming-empty">Nenhum colaborador encontrado para “{collaboratorSearch}”.</p> : filteredRoleGroups.map((group) => (
             <section className={`schedule-role-group ${group.hasProgrammedPeople ? '' : 'schedule-role-group-empty'}`} key={group.key}>
               <h3>{group.title}</h3>
               <div className="schedule-staff-cards">
