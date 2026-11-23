@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import {
   ArrowDown,
   ArrowLeft,
@@ -27,6 +27,7 @@ import {
   Layers,
   List,
   MessageCircle,
+  Paperclip,
   Pencil,
   Plus,
   Receipt,
@@ -41,6 +42,7 @@ import { apiRequest } from './api/client'
 import SearchableMultiSelect from './SearchableMultiSelect'
 import TicketProgrammingForm from './tickets/TicketProgrammingForm'
 import { ATechLoading } from './ATechLoading'
+import PersonalActivityDetailModal, { type ActivityPriority } from './PersonalActivityDetailModal'
 import type { LegalProcessOption } from './tickets/types'
 import {
   formatCurrencyOnBlur,
@@ -56,7 +58,18 @@ interface LegalTag { id: number; name: string; color: string }
 interface EnterpriseOption { enterprise_key: string; enterprise_name: string }
 interface Assignee { id: number; display_name?: string; displayName?: string; email?: string }
 interface ChildProcess { id?: number; processNumber: string; description: string; statusId: number; movementDate: string | null; isDone: boolean }
-interface ProcessItem { id?: number; title: string; isDone: boolean }
+interface ProcessItem {
+  id?: number
+  personalActivityId?: number | null
+  title: string
+  isDone: boolean
+  priority?: ActivityPriority
+  dueDate?: string | null
+  commentsCount?: number
+  attachmentsCount?: number
+  checklistTotal?: number
+  checklistDone?: number
+}
 interface CsvLegalTask {
   id: string
   name: string
@@ -556,6 +569,7 @@ export default function LegalProcessesPage({
   const [busyComment, setBusyComment] = useState(false)
   const [dragged, setDragged] = useState<number | null>(null)
   const [savingStatusOrder, setSavingStatusOrder] = useState(false)
+  const [activePersonalActivityId, setActivePersonalActivityId] = useState<number | null>(null)
 
   // CSV Import Modal & State
   const [csvModalOpen, setCsvModalOpen] = useState(false)
@@ -1284,9 +1298,22 @@ export default function LegalProcessesPage({
           }
           await load()
           const detail = await apiRequest<{ process: ProcessDetail }>(`/api/legal-processes/${processId}`)
-          savedDraftRef.current = JSON.stringify(job.draft)
+          const syncedDraft = toDraft(detail.process)
+          savedDraftRef.current = JSON.stringify(syncedDraft)
           if (job.token === editTokenRef.current) {
             setSelected(detail.process)
+            setDraft((current) => {
+              if (!current) return syncedDraft
+              // Preserva qualquer linha nova ainda vazia que o usuário acabou de clicar em "+ Adicionar tarefa"
+              const emptyTrailingItems = current.items.filter((it) => !it.id && !it.title.trim())
+              if (JSON.stringify( { ...current, items: current.items.filter((it) => it.title.trim()) } ) === JSON.stringify( { ...job.draft, items: job.draft.items.filter((it) => it.title.trim()) } )) {
+                return {
+                  ...syncedDraft,
+                  items: [...syncedDraft.items, ...emptyTrailingItems],
+                }
+              }
+              return current
+            })
             setAutoSaveState('saved')
           }
         } catch (error) {
@@ -1687,6 +1714,7 @@ export default function LegalProcessesPage({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return
+      if (activePersonalActivityId !== null || document.querySelector('.personal-sheet-backdrop')) return
       if (csvModalOpen) {
         setCsvModalOpen(false)
         return
@@ -1791,6 +1819,17 @@ export default function LegalProcessesPage({
     const isOverdue = Boolean(targetDate && targetDate < today)
     const isDueSoon = Boolean(targetDate && !isOverdue && targetDate <= inSevenDays)
 
+    const processHref = `?page=legal-processes&view=board&processId=${encodeURIComponent(String(process.id))}`
+    const handleProcessLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) {
+        event.stopPropagation()
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      void openDetail(process)
+    }
+
     return (
       <article
         className={`legal-process-card ${process.is_demo ? 'legal-demo-card' : ''}`}
@@ -1803,6 +1842,12 @@ export default function LegalProcessesPage({
         onDragStart={() => setDragged(process.id)}
         onDragEnd={() => setDragged(null)}
         onClick={() => void openDetail(process)}
+        onAuxClick={(event) => {
+          if (event.button === 1 && !(event.target instanceof Element && event.target.closest('a'))) {
+            event.preventDefault()
+            window.open(processHref, '_blank', 'noopener,noreferrer')
+          }
+        }}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
           event.preventDefault()
@@ -1810,7 +1855,14 @@ export default function LegalProcessesPage({
         }}
       >
         <div className="legal-process-card-top">
-          <span className="legal-process-card-id">{process.is_demo ? 'EXEMPLO' : `#${process.id}`}</span>
+          <a
+            href={processHref}
+            className="legal-process-card-id"
+            draggable={false}
+            onClick={handleProcessLinkClick}
+          >
+            {process.is_demo ? 'EXEMPLO' : `#${process.id}`}
+          </a>
           <span className="legal-process-card-tools">
             {!process.is_demo && (
               <button
@@ -1827,7 +1879,14 @@ export default function LegalProcessesPage({
           </span>
         </div>
 
-        <strong className="legal-process-card-title">{process.title}</strong>
+        <a
+          href={processHref}
+          className="legal-process-card-title"
+          draggable={false}
+          onClick={handleProcessLinkClick}
+        >
+          {process.title}
+        </a>
 
         {/* Número único em destaque com botão de cópia rápida */}
         {face.includes('processNumber') && process.process_number && (
@@ -2496,49 +2555,76 @@ export default function LegalProcessesPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedProcesses.map((process) => (
-                      <tr key={process.id} onClick={() => void openDetail(process)}>
-                        <td>
-                          <strong>{process.title}</strong>
-                          {process.is_demo && <small>Exemplo fictício</small>}
-                        </td>
-                        <td className="legal-list-number">
-                          {process.process_number ? (
-                            <span className="legal-list-number-flex">
-                              <span>{process.process_number}</span>
-                              <button
-                                type="button"
-                                className="icon-button"
-                                title="Copiar número"
-                                onClick={(e) => { e.stopPropagation(); copyToClipboard(process.process_number, `${process.id}-tbl-num`) }}
+                    {pagedProcesses.map((process) => {
+                      const processHref = `?page=legal-processes&view=list&processId=${encodeURIComponent(String(process.id))}`
+                      const handleRowLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+                        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) {
+                          event.stopPropagation()
+                          return
+                        }
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void openDetail(process)
+                      }
+                      return (
+                        <tr
+                          key={process.id}
+                          onClick={() => void openDetail(process)}
+                          onAuxClick={(event) => {
+                            if (event.button === 1 && !(event.target instanceof Element && event.target.closest('a'))) {
+                              event.preventDefault()
+                              window.open(processHref, '_blank', 'noopener,noreferrer')
+                            }
+                          }}
+                        >
+                          <td>
+                            <a href={processHref} className="legal-list-title-link" onClick={handleRowLinkClick}>
+                              <strong>{process.title}</strong>
+                            </a>
+                            <small>
+                              <a href={processHref} className="legal-list-id-link" onClick={handleRowLinkClick}>
+                                {process.is_demo ? 'Exemplo fictício' : `#${process.id}`}
+                              </a>
+                            </small>
+                          </td>
+                          <td className="legal-list-number">
+                            {process.process_number ? (
+                              <span className="legal-list-number-flex">
+                                <span>{process.process_number}</span>
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  title="Copiar número"
+                                  onClick={(e) => { e.stopPropagation(); copyToClipboard(process.process_number, `${process.id}-tbl-num`) }}
+                                >
+                                  {copiedKey === `${process.id}-tbl-num` ? <Check size={12} className="legal-copy-success" /> : <Copy size={12} />}
+                                </button>
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td>{process.enterprise_name || '—'}</td>
+                          <td>
+                            <span className="legal-status-label">
+                              <i style={{ background: process.status_color }} />
+                              {process.status_name}
+                              <select
+                                aria-label={`Mover ${process.title} para outro status`}
+                                value={process.status_id}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}
                               >
-                                {copiedKey === `${process.id}-tbl-num` ? <Check size={12} className="legal-copy-success" /> : <Copy size={12} />}
-                              </button>
+                                {statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}
+                              </select>
                             </span>
-                          ) : '—'}
-                        </td>
-                        <td>{process.enterprise_name || '—'}</td>
-                        <td>
-                          <span className="legal-status-label">
-                            <i style={{ background: process.status_color }} />
-                            {process.status_name}
-                            <select
-                              aria-label={`Mover ${process.title} para outro status`}
-                              value={process.status_id}
-                              onClick={(event) => event.stopPropagation()}
-                              onChange={(event) => { event.stopPropagation(); void changeStatus(process, Number(event.target.value)) }}
-                            >
-                              {statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}
-                            </select>
-                          </span>
-                        </td>
-                        <td>{process.claimant || '—'}</td>
-                        <td>{process.assignees.map(assigneeName).join(', ') || '—'}</td>
-                        <td>{showDate(process.start_date)} – {showDate(process.end_date)}</td>
-                        <td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td>
-                        <td>{currency.format(Number(process.paid_total))}</td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td>{process.claimant || '—'}</td>
+                          <td>{process.assignees.map(assigneeName).join(', ') || '—'}</td>
+                          <td>{showDate(process.start_date)} – {showDate(process.end_date)}</td>
+                          <td>{process.case_value ? currency.format(Number(process.case_value)) : '—'}</td>
+                          <td>{currency.format(Number(process.paid_total))}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -3197,6 +3283,38 @@ export default function LegalProcessesPage({
                             className={item.isDone ? 'is-strikethrough' : ''}
                             aria-label={`Descrição do item ${index + 1}`}
                           />
+                          {item.personalActivityId ? (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                              {(item.checklistTotal ?? 0) > 0 && (
+                                <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#475569' }} title="Checklist da tarefa">
+                                  <CheckSquare size={12} /> {item.checklistDone ?? 0}/{item.checklistTotal}
+                                </small>
+                              )}
+                              {(item.commentsCount ?? 0) > 0 && (
+                                <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#475569' }} title="Comentários na tarefa">
+                                  <MessageCircle size={12} /> {item.commentsCount}
+                                </small>
+                              )}
+                              {(item.attachmentsCount ?? 0) > 0 && (
+                                <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#475569' }} title="Anexos na tarefa">
+                                  <Paperclip size={12} /> {item.attachmentsCount}
+                                </small>
+                              )}
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                style={{ padding: '5px 10px', fontSize: '0.78rem' }}
+                                onClick={() => setActivePersonalActivityId(item.personalActivityId!)}
+                                title="Abrir tela completa da tarefa (comentários, checklist, tags, prazos e anexos)"
+                              >
+                                Abrir tarefa
+                              </button>
+                            </div>
+                          ) : !item.id && item.title.trim() ? (
+                            <small style={{ color: '#64748b', fontSize: '0.75rem', flexShrink: 0 }}>
+                              Salvando vínculo...
+                            </small>
+                          ) : null}
                           <button
                             type="button"
                             className="icon-button"
@@ -3789,6 +3907,25 @@ export default function LegalProcessesPage({
             </aside>
           </div>
         </section>
+      )}
+
+      {activePersonalActivityId !== null && (
+        <PersonalActivityDetailModal
+          activityId={activePersonalActivityId}
+          onClose={() => {
+            setActivePersonalActivityId(null)
+            if (selected) {
+              void refreshSelected(selected.id)
+              void load()
+            }
+          }}
+          onChanged={() => {
+            if (selected) {
+              void refreshSelected(selected.id)
+              void load()
+            }
+          }}
+        />
       )}
     </section>
   )

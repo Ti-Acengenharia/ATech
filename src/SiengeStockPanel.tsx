@@ -78,6 +78,14 @@ interface Appropriation {
   buildingUnitId: string
   sheetItemId: string
   percentage: string
+  costEstimationItemReference?: string
+}
+
+interface SiengeAppropriation {
+  buildingUnitId: number
+  sheetItemId: number
+  costEstimationItemReference: string | null
+  quantity: number
 }
 
 type MovementType = 'issue' | 'transfer' | 'epi_delivery'
@@ -199,6 +207,10 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
   const [notes, setNotes] = useState('')
   const [sourceAppropriations, setSourceAppropriations] = useState<Appropriation[]>([emptyAppropriation()])
   const [destinationAppropriations, setDestinationAppropriations] = useState<Appropriation[]>([emptyAppropriation()])
+  const [sourceAppropriationStatus, setSourceAppropriationStatus] = useState<'idle' | 'loading' | 'loaded' | 'empty' | 'error' | 'batch'>('idle')
+  const [sourceAppropriationError, setSourceAppropriationError] = useState('')
+  const sourceAppropriationCache = useRef(new Map<number, Appropriation[]>())
+  const sourceAppropriationRequest = useRef(0)
   const [destinationCostCenterId, setDestinationCostCenterId] = useState('')
   const [collaboratorId, setCollaboratorId] = useState('')
   const [delivererPin, setDelivererPin] = useState('')
@@ -407,6 +419,7 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
       setNotice({ kind: 'error', text: 'Selecione itens de um único centro de custo para esta movimentação.' })
       return
     }
+    const requestId = ++sourceAppropriationRequest.current
     setOperation({ type })
     setOperationLines(usableItems.map((item) => ({
       item,
@@ -420,11 +433,76 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
     setNotes('')
     setSourceAppropriations([emptyAppropriation()])
     setDestinationAppropriations([emptyAppropriation()])
+    setSourceAppropriationError('')
+    setSourceAppropriationStatus(type === 'issue' && usableItems.length > 1 ? 'batch' : 'idle')
     setDestinationCostCenterId('')
     setCollaboratorId('')
     setDelivererPin('')
     setRecipientSignature(null)
     setNotice(null)
+    if (type === 'issue' && usableItems.length === 1) {
+      void loadSourceAppropriations(usableItems[0], requestId)
+    }
+  }
+
+  async function loadSourceAppropriations(item: StockItem, requestId: number) {
+    const snapshotItemId = item.snapshotItemId
+    if (snapshotItemId === null) return
+
+    if (sourceAppropriationCache.current.has(snapshotItemId)) {
+      const cached = sourceAppropriationCache.current.get(snapshotItemId) ?? []
+      setSourceAppropriations(cached.length ? cached : [emptyAppropriation()])
+      setSourceAppropriationStatus(cached.length ? 'loaded' : 'empty')
+      return
+    }
+
+    setSourceAppropriationStatus('loading')
+    try {
+      const result = await apiRequest<{ appropriations: SiengeAppropriation[] }>(
+        `/api/inventory/sienge/items/${snapshotItemId}/appropriations`,
+      )
+      const grouped = new Map<string, SiengeAppropriation>()
+      result.appropriations.filter((entry) => entry.quantity > 0).forEach((entry) => {
+        const key = `${entry.buildingUnitId}:${entry.sheetItemId}`
+        const existing = grouped.get(key)
+        if (existing) {
+          existing.quantity += entry.quantity
+        } else {
+          grouped.set(key, { ...entry })
+        }
+      })
+      const allocations = [...grouped.values()]
+      if (allocations.length > 100) {
+        throw new Error('O Sienge retornou mais de 100 apropriações para este insumo; faça o rateio manualmente.')
+      }
+
+      const totalQuantity = allocations.reduce((sum, entry) => sum + entry.quantity, 0)
+      const mapped = totalQuantity > 0 && Number.isFinite(totalQuantity)
+        ? allocations.map((entry, index) => {
+          const percentage = index === allocations.length - 1
+            ? Number((100 - allocations.slice(0, -1).reduce((sum, previous) => {
+              const share = previous.quantity / totalQuantity * 100
+              return sum + Math.floor(share * 1e12) / 1e12
+            }, 0)).toFixed(12))
+            : Math.floor((entry.quantity / totalQuantity * 100) * 1e12) / 1e12
+          return {
+            buildingUnitId: String(entry.buildingUnitId),
+            sheetItemId: String(entry.sheetItemId),
+            percentage: String(percentage),
+            ...(entry.costEstimationItemReference ? { costEstimationItemReference: entry.costEstimationItemReference } : {}),
+          }
+        })
+        : []
+
+      sourceAppropriationCache.current.set(snapshotItemId, mapped)
+      if (requestId !== sourceAppropriationRequest.current) return
+      setSourceAppropriations(mapped.length ? mapped : [emptyAppropriation()])
+      setSourceAppropriationStatus(mapped.length ? 'loaded' : 'empty')
+    } catch (error) {
+      if (requestId !== sourceAppropriationRequest.current) return
+      setSourceAppropriationError(error instanceof Error ? error.message : 'Falha inesperada ao consultar as apropriações do Sienge.')
+      setSourceAppropriationStatus('error')
+    }
   }
 
   function editOperationLine(index: number, field: keyof Omit<MovementLineForm, 'item'>, value: string) {
@@ -455,7 +533,15 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
     value: string,
   ) {
     const setter = direction === 'source' ? setSourceAppropriations : setDestinationAppropriations
-    setter((items) => items.map((item, current) => current === index ? { ...item, [field]: value } : item))
+    setter((items) => items.map((item, current) => current === index
+      ? {
+        ...item,
+        [field]: value,
+        ...(direction === 'source' && (field === 'buildingUnitId' || field === 'sheetItemId')
+          ? { costEstimationItemReference: undefined }
+          : {}),
+      }
+      : item))
   }
 
   function updateAppropriations(direction: 'source' | 'destination', items: Appropriation[]) {
@@ -464,18 +550,35 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
   }
 
   function renderAppropriations(direction: 'source' | 'destination', items: Appropriation[]) {
+    const lookupMessage = direction !== 'source' ? '' : sourceAppropriationStatus === 'loading'
+      ? 'Consultando no Sienge as apropriações atuais deste insumo. Esta consulta consome uma requisição da cota diária.'
+      : sourceAppropriationStatus === 'loaded'
+        ? 'Rateio preenchido com base nas quantidades atualmente apropriadas no Sienge. Confira antes de enviar.'
+        : sourceAppropriationStatus === 'empty'
+          ? 'O Sienge não retornou apropriações atuais para este insumo. Preencha o rateio manualmente.'
+          : sourceAppropriationStatus === 'error'
+            ? `Não foi possível consultar as apropriações do Sienge: ${sourceAppropriationError} Preencha manualmente somente após confirmar os dados.`
+            : sourceAppropriationStatus === 'batch'
+              ? 'A consulta automática está disponível para um insumo por baixa. Neste lote, informe o rateio comum manualmente.'
+              : ''
+    const lookupHasError = sourceAppropriationStatus === 'error'
+    const lookupIsLoading = direction === 'source' && sourceAppropriationStatus === 'loading'
+
     return (
       <section className="sienge-appropriations">
         <div className="sienge-appropriations-heading">
           <div><strong>{direction === 'source' ? 'Apropriações da origem' : 'Apropriações do destino'}</strong><small>Informe unidade construtiva, item do orçamento e percentual. A soma deve ser 100%.</small></div>
-          <button type="button" className="secondary-button" onClick={() => updateAppropriations(direction, [...items, emptyAppropriation()])}><Plus size={14} /> Rateio</button>
+          <button type="button" className="secondary-button" disabled={lookupIsLoading} onClick={() => updateAppropriations(direction, [...items, emptyAppropriation()])}><Plus size={14} /> Rateio</button>
         </div>
+        {lookupMessage && <p className={`sienge-appropriation-lookup${lookupHasError ? ' is-error' : ''}`} role="status">{lookupMessage}</p>}
         {items.map((item, index) => (
           <div className="sienge-appropriation-row" key={`${direction}-${index}`}>
-            <label><span>Unidade construtiva *</span><input type="number" min="1" step="1" value={item.buildingUnitId} onChange={(event) => editAppropriation(direction, index, 'buildingUnitId', event.target.value)} required /></label>
-            <label><span>Item do orçamento *</span><input type="number" min="1" step="1" value={item.sheetItemId} onChange={(event) => editAppropriation(direction, index, 'sheetItemId', event.target.value)} required /></label>
-            <label><span>Percentual *</span><input type="number" min="0.000000000001" max="100" step="any" value={item.percentage} onChange={(event) => editAppropriation(direction, index, 'percentage', event.target.value)} required /></label>
-            <button type="button" className="sienge-remove-rate" disabled={items.length === 1} aria-label="Remover rateio" onClick={() => updateAppropriations(direction, items.filter((_, current) => current !== index))}><Trash2 size={15} /></button>
+            <label><span>Unidade construtiva *</span><input type="number" min="1" step="1" value={item.buildingUnitId} disabled={lookupIsLoading} onChange={(event) => editAppropriation(direction, index, 'buildingUnitId', event.target.value)} required /></label>
+            <label><span>Item do orçamento *</span><input type="number" min="1" step="1" value={item.sheetItemId} disabled={lookupIsLoading} onChange={(event) => editAppropriation(direction, index, 'sheetItemId', event.target.value)} required />
+              {item.costEstimationItemReference && <small>Referência: {item.costEstimationItemReference}</small>}
+            </label>
+            <label><span>Percentual *</span><input type="number" min="0.000000000001" max="100" step="any" value={item.percentage} disabled={lookupIsLoading} onChange={(event) => editAppropriation(direction, index, 'percentage', event.target.value)} required /></label>
+            <button type="button" className="sienge-remove-rate" disabled={lookupIsLoading || items.length === 1} aria-label="Remover rateio" onClick={() => updateAppropriations(direction, items.filter((_, current) => current !== index))}><Trash2 size={15} /></button>
           </div>
         ))}
         <p className={Math.abs(items.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) - 100) < 0.00000001 ? 'is-valid' : 'is-invalid'}>
@@ -679,7 +782,7 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
               <tr key={`${item.locationId ?? 'none'}-${item.resourceId}-${item.detailId ?? 0}-${item.trademarkId ?? 0}-${item.unitOfMeasure}`}>
                 <td><strong>{item.locationName}</strong>{viewMode === 'center' && item.costCenterId !== null && <small>Centro {item.costCenterId}</small>}</td>
                 <td><strong>{item.resourceDescription || `Insumo ${item.resourceId}`}</strong><small>resourceId {item.resourceId}</small></td>
-                <td>{item.detailDescription || '—'}<small>{item.trademarkDescription || 'Sem marca'}</small></td>
+                <td>{item.detailDescription || (item.detailId ? `Detalhe ${item.detailId}` : '—')}<small>{item.trademarkDescription || (item.trademarkId ? `Marca ${item.trademarkId}` : 'Sem marca')}</small></td>
                 <td><div className="sienge-center-balances">{item.centerQuantities.map((balance) => {
                   const centerItem: StockItem = {
                     ...item,
@@ -726,7 +829,7 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
             <button className="sienge-close" type="button" onClick={() => setOperation(null)} aria-label="Fechar">×</button>
           </header>
           <form onSubmit={(event) => void submitMovement(event)}>
-            <div className="sienge-movement-summary"><strong>Movimentação em lote · {operationLines.length} item(ns)</strong><span>Uma chamada será contabilizada na cota diária. O saldo será atualizado após nova sincronização.</span></div>
+            <div className="sienge-movement-summary"><strong>Movimentação em lote · {operationLines.length} item(ns)</strong><span>A consulta automática de apropriações, quando disponível, e o envio são chamadas separadas da cota. O saldo será atualizado após nova sincronização.</span></div>
             <div className="sienge-movement-fields">
               <label><span>Data do movimento *</span><input type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /></label>
             </div>
@@ -741,7 +844,7 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
 
             <section className="sienge-movement-lines">
               {operationLines.map((line, index) => <article key={line.item.snapshotItemId}>
-                <header><div><strong>{line.item.resourceDescription || `Insumo ${line.item.resourceId}`}</strong><small>resourceId {line.item.resourceId} · {line.item.detailDescription || 'Sem detalhe'} · {line.item.trademarkDescription || 'Sem marca'} · saldo {displayQuantity(line.item.quantity)} {line.item.unitOfMeasure}</small></div>
+                <header><div><strong>{line.item.resourceDescription || `Insumo ${line.item.resourceId}`}</strong><small>resourceId {line.item.resourceId} · {line.item.detailDescription || (line.item.detailId ? `Detalhe ${line.item.detailId}` : 'Sem detalhe')} · {line.item.trademarkDescription || (line.item.trademarkId ? `Marca ${line.item.trademarkId}` : 'Sem marca')} · saldo {displayQuantity(line.item.quantity)} {line.item.unitOfMeasure}</small></div>
                   <button type="button" className="sienge-remove-rate" disabled={operationLines.length === 1} aria-label="Remover item da movimentação" onClick={() => setOperationLines((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 size={15} /></button>
                 </header>
                 <div className="sienge-movement-fields">
@@ -773,7 +876,7 @@ export default function SiengeStockPanel({ isAdmin, collaborators }: { isAdmin: 
             </div>
             <footer>
               <button type="button" className="secondary-button" onClick={() => setOperation(null)}>Cancelar</button>
-              <button type="submit" className="primary-button" disabled={busy || operationLines.some((line) =>
+              <button type="submit" className="primary-button" disabled={busy || sourceAppropriationStatus === 'loading' || operationLines.some((line) =>
                 !line.quantity || Number(line.quantity) <= 0 || Number(line.quantity) > line.item.quantity) ||
                 Math.abs(sourceTotal - 100) > 0.00000001 ||
                 (operation.type === 'transfer' && (!destinationCostCenterId || Math.abs(destinationTotal - 100) > 0.00000001 ||

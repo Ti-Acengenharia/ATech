@@ -9,9 +9,66 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.4.5'
+export const APP_CURRENT_VERSION = 'v2.5'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.5',
+    date: '23/11/2026',
+    title: 'Visualizador de Mídia Fullscreen, Repositório de Empreendimentos, Cancelamento Drilldown, Programação Semanal por Colaborador, Estoque Sienge e Tarefas Unificadas',
+    tagline: 'Lançamento da versão 2.5 com galeria e visualizador fullscreen de fotos/vídeos/PDFs (desktop e mobile com gestos de toque), repositório de manuais e projetos por empreendimento, cancelamento e remanejamento inteligente de atividades via drilldown, visualização semanal por colaborador na programação, integração completa de Estoque Sienge e tarefas unificadas.',
+    changes: [
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Cancelamento Inteligente e Remanejamento de Atividades da Programação: fluxo com seletor drilldown para cancelamento por parte do cliente, cancelamento pela AC Engenharia (com justificativa obrigatória) e remanejamento direto para outro profissional com validação automática de conflitos de agenda, mantendo o registro na programação e no chamado com destaque em vermelho, sinalização "[CANCELADA]" no título, suporte a reativação e liberação imediata do horário para novas programações simultâneas.',
+          'Novo Visualizador e Galeria Integrada de Mídia em Tela Cheia (MediaViewerModal) para Chamados e Empreendimentos: abertura direta no navegador de fotos, vídeos e documentos PDF sem a necessidade de baixar previamente, com renderização em tela cheia real via React Portal, foco automático, navegação sequencial ("passear pelos arquivos" com setas na tela, teclado ou gestos de swipe no celular), zoom interativo (incluindo toque duplo no mobile), rotação e botão dedicado para download.',
+          'Proxy de Mídia e Visualização Segura de Anexos do CVCRM: suporte a carregamento e exibição contínua de anexos de conversas e arquivos sincronizados do CVCRM, contornando bloqueios de iframe/CORS e garantindo exibição inline sem forçar downloads indesejados.',
+          'Repositório de Manuais e Projetos em PDF nas Informações dos Empreendimentos: espaço dedicado por condomínio para anexar projetos arquitetônicos, estruturais, elétricos/hidráulicos e manuais de proprietário/áreas comuns em PDF (até 30 MB), com visualização imediata no navegador, download individual, filtros por categoria e contadores integrados sem sobrecarregar o desempenho da plataforma.',
+          'Nova Visualização Semanal por Colaborador na tela de Programação: acompanhamento completo de todas as atividades agendadas de um ou múltiplos colaboradores ao longo da semana, com seleção por busca ou atalhos por função, navegação semanal, alternância entre Grade por Dia e Painel por Colaborador, exibição de horários, locais, kits de ferramentas, alertas de ausências/atestados e atualização interativa de realização de serviço e entrega de termos.',
+          'Módulo completo de Estoque Sienge integrado via API Bulk-Data e REST: sincronização de saldos por centro de custo e local de armazenamento, baixas de estoque, transferências entre obras, movimentações em lote, consulta automática de apropriações e reconciliação de movimentos pendentes.',
+          'Entregas de EPI e uniformes aos colaboradores integradas diretamente ao saldo do Estoque Sienge, com baixa automática, validação por PIN e assinatura digital.',
+          'Unificação de Tarefas entre Chamados, Processos Jurídicos e Minhas Atividades: toda tarefa criada em um chamado ou processo jurídico é vinculada automaticamente ao quadro "Minhas Atividades" do autor (com migração das tarefas existentes de chamados para seus respectivos criadores).',
+          'Modal único e compartilhado de tarefas em todas as telas (Chamados, Processos Jurídicos e Minhas Atividades), permitindo visualizar e editar a mesma descrição, prioridade, prazo, coluna do Kanban, tags, checklist interno, anexos e comentários em tempo real.',
+          'Busca inteligente por palavras-chave e nome do cliente nos Chamados e Dashboard: pesquisa todas as palavras digitadas de forma independente da ordem e sem diferenciar acentos (ex.: buscar "ventilador azul" ou "Fábio Santos" encontra registros mesmo com outras palavras ou nomes do meio intercalados).',
+          'Filtro de blocos vinculado dinamicamente aos empreendimentos selecionados em todas as telas (Chamados, Dashboard de Chamados e Preenchimento de Cartas), exibindo ao lado de cada bloco, em cinza e entre parênteses, a qual empreendimento ele pertence.',
+          'Botão "Abrir no CVCRM" no topo de cada chamado para acesso direto ao atendimento correspondente no Construtor de Vendas.',
+          'Suporte a abertura direta em nova guia (clique com botão do scroll do mouse, Ctrl+Clique ou botão direito -> "Abrir link em uma nova guia") nos IDs e cartões de Chamados e Processos Jurídicos (tanto no Kanban quanto na Lista).',
+          'Quadro dinâmico "Equipe em Campo Hoje" na tela de Início agrupado por centro de custo/obra, com filtros por turno (Agora, Manhã, Tarde e Dia todo) e sinalização de transições de rota.',
+          'Gestão de atestados e faltas de colaboradores com suporte a horários parciais, edição de registros, alerta automático de conflitos com agendamentos e atalhos para reagendamento.',
+          'Inclusão de chamados internos e opção "Sem empreendimento" nos filtros e indicadores do Dashboard de Chamados.',
+        ],
+      },
+      {
+        category: 'Design & UX',
+        items: [
+          'Destaque visual padronizado em vermelho para atividades canceladas na Programação (Visão Diária e Visão Semanal), dentro dos Chamados e na exportação de relatórios PDF, exibindo badge "[CANCELADA]", categoria e justificativa do cancelamento.',
+          'Experiência de visualização de mídia responsiva e adaptada para smartphones e tablets: enquadramento maximizado automático ao tamanho da tela, travamento de scroll de fundo, navegação por arraste horizontal (swipe) e zoom por duplo toque.',
+          'Alternador de modo de visualização na barra superior da Programação (Visão Diária vs. Visão Semanal por Colaborador) com barra de chips dos colaboradores selecionados e layout responsivo adaptado para desktop e dispositivos móveis.',
+          'Aprimoramento tipográfico e de espaçamento no seletor multi-escolha pesquisável (SearchableMultiSelect), exibindo nome e cargo/meta de colaboradores com quebra de linha fluida sem sobreposição.',
+          'Renomeação da seção "Subtarefas & Checklist" para "Tarefas" dentro dos chamados, padronizando a nomenclatura com o restante da plataforma.',
+          'Correção definitiva do fluxo de navegação do botão "Voltar ao Kanban" dentro dos chamados, garantindo retorno consistente ao quadro ou lista de chamados sem redirecionamentos indevidos.',
+          'Ajuste de layout e responsividade na caixa de opções de filtros da tela de Chamados e nos menus suspensos de seleção múltipla, impedindo que checkboxes e popovers ultrapassem os limites da caixa ou da tela.',
+          'Nova tela de carregamento padronizada com identidade visual ATech e pré-visualização aprimorada antes da assinatura do Termo de Finalização.',
+        ],
+      },
+      {
+        category: 'Segurança',
+        items: [
+          'Modal institucional de Política de Privacidade e Conformidade LGPD acessível diretamente na tela de login e no painel.',
+          'Controle de cota diária de requisições à API Bulk-Data do Sienge com bloqueio preventivo e rastreabilidade por usuário.',
+          'Higienização automática de permissões legadas da página de validação de API.',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Migrações 056 a 065 aplicadas: horários parciais em ausências (057), controle de uso diário e snapshots/movimentações Sienge (058–062), arquitetura relacional de tarefas unificadas (063), repositório de documentos de empreendimentos (064) e rastreabilidade de cancelamento/remanejamento de programações (065).',
+          'Sincronização bidirecional instantânea via Server-Sent Events (LiveSync) ao concluir, editar ou excluir tarefas em qualquer um dos módulos integrados.',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.4.5',
     date: '12/11/2026',

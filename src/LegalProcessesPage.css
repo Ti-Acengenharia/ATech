@@ -98,13 +98,17 @@
 .legal-demo-card { border-style: dashed; }
 
 .legal-process-card-top { justify-content: space-between; gap: 8px; color: #8798a5; }
-.legal-process-card-id { font: 700 10px var(--mono); color: #627b91; letter-spacing: 0.02em; }
+.legal-process-card-id { font: 700 10px var(--mono); color: #627b91; letter-spacing: 0.02em; text-decoration: none; }
+.legal-process-card-id:hover { color: #176ca6; text-decoration: underline; }
 .legal-process-card-tools { display: inline-flex; align-items: center; gap: 6px; }
 .legal-process-card-tools button { display: grid; width: 25px; height: 25px; place-items: center; padding: 0; color: #2e5f82; background: #edf5fb; border: 1px solid #dceaf4; border-radius: 6px; cursor: pointer; }
 .legal-process-card-tools button:hover { color: #176ca6; background: #e0eff9; }
 .legal-grip-icon { color: #a4b4c2; }
 
-.legal-process-card-title { color: #162f44; font-size: 13px; line-height: 1.45; font-weight: 700; word-break: break-word; }
+.legal-process-card-title { color: #162f44; font-size: 13px; line-height: 1.45; font-weight: 700; word-break: break-word; text-decoration: none; }
+.legal-process-card-title:hover { color: #176ca6; text-decoration: underline; }
+.legal-list-title-link, .legal-list-id-link { color: inherit; text-decoration: none; }
+.legal-list-title-link:hover strong, .legal-list-id-link:hover { color: #176ca6; text-decoration: underline; }
 
 /* Número único no cartão com botão de cópia */
 .legal-process-card-number-badge { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 7px; background: #f3f7fa; border: 1px solid #e2edf5; border-radius: 5px; font: 600 11px var(--mono); color: #245880; }

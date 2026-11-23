@@ -66,7 +66,7 @@ ProxyPassReverse / http://127.0.0.1:8004/
 8. Inicie o PostgreSQL local seguindo **PostgreSQL local no Windows** abaixo. Docker Compose é apenas uma alternativa se não houver PostgreSQL instalado.
 9. Crie as tabelas com `npm run db:migrate`.
 10. Crie o administrador único com `npm run db:seed`.
-11. Inicie a interface e a API com `npm run dev` e abra `http://localhost:5173`.
+11. Inicie a interface e a API com `npm run dev`. A interface aguarda a API e o PostgreSQL responderem em `/api/health` antes de iniciar; depois, abra `http://localhost:5173`.
 
 ## Acesso pela rede interna
 

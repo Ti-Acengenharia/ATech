@@ -82,6 +82,9 @@ try {
     '060_sienge_allow_negative_stock_balances.sql',
     '061_sienge_snapshot_item_identifiers.sql',
     '062_sienge_stock_movement_batches_and_uniforms.sql',
+    '063_unified_tasks_personal_activities.sql',
+    '064_enterprise_documents_repository.sql',
+    '065_programming_cancellation.sql',
   ]
 
   let newlyAppliedCount = 0

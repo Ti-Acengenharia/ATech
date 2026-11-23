@@ -6,7 +6,7 @@ import { pool } from '../db.js'
 import { recordAuditLog } from '../services/audit-log.js'
 import { decryptPersonalData, encryptPersonalData, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 import { getSiengeDailyUsage, getSiengeStockSettings, SiengeRequestError, siengePost } from '../services/sienge.js'
-import { syncSiengeStockCenters } from '../services/sienge-stock.js'
+import { fetchSiengeStockAppropriations, syncSiengeStockCenters } from '../services/sienge-stock.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
 
 const router = Router()
@@ -368,6 +368,46 @@ router.get('/items', requirePageAccess('inventory'), async (req, res, next) => {
       limit,
       view,
     })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/items/:snapshotItemId/appropriations', requirePageAccess('inventory'), async (req, res, next) => {
+  const parsed = z.object({
+    snapshotItemId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }).safeParse(req.params)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Identificador do item do snapshot inválido.' })
+    return
+  }
+
+  try {
+    const result = await pool.query<{
+      cost_center_id: string
+      resource_id: string
+      detail_id: string | null
+      trademark_id: string | null
+    }>(
+      `SELECT item.cost_center_id, item.resource_id, item.detail_id, item.trademark_id
+       FROM sienge_stock_items item
+       JOIN sienge_stock_snapshots snapshot ON snapshot.cost_center_id = item.cost_center_id
+       WHERE item.snapshot_item_id = $1 AND snapshot.needs_refresh = FALSE`,
+      [parsed.data.snapshotItemId],
+    )
+    const item = result.rows[0]
+    if (!item) {
+      res.status(404).json({ error: 'Item não encontrado ou com atualização pendente. Sincronize o centro de custo e tente novamente.' })
+      return
+    }
+
+    const appropriations = await fetchSiengeStockAppropriations(
+      Number(item.cost_center_id),
+      Number(item.resource_id),
+      item.detail_id === null ? null : Number(item.detail_id),
+      item.trademark_id === null ? null : Number(item.trademark_id),
+    )
+    res.json({ appropriations })
   } catch (error) {
     next(error)
   }

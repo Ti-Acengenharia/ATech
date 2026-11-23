@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
   AtSign,
+  Ban,
   BarChart3,
   CalendarClock,
   CalendarDays,
   Check,
+  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -15,6 +17,8 @@ import {
   Clock3,
   Coins,
   Download,
+  ExternalLink,
+  Eye,
   FileSignature,
   FileText,
   LayoutGrid,
@@ -24,6 +28,7 @@ import {
   Paperclip,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   Tag,
@@ -31,6 +36,7 @@ import {
   UserRound,
   UsersRound,
   X,
+  XCircle,
   Zap,
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
@@ -38,9 +44,12 @@ import { useLiveSync } from '../api/liveSync'
 import CompletionTermModal from './CompletionTermModal'
 import { programmingDateTimeString, programmingTimeString } from './programming-time'
 import TicketProgrammingForm from './TicketProgrammingForm'
+import ProgrammingCancellationModal from './ProgrammingCancellationModal'
 import TicketDashboardPage from './TicketDashboardPage'
-import SearchableMultiSelect from '../SearchableMultiSelect'
+import SearchableMultiSelect, { type SearchableMultiSelectOption } from '../SearchableMultiSelect'
 import { ATechLoading } from '../ATechLoading'
+import MediaViewerModal, { type MediaViewerItem } from '../MediaViewerModal'
+import PersonalActivityDetailModal, { PRIORITY_CONFIG, type ActivityPriority } from '../PersonalActivityDetailModal'
 import type { CvTicketAttachment, CvTicketMessage, TeamMentionTarget, TicketProgramming, TicketSummary, TicketTag, TicketWorkflowStage } from './types'
 
 interface SyncState {
@@ -95,8 +104,15 @@ interface TicketSubtask {
   title: string
   assigned_to: string | null
   assignee_name: string | null
+  creator_name?: string | null
   due_at: string | null
   is_done: boolean
+  personal_activity_id?: number | null
+  priority?: ActivityPriority
+  comments_count?: number
+  attachments_count?: number
+  checklist_total?: number
+  checklist_done?: number
 }
 
 type TicketCardField = 'customer' | 'description' | 'warranty' | 'age' | 'counts' | 'tags'
@@ -105,7 +121,7 @@ export type TicketActiveView = 'kanban' | 'list' | 'dashboard'
 type TicketSortField = 'id' | 'protocol' | 'status' | 'enterprise' | 'openedAt'
 type TicketSortDirection = 'asc' | 'desc'
 
-export function resolveInitialTicketView(savedViewMode: TicketViewMode): {
+export function resolveInitialTicketView(savedViewMode: TicketViewMode, forceBoardForTicket = false): {
   activeView: TicketActiveView
   viewMode: TicketViewMode
   dashboardOpen: boolean
@@ -116,7 +132,14 @@ export function resolveInitialTicketView(savedViewMode: TicketViewMode): {
   const params = new URLSearchParams(window.location.search)
   const viewParam = params.get('view')?.toLowerCase()
   const pageParam = params.get('page')?.toLowerCase()
+  const ticketIdParam = params.get('ticketId')
   const pathname = window.location.pathname.toLowerCase()
+
+  // Se um ticketId específico está sendo aberto, nunca inicializar no Dashboard
+  if (forceBoardForTicket || Boolean(ticketIdParam)) {
+    const mode: TicketViewMode = viewParam === 'list' ? 'list' : savedViewMode
+    return { activeView: mode, viewMode: mode, dashboardOpen: false }
+  }
 
   // 1. Checa indicação explícita de dashboard (via query view=dashboard, alias page=ticket-dashboard ou rota /ticket-dashboard)
   if (
@@ -138,12 +161,9 @@ export function resolveInitialTicketView(savedViewMode: TicketViewMode): {
     return { activeView: 'kanban', viewMode: 'kanban', dashboardOpen: false }
   }
 
-  // 4. Se a URL não tiver parâmetro view, recuperar preferência salva no localStorage
+  // 4. Se a URL não tiver parâmetro view, recuperar preferência salva no localStorage (exceto dashboard stale)
   try {
     const savedActive = localStorage.getItem('atech.ticket-active-view')
-    if (savedActive === 'dashboard') {
-      return { activeView: 'dashboard', viewMode: savedViewMode, dashboardOpen: true }
-    }
     if (savedActive === 'list') {
       return { activeView: 'list', viewMode: 'list', dashboardOpen: false }
     }
@@ -345,7 +365,7 @@ export default function TicketBoardPage({
   const [ticketPagination, setTicketPagination] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
   const [completionTerms, setCompletionTerms] = useState<CompletionTermFile[]>([])
   const [enterpriseOptions, setEnterpriseOptions] = useState<string[]>([])
-  const [blockOptions, setBlockOptions] = useState<string[]>([])
+  const [blockOptions, setBlockOptions] = useState<Array<string | SearchableMultiSelectOption>>([])
   const [unitOptions, setUnitOptions] = useState<string[]>([])
   const [blockUnitOptionsScope, setBlockUnitOptionsScope] = useState<string | null>(null)
   const [subjectOptions, setSubjectOptions] = useState<string[]>([])
@@ -364,7 +384,7 @@ export default function TicketBoardPage({
   const [subsubjectFilter, setSubsubjectFilter] = useState<string[]>(savedFilters.subsubject)
   const [includeInactive, setIncludeInactive] = useState(savedFilters.includeInactive)
   const [stageFilter, setStageFilter] = useState<string[]>([])
-  const [initialViewState] = useState(() => resolveInitialTicketView(savedFilters.viewMode))
+  const [initialViewState] = useState(() => resolveInitialTicketView(savedFilters.viewMode, Boolean(initialTicketId)))
   const [viewMode, setViewMode] = useState<TicketViewMode>(initialViewState.viewMode)
   const [cardFields, setCardFields] = useState<TicketCardField[]>(savedFilters.cardFields)
   const [sortField, setSortField] = useState<TicketSortField>(savedFilters.sortField)
@@ -377,17 +397,60 @@ export default function TicketBoardPage({
     return new URLSearchParams(window.location.search).get('ticketId')
   })
   const requestedTicketId = initialTicketId || urlTicketId
-
-  useEffect(() => {
-    const url = new URL(window.location.href)
-    if (selected?.id) {
-      url.searchParams.set('ticketId', selected.id)
-    } else if (!requestedTicketId) {
-      url.searchParams.delete('ticketId')
-    }
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [selected, requestedTicketId])
   const [dashboardOpen, setDashboardOpen] = useState(initialViewState.dashboardOpen)
+
+  // Se um chamado foi solicitado externamente (ex: Busca rápida Ctrl+K ou Notificação), sai do modo dashboard
+  useEffect(() => {
+    if (requestedTicketId && dashboardOpen) {
+      setDashboardOpen(false)
+    }
+  }, [requestedTicketId, dashboardOpen])
+
+  const openTicketDetail = useCallback((ticket: TicketSummary, pushHistory = true) => {
+    setDashboardOpen(false)
+    setSelected(ticket)
+    try {
+      localStorage.setItem('atech.ticket-active-view', viewMode)
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      const currentTicketParam = url.searchParams.get('ticketId')
+      url.searchParams.set('page', 'tickets')
+      url.searchParams.set('view', viewMode)
+      url.searchParams.set('ticketId', ticket.id)
+      const target = `${url.pathname}${url.search}${url.hash}`
+      if (pushHistory && currentTicketParam !== ticket.id) {
+        window.history.pushState({ page: 'tickets', view: viewMode, ticketId: ticket.id }, '', target)
+      } else {
+        window.history.replaceState({ page: 'tickets', view: viewMode, ticketId: ticket.id }, '', target)
+      }
+      window.dispatchEvent(new CustomEvent('atech:ticket-view-changed', { detail: { view: viewMode } }))
+    }
+  }, [viewMode])
+
+  const returnToTicketBoard = useCallback(() => {
+    setSelected(null)
+    setUrlTicketId(null)
+    setDashboardOpen(false)
+    onTicketOpened?.()
+    try {
+      localStorage.setItem('atech.ticket-active-view', viewMode)
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.set('page', 'tickets')
+      url.searchParams.set('view', viewMode)
+      url.searchParams.delete('ticketId')
+      const target = `${url.pathname}${url.search}${url.hash}`
+      window.history.replaceState({ page: 'tickets', view: viewMode }, '', target)
+      window.dispatchEvent(new CustomEvent('atech:ticket-view-changed', { detail: { view: viewMode } }))
+    }
+    setRefreshKey((current) => current + 1)
+  }, [viewMode, onTicketOpened])
 
   const applyViewChange = useCallback((nextView: TicketActiveView, historyAction: 'push' | 'replace' = 'push') => {
     if (typeof window === 'undefined') return
@@ -478,9 +541,13 @@ export default function TicketBoardPage({
   const enterpriseFilterKey = JSON.stringify([...enterpriseFilters].sort((left, right) => left.localeCompare(right)))
   const blockUnitFilterKey = `${enterpriseFilterKey}|${JSON.stringify([...blockFilter].sort())}`
   const blockOptionsReady = blockUnitOptionsScope === blockUnitFilterKey
+  const blockOptionValues = useMemo(
+    () => new Set(blockOptions.map((opt) => (typeof opt === 'string' ? opt : opt.value))),
+    [blockOptions],
+  )
   const activeBlockFilter = useMemo(
-    () => blockOptionsReady ? blockFilter.filter((value) => blockOptions.includes(value)) : [],
-    [blockOptionsReady, blockFilter, blockOptions],
+    () => (blockOptionsReady ? blockFilter.filter((value) => blockOptionValues.has(value)) : []),
+    [blockOptionsReady, blockFilter, blockOptionValues],
   )
   const activeUnitFilter = useMemo(
     () => blockOptionsReady ? unitFilter.filter((value) => unitOptions.includes(value)) : [],
@@ -526,10 +593,10 @@ export default function TicketBoardPage({
     for (const block of blockFilter) params.append('block', block)
     if (includeInactive) params.set('includeInactive', 'true')
     const query = params.toString()
-    apiRequest<{ blocks: string[]; units: string[] }>(`/api/tickets/filter-options${query ? `?${query}` : ''}`)
+    apiRequest<{ blocks: string[]; blockOptions?: SearchableMultiSelectOption[]; units: string[] }>(`/api/tickets/filter-options${query ? `?${query}` : ''}`)
       .then((options) => {
         if (cancelled) return
-        setBlockOptions(options.blocks)
+        setBlockOptions(options.blockOptions ?? options.blocks)
         setUnitOptions(options.units)
         setBlockUnitOptionsScope(blockUnitFilterKey)
       })
@@ -605,7 +672,7 @@ export default function TicketBoardPage({
             if (cancelled) return
             setUrlTicketId(null)
             if (target) {
-              setSelected(target)
+              openTicketDetail(target, true)
               onTicketOpened?.()
             } else {
               setNotice({ kind: 'error', text: 'O chamado solicitado não foi encontrado.' })
@@ -616,7 +683,7 @@ export default function TicketBoardPage({
         }).finally(() => { if (!cancelled) setLoading(false) })
     }, 180)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, stageFilter, includeInactive, viewMode, requestedTicketId, onTicketOpened, refreshKey, dashboardOpen])
+  }, [search, ticketTypes, enterpriseFilters, activeBlockFilter, activeUnitFilter, customerNameFilter, subjectFilter, subsubjectFilter, stageFilter, includeInactive, viewMode, requestedTicketId, onTicketOpened, openTicketDetail, refreshKey, dashboardOpen])
 
   async function syncNow() {
     setSyncing(true)
@@ -649,7 +716,7 @@ export default function TicketBoardPage({
       if (result.ticket) {
         try {
           const loaded = await apiRequest<{ tickets: TicketSummary[] }>(`/api/tickets?id=${encodeURIComponent(result.ticket.id)}`)
-          if (loaded.tickets[0]) setSelected(loaded.tickets[0])
+          if (loaded.tickets[0]) openTicketDetail(loaded.tickets[0], true)
         } catch (error) {
           setNotice({ kind: 'error', text: `Chamado importado, mas não foi possível carregar os dados completos: ${error instanceof Error ? error.message : 'falha na consulta local'}` })
         }
@@ -881,15 +948,6 @@ export default function TicketBoardPage({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [showProtocolModal])
 
-  if (dashboardOpen) {
-    return (
-      <TicketDashboardPage
-        onBack={() => applyViewChange(viewMode, 'push')}
-        onSelectView={(view) => applyViewChange(view, 'push')}
-      />
-    )
-  }
-
   if (selected) {
     return <>
       <TicketDetailPage
@@ -901,11 +959,20 @@ export default function TicketBoardPage({
         onDownloadTerm={(term) => void downloadCompletionTerm(selected.id, term)}
         onDeleteTerm={(term) => void deleteCompletionTerm(selected, term)}
         onTagsChanged={(tagIds) => saveTicketTags(selected.id, tagIds)}
-        onBack={() => { setSelected(null); setRefreshKey((current) => current + 1) }}
+        onBack={returnToTicketBoard}
         onNotice={(value) => setNotice(value)}
       />
       {termTicket && <CompletionTermModal ticket={termTicket} currentUserName={currentUser.displayName} onClose={() => setTermTicket(null)} onSaveSignedPdf={(bytes) => saveSignedTerm(termTicket, bytes)} />}
     </>
+  }
+
+  if (dashboardOpen) {
+    return (
+      <TicketDashboardPage
+        onBack={() => applyViewChange(viewMode, 'push')}
+        onSelectView={(view) => applyViewChange(view, 'push')}
+      />
+    )
   }
 
   return (
@@ -1192,7 +1259,7 @@ export default function TicketBoardPage({
                       ['description', 'Descrição'],
                       ['warranty', 'Garantia'],
                       ['age', 'Tempo aberto'],
-                      ['counts', 'Comentários / subtarefas / programações'],
+                      ['counts', 'Comentários / tarefas / programações'],
                       ['tags', 'Tags'],
                     ] as [TicketCardField, string][]).map(([field, label]) => (
                       <label key={field}>
@@ -1273,7 +1340,7 @@ export default function TicketBoardPage({
         <ATechLoading message="Carregando chamados..." subtitle="Sincronizando atendimentos e etapas..." />
       ) : viewMode === 'list' ? (
         <>
-          <TicketList tickets={pagedTickets} stages={orderedStages} onOpen={setSelected} />
+          <TicketList tickets={pagedTickets} stages={orderedStages} onOpen={(ticket) => openTicketDetail(ticket, true)} />
           <ListPagination total={filtered.length} page={currentTicketListPage} pageCount={ticketListPageCount} pageSize={listPageSize} onPageChange={(page) => setTicketListPageState({ key: ticketListKey, page })} />
         </>
       ) : orderedStages.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Workflow ainda não carregado</strong><span>Configure a API e sincronize os atendimentos para trazer as etapas do CVCRM.</span></div> : filtered.length === 0 ? <div className="ticket-board-empty"><ClipboardListIcon /><strong>Nenhum chamado corresponde aos filtros.</strong></div> : (
@@ -1371,7 +1438,7 @@ export default function TicketBoardPage({
               return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={stage.id} data-stage-key={stage.id}>
                 <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
                 <div className="kanban-column-body">
-                  {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}
+                  {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />)}
                   {ticketsToShow.length < stageTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(String(stage.id), visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, stageTickets.length - visibleCount)})</button>}
                 </div>
               </section>
@@ -1381,7 +1448,7 @@ export default function TicketBoardPage({
               const visibleCount = visibleTicketCounts[key] ?? kanbanPageSize
               const ticketsToShow = unassignedTickets.slice(0, visibleCount)
               const isMobileActive = mobileSelectedStageKey === 'unassigned'
-              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => setSelected(ticket)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
+              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
             })()}
           </div>
         </div>
@@ -1428,10 +1495,21 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
   const openSeconds = ticket.openedAt
     ? Math.max(0, Math.floor((clock - new Date(ticket.openedAt).getTime()) / 1000))
     : null
+  const ticketHref = `?page=tickets&view=kanban&ticketId=${encodeURIComponent(ticket.id)}`
   return (
     <article className="ticket-card">
-      <button className="ticket-card-open" type="button" onClick={onOpen} aria-label={`Abrir chamado ${ticket.id}, protocolo ${ticket.protocol}`}>
-        <span className="ticket-card-top"><span><strong>ID {ticket.id}</strong><small>Protocolo #{ticket.protocol}</small></span>{!ticket.sourceActive ? <span className="ticket-archived-badge">Inativo</span> : ticket.priority && <span className="ticket-priority">{ticket.priority}</span>}</span>
+      <a
+        href={ticketHref}
+        className="ticket-card-open"
+        draggable={false}
+        onClick={(event) => {
+          if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return
+          event.preventDefault()
+          onOpen()
+        }}
+        aria-label={`Abrir chamado ${ticket.id}, protocolo ${ticket.protocol}`}
+      >
+        <span className="ticket-card-top"><span><strong className="ticket-card-id-link">ID {ticket.id}</strong><small>Protocolo #{ticket.protocol}</small></span>{!ticket.sourceActive ? <span className="ticket-archived-badge">Inativo</span> : ticket.priority && <span className="ticket-priority">{ticket.priority}</span>}</span>
         <span className="ticket-card-enterprise">{ticket.enterprise || 'Empreendimento não informado'}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</span>
         <span className="ticket-card-subject">{ticket.subject || 'Sem assunto'}{ticket.subsubject ? <small>{ticket.subsubject}</small> : null}</span>
         {fields.includes('tags') && <TicketTagPills tags={ticket.tags ?? []} />}
@@ -1441,7 +1519,7 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
         {fields.includes('description') && <span className="ticket-card-description">{ticket.description || 'Sem descrição registrada.'}</span>}
         {fields.includes('age') && <span className="ticket-card-age"><Clock3 size={13} />{formatAge(openSeconds)}</span>}
         {fields.includes('counts') && <span className="ticket-card-meta"><span><MessageCircle size={13} /> {ticket.commentCount}</span><span><Check size={13} /> {ticket.completedSubtaskCount}/{ticket.subtaskCount}</span><span><CalendarClock size={13} /> {ticket.programmingCount}</span></span>}
-      </button>
+      </a>
       <div className="ticket-card-footer">
         <span>{ticket.localDueAt ? `Prazo ${formatDate(ticket.localDueAt)}` : 'Sem prazo local'}</span>
       </div>
@@ -1458,15 +1536,30 @@ function TicketList({ tickets, stages, onOpen }: {
   if (!tickets.length) return <div className="ticket-board-empty"><ClipboardListIcon /><strong>Nenhum chamado corresponde aos filtros.</strong></div>
   return <div className="ticket-list-wrap"><table className="ticket-list">
     <thead><tr><th>ID / Protocolo</th><th>Situação</th><th>Empreendimento</th><th>Assunto / Subassunto</th><th>Tags</th><th>Abertura</th><th><span className="sr-only">Abrir chamado</span></th></tr></thead>
-    <tbody>{tickets.map((ticket) => <tr key={ticket.id}>
-      <td><strong>ID {ticket.id}</strong><small>#{ticket.protocol}</small></td>
-      <td>{ticket.statusId ? statusById.get(ticket.statusId) ?? ticket.status : ticket.status}{!ticket.sourceActive && <small className="ticket-list-archived">Inativo</small>}</td>
-      <td>{ticket.enterprise || '—'}{ticket.block && ` · Bloco ${ticket.block}`}{ticket.unit && ` · Unidade ${ticket.unit}`}</td>
-      <td><strong>{ticket.subject || 'Sem assunto'}</strong><small>{ticket.subsubject || 'Sem subassunto'}</small></td>
-      <td><TicketTagPills tags={ticket.tags ?? []} /></td>
-      <td>{ticket.openedAt ? new Date(ticket.openedAt).toLocaleDateString('pt-BR') : '—'}</td>
-      <td><button className="text-action-btn" type="button" onClick={() => onOpen(ticket)}>Abrir</button></td>
-    </tr>)}</tbody>
+    <tbody>{tickets.map((ticket) => {
+      const ticketHref = `?page=tickets&view=list&ticketId=${encodeURIComponent(ticket.id)}`
+      const handleLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return
+        event.preventDefault()
+        onOpen(ticket)
+      }
+      return (
+        <tr key={ticket.id}>
+          <td>
+            <a href={ticketHref} className="ticket-list-id-link" onClick={handleLinkClick}>
+              <strong>ID {ticket.id}</strong>
+            </a>
+            <small>#{ticket.protocol}</small>
+          </td>
+          <td>{ticket.statusId ? statusById.get(ticket.statusId) ?? ticket.status : ticket.status}{!ticket.sourceActive && <small className="ticket-list-archived">Inativo</small>}</td>
+          <td>{ticket.enterprise || '—'}{ticket.block && ` · Bloco ${ticket.block}`}{ticket.unit && ` · Unidade ${ticket.unit}`}</td>
+          <td><strong>{ticket.subject || 'Sem assunto'}</strong><small>{ticket.subsubject || 'Sem subassunto'}</small></td>
+          <td><TicketTagPills tags={ticket.tags ?? []} /></td>
+          <td>{ticket.openedAt ? new Date(ticket.openedAt).toLocaleDateString('pt-BR') : '—'}</td>
+          <td><a href={ticketHref} className="text-action-btn" onClick={handleLinkClick}>Abrir</a></td>
+        </tr>
+      )
+    })}</tbody>
   </table></div>
 }
 
@@ -1507,6 +1600,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
   const [management, setManagement] = useState({ due: localInput(ticket.localDueAt), estimatedCost: ticket.estimatedCost ?? '', actualCost: ticket.actualCost ?? '' })
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<TicketProgramming | null>(null)
+  const [cancellingSchedule, setCancellingSchedule] = useState<TicketProgramming | null>(null)
   const [showSubtaskForm, setShowSubtaskForm] = useState(false)
   const [detailTab, setDetailTab] = useState<'data' | 'schedule' | 'comments' | 'terms'>('data')
   const [loading, setLoading] = useState(true)
@@ -1515,6 +1609,88 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  const [activePersonalActivityId, setActivePersonalActivityId] = useState<number | null>(null)
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0)
+
+  const allTicketMediaItems: MediaViewerItem[] = useMemo(() => {
+    const items: MediaViewerItem[] = []
+
+    // 1. CVCRM conversation attachments
+    for (const msg of cvMessages) {
+      for (const file of msg.attachments) {
+        if (!file.url) continue
+        const proxyUrl = `/api/tickets/${ticket.id}/cv-attachment-view?url=${encodeURIComponent(file.url)}&fileName=${encodeURIComponent(file.name)}`
+        items.push({
+          id: `cv-msg-${file.id || file.url}`,
+          title: file.name,
+          url: proxyUrl,
+          downloadUrl: `${proxyUrl}&download=1`,
+          mimeType: file.type,
+          fileSize: file.size,
+          source: `CVCRM · ${msg.author || 'Mensagem'}`,
+          createdAt: file.createdAt || msg.createdAt,
+        })
+      }
+    }
+
+    // 2. CVCRM general attachments
+    for (const file of cvAttachments) {
+      if (!file.url) continue
+      const proxyUrl = `/api/tickets/${ticket.id}/cv-attachment-view?url=${encodeURIComponent(file.url)}&fileName=${encodeURIComponent(file.name)}`
+      items.push({
+        id: `cv-att-${file.id || file.url}`,
+        title: file.name,
+        url: proxyUrl,
+        downloadUrl: `${proxyUrl}&download=1`,
+        mimeType: file.type,
+        fileSize: file.size,
+        source: 'CVCRM · Anexo',
+        createdAt: file.createdAt,
+      })
+    }
+
+    // 3. Completion terms (Termos de finalização assinados)
+    for (const term of completionTerms) {
+      items.push({
+        id: `term-${term.id}`,
+        title: term.file_name,
+        url: `/api/tickets/${ticket.id}/attachments/${term.id}`,
+        downloadUrl: `/api/tickets/${ticket.id}/attachments/${term.id}?download=1`,
+        mimeType: 'application/pdf',
+        fileSize: term.file_size,
+        source: 'Termo assinado',
+        createdAt: term.created_at,
+        type: 'pdf',
+      })
+    }
+
+    // 4. Internal ATech attachments
+    for (const entry of attachments) {
+      items.push({
+        id: `internal-${entry.id}`,
+        title: entry.file_name,
+        url: `/api/tickets/${ticket.id}/attachments/${entry.id}`,
+        downloadUrl: `/api/tickets/${ticket.id}/attachments/${entry.id}?download=1`,
+        mimeType: entry.content_type,
+        fileSize: entry.file_size,
+        source: 'Anexo ATech',
+        createdAt: entry.created_at,
+      })
+    }
+
+    return items
+  }, [ticket.id, cvMessages, cvAttachments, completionTerms, attachments])
+
+  function openMediaViewer(itemTargetId?: string | number) {
+    if (itemTargetId !== undefined) {
+      const foundIndex = allTicketMediaItems.findIndex((it) => it.id === itemTargetId)
+      setViewerInitialIndex(foundIndex >= 0 ? foundIndex : 0)
+    } else {
+      setViewerInitialIndex(0)
+    }
+    setViewerOpen(true)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -1549,7 +1725,8 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return
-      if (document.querySelector('.completion-term-backdrop')) return
+      if (activePersonalActivityId !== null) return
+      if (document.querySelector('.completion-term-backdrop, .personal-sheet-backdrop')) return
       if (mentionQuery !== null) {
         setMentionQuery(null)
         setMentionStart(null)
@@ -1572,7 +1749,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [mentionQuery, editingComment, editingSchedule, showScheduleForm, showSubtaskForm, onBack])
+  }, [activePersonalActivityId, mentionQuery, editingComment, editingSchedule, showScheduleForm, showSubtaskForm, onBack])
 
   async function toggleTicketTag(tagId: string, enabled: boolean) {
     const nextIds = enabled
@@ -1681,6 +1858,16 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
       setRefresh((value) => value + 1)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir a programação.')
+    }
+  }
+
+  async function reactivateProgramming(entry: TicketProgramming) {
+    if (!window.confirm(`Deseja reativar a atividade de ${entry.collaborator_name}?`)) return
+    try {
+      await apiRequest(`/api/programming/${entry.id}/reactivate`, { method: 'POST' })
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível reativar a programação.')
     }
   }
 
@@ -1869,7 +2056,7 @@ async function optimizeImageForAttachment(file: File): Promise<{
       setShowSubtaskForm(false)
       setRefresh((value) => value + 1)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Não foi possível adicionar a subtarefa.')
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível adicionar a tarefa.')
     } finally { setBusy(false) }
   }
 
@@ -1878,7 +2065,17 @@ async function optimizeImageForAttachment(file: File): Promise<{
       await apiRequest(`/api/tickets/${ticket.id}/subtasks/${subtask.id}`, { method: 'PATCH', body: JSON.stringify({ isDone: !subtask.is_done }) })
       setRefresh((value) => value + 1)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a subtarefa.')
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a tarefa.')
+    }
+  }
+
+  async function deleteSubtask(subtask: TicketSubtask) {
+    if (!window.confirm(`Excluir a tarefa "${subtask.title}"? Ela também será removida de Minhas Atividades.`)) return
+    try {
+      await apiRequest(`/api/tickets/${ticket.id}/subtasks/${subtask.id}`, { method: 'DELETE' })
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir a tarefa.')
     }
   }
 
@@ -1903,7 +2100,36 @@ async function optimizeImageForAttachment(file: File): Promise<{
 
   return (
     <section className="ticket-detail-page">
-      <header className="ticket-detail-heading"><button className="secondary-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Voltar ao Kanban</button><span className="eyebrow">CHAMADO · CVCRM</span><h1>Protocolo {ticket.protocol}</h1><p>{ticket.enterprise} {ticket.block ? `· Bloco ${ticket.block}` : ''} {ticket.unit ? `· Unidade ${ticket.unit}` : ''}</p>{!ticket.sourceActive && <span className="ticket-archived-notice">Chamado finalizado ou cancelado — histórico preservado</span>}</header>
+      <header className="ticket-detail-heading">
+        <div className="ticket-detail-top-actions" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+          <button className="secondary-button" type="button" onClick={onBack}>
+            <ArrowLeft size={15} /> Voltar ao Kanban
+          </button>
+          <a
+            className="secondary-button"
+            href={`https://acengenharia.cvcrm.com.br/gestor/relacionamento/atendimentos/${encodeURIComponent(ticket.id)}/visualiza`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir este atendimento diretamente no Construtor de Vendas (CVCRM)"
+          >
+            <ExternalLink size={15} /> Abrir no CVCRM
+          </a>
+          {allTicketMediaItems.length > 0 && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => openMediaViewer()}
+              title="Visualizar todos os arquivos (fotos, vídeos, PDFs) deste chamado"
+            >
+              <Eye size={15} /> Galeria de Arquivos ({allTicketMediaItems.length})
+            </button>
+          )}
+        </div>
+        <span className="eyebrow">CHAMADO · CVCRM</span>
+        <h1>Protocolo {ticket.protocol}</h1>
+        <p>{ticket.enterprise} {ticket.block ? `· Bloco ${ticket.block}` : ''} {ticket.unit ? `· Unidade ${ticket.unit}` : ''}</p>
+        {!ticket.sourceActive && <span className="ticket-archived-notice">Chamado finalizado ou cancelado — histórico preservado</span>}
+      </header>
       <div className="ticket-detail-status"><span>{ticket.status}</span></div>
       {ticket.warranty && <section className={`ticket-warranty-detail warranty-${ticket.warranty.status}`} aria-label="Situação da garantia">
         <ShieldCheck size={18} />
@@ -2030,13 +2256,37 @@ async function optimizeImageForAttachment(file: File): Promise<{
                         {message.body && <p>{cvMessageText(message.body)}</p>}
                         {message.attachments.length > 0 && (
                           <ul>
-                            {message.attachments.map((file, index) => (
-                              <li key={file.id ?? `${message.id}-${index}`}>
-                                <Paperclip size={13} />
-                                <span>{file.name}</span>
-                                {file.url && <a href={file.url} target="_blank" rel="noreferrer">Abrir</a>}
-                              </li>
-                            ))}
+                            {message.attachments.map((file, index) => {
+                              const itemId = `cv-msg-${file.id || file.url}`
+                              return (
+                                <li key={file.id ?? `${message.id}-${index}`}>
+                                  <Paperclip size={13} />
+                                  <span>{file.name}</span>
+                                  {file.url && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+                                      <button
+                                        type="button"
+                                        className="text-action-btn"
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={() => openMediaViewer(itemId)}
+                                        title="Visualizar no navegador"
+                                      >
+                                        <Eye size={13} /> Visualizar
+                                      </button>
+                                      <a
+                                        href={`/api/tickets/${ticket.id}/cv-attachment-view?url=${encodeURIComponent(file.url)}&fileName=${encodeURIComponent(file.name)}&download=1`}
+                                        download={file.name}
+                                        className="text-action-btn"
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        title="Baixar arquivo"
+                                      >
+                                        <Download size={13} /> Baixar
+                                      </a>
+                                    </div>
+                                  )}
+                                </li>
+                              )
+                            })}
                           </ul>
                         )}
                       </li>
@@ -2048,13 +2298,37 @@ async function optimizeImageForAttachment(file: File): Promise<{
                   <h3>Anexos sincronizados do CVCRM ({cvAttachments.length})</h3>
                   {cvAttachments.length ? (
                     <ul>
-                      {cvAttachments.map((file, index) => (
-                        <li key={file.id ?? `${file.name}-${index}`}>
-                          <Paperclip size={14} />
-                          <span><strong>{file.name}</strong><small>{file.type || 'Arquivo'}{file.size ? ` · ${file.size}` : ''}{file.createdAt ? ` · ${formatDate(file.createdAt)}` : ''}</small></span>
-                          {file.url ? <a href={file.url} target="_blank" rel="noreferrer">Abrir</a> : <small>Link indisponível</small>}
-                        </li>
-                      ))}
+                      {cvAttachments.map((file, index) => {
+                        const itemId = `cv-att-${file.id || file.url}`
+                        return (
+                          <li key={file.id ?? `${file.name}-${index}`}>
+                            <Paperclip size={14} />
+                            <span><strong>{file.name}</strong><small>{file.type || 'Arquivo'}{file.size ? ` · ${file.size}` : ''}{file.createdAt ? ` · ${formatDate(file.createdAt)}` : ''}</small></span>
+                            {file.url ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  style={{ padding: '3px 9px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  onClick={() => openMediaViewer(itemId)}
+                                  title="Visualizar no navegador"
+                                >
+                                  <Eye size={13} /> Visualizar
+                                </button>
+                                <a
+                                  href={`/api/tickets/${ticket.id}/cv-attachment-view?url=${encodeURIComponent(file.url)}&fileName=${encodeURIComponent(file.name)}&download=1`}
+                                  download={file.name}
+                                  className="secondary-button"
+                                  style={{ padding: '3px 8px', fontSize: '11px' }}
+                                  title="Baixar arquivo"
+                                >
+                                  <Download size={13} />
+                                </a>
+                              </div>
+                            ) : <small>Link indisponível</small>}
+                          </li>
+                        )
+                      })}
                     </ul>
                   ) : <p className="ticket-empty-inline">Nenhum anexo CVCRM retornado na última sincronização.</p>}
                 </div>
@@ -2086,7 +2360,7 @@ async function optimizeImageForAttachment(file: File): Promise<{
               </section>
               <div className="ticket-detail-source-note">
                 <ShieldCheck size={15} />
-                <span>Situação é consultada no CVCRM; comentários, subtarefas e programação são dados locais da ATech.</span>
+                <span>Situação é consultada no CVCRM; comentários, tarefas e programação são dados locais da ATech.</span>
               </div>
             </aside>
           </div>
@@ -2124,7 +2398,28 @@ async function optimizeImageForAttachment(file: File): Promise<{
               {programming.length ? (
                 <div className="ticket-programming-list">
                   {programming.map((entry) => (
-                    <article className={`ticket-programming-item ${entry.is_finalization ? 'is-finalization' : ''}`} key={entry.id}>
+                    <article className={`ticket-programming-item ${entry.is_finalization ? 'is-finalization' : ''} ${entry.cancelled ? 'is-cancelled' : ''}`} key={entry.id}>
+                      {entry.cancelled && (
+                        <div className="ticket-programming-cancellation-banner">
+                          <div className="ticket-programming-cancellation-header">
+                            <span className="programming-cancellation-badge">
+                              <XCircle size={11} /> Cancelada
+                            </span>
+                            <span className="cancellation-reason-tag">
+                              {entry.cancellation_reason_type === 'cliente'
+                                ? 'Pelo Cliente'
+                                : entry.cancellation_reason_type === 'remanejamento'
+                                  ? 'Remanejamento'
+                                  : 'AC Engenharia'}
+                            </span>
+                          </div>
+                          {entry.cancellation_reason && (
+                            <p className="ticket-programming-cancellation-desc">
+                              {entry.cancellation_reason}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {entry.is_finalization && (
                         <div className="ticket-programming-finalization-alert">
                           <div className="ticket-programming-finalization-alert-top">
@@ -2147,33 +2442,60 @@ async function optimizeImageForAttachment(file: File): Promise<{
                       )}
                       <div className="ticket-programming-meta">
                         <span className="programming-time">{programmingDateTimeString(entry.starts_at)}–{programmingTimeString(new Date(entry.ends_at))}</span>
-                        <strong>{entry.collaborator_name}{entry.collaborator_nickname ? ` · ${entry.collaborator_nickname}` : ''}</strong>
+                        <strong>{entry.cancelled ? '[CANCELADA] ' : ''}{entry.collaborator_name}{entry.collaborator_nickname ? ` · ${entry.collaborator_nickname}` : ''}</strong>
                       </div>
                       <p className="ticket-programming-desc">{entry.activity_description}</p>
                       <div className="ticket-programming-footer">
                         <div className="ticket-programming-checks">
-                          <label className={`programming-pill-check ${entry.completed ? 'is-checked' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={entry.completed}
-                              disabled={updatingProgramming.has(entry.id)}
-                              onChange={(event) => void updateProgrammingCompletion(entry, event.target.checked)}
-                            />
-                            <span>{entry.completed ? 'Realizada' : 'Marcar como realizada'}</span>
-                          </label>
-                          {entry.is_finalization && (
-                            <label className={`programming-pill-check is-term ${entry.completion_term_delivered ? 'is-checked' : ''}`}>
-                              <input
-                                type="checkbox"
-                                checked={Boolean(entry.completion_term_delivered)}
-                                disabled={updatingProgramming.has(entry.id)}
-                                onChange={(event) => void updateProgrammingTermDelivery(entry, event.target.checked)}
-                              />
-                              <span>{entry.completion_term_delivered ? 'Termo entregue' : 'Termo de finalização entregue'}</span>
-                            </label>
+                          {entry.cancelled ? (
+                            <span className="programming-cancelled-pill">
+                              <XCircle size={11} /> Cancelada
+                            </span>
+                          ) : (
+                            <>
+                              <label className={`programming-pill-check ${entry.completed ? 'is-checked' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={entry.completed}
+                                  disabled={updatingProgramming.has(entry.id)}
+                                  onChange={(event) => void updateProgrammingCompletion(entry, event.target.checked)}
+                                />
+                                <span>{entry.completed ? 'Realizada' : 'Marcar como realizada'}</span>
+                              </label>
+                              {entry.is_finalization && (
+                                <label className={`programming-pill-check is-term ${entry.completion_term_delivered ? 'is-checked' : ''}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(entry.completion_term_delivered)}
+                                    disabled={updatingProgramming.has(entry.id)}
+                                    onChange={(event) => void updateProgrammingTermDelivery(entry, event.target.checked)}
+                                  />
+                                  <span>{entry.completion_term_delivered ? 'Termo entregue' : 'Termo de finalização entregue'}</span>
+                                </label>
+                              )}
+                            </>
                           )}
                         </div>
                         <div className="ticket-programming-buttons">
+                          {!entry.cancelled ? (
+                            <button
+                              type="button"
+                              className="text-action-btn cancel-action"
+                              onClick={() => setCancellingSchedule(entry)}
+                              title="Cancelar atividade"
+                            >
+                              <Ban size={12} /> Cancelar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-action-btn reactivate-action"
+                              onClick={() => void reactivateProgramming(entry)}
+                              title="Reativar atividade"
+                            >
+                              <RotateCcw size={12} /> Reativar
+                            </button>
+                          )}
                           <button type="button" className="text-action-btn" onClick={() => { setShowScheduleForm(false); setEditingSchedule(entry) }}>
                             <Pencil size={12} /> Editar
                           </button>
@@ -2193,34 +2515,123 @@ async function optimizeImageForAttachment(file: File): Promise<{
             <section className="ticket-info-section">
               <div className="ticket-section-heading">
                 <div>
-                  <h2>Subtarefas & Checklist</h2>
-                  <p>{subtasks.filter((item) => item.is_done).length} de {subtasks.length} concluídas</p>
+                  <h2>Tarefas</h2>
+                  <p>{subtasks.filter((item) => item.is_done).length} de {subtasks.length} concluídas · Sincronizadas com Minhas Atividades</p>
                 </div>
                 <button className="secondary-button" type="button" onClick={() => setShowSubtaskForm((value) => !value)}>
-                  <Plus size={15} /> Nova subtarefa
+                  <Plus size={15} /> Nova tarefa
                 </button>
               </div>
               {showSubtaskForm && (
                 <form className="ticket-subtask-form" onSubmit={(event) => void createSubtask(event)}>
-                  <input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} placeholder="Descreva a subtarefa" maxLength={300} required />
+                  <input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} placeholder="Descreva a tarefa" maxLength={300} required />
                   <button className="primary-button" type="submit" disabled={busy}>Adicionar</button>
                 </form>
               )}
               {subtasks.length ? (
                 <ul className="ticket-subtask-list">
-                  {subtasks.map((subtask) => (
-                    <li key={subtask.id}>
-                      <label>
-                        <input type="checkbox" checked={subtask.is_done} onChange={() => void toggleSubtask(subtask)} />
-                        <span className={subtask.is_done ? 'is-complete' : ''}>{subtask.title}</span>
-                      </label>
-                      {subtask.assignee_name && <small>{subtask.assignee_name}</small>}
-                      {subtask.due_at && <small>{formatDate(subtask.due_at)}</small>}
-                    </li>
-                  ))}
+                  {subtasks.map((subtask) => {
+                    const pCfg = PRIORITY_CONFIG[subtask.priority || 'medium']
+                    return (
+                      <li
+                        key={subtask.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          cursor: subtask.personal_activity_id ? 'pointer' : 'default',
+                          borderLeft: `3px solid ${pCfg.color}`,
+                        }}
+                        onClick={(e) => {
+                          if ((e.target as HTMLElement).closest('input, button')) return
+                          if (subtask.personal_activity_id) {
+                            setActivePersonalActivityId(subtask.personal_activity_id)
+                          }
+                        }}
+                        title={subtask.personal_activity_id ? 'Clique para abrir os detalhes completos da tarefa (comentários, checklist, anexos)' : undefined}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={subtask.is_done}
+                            onChange={() => void toggleSubtask(subtask)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <button
+                            type="button"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              textAlign: 'left',
+                              font: 'inherit',
+                              color: 'inherit',
+                              cursor: 'pointer',
+                              flex: 1,
+                            }}
+                            onClick={() => {
+                              if (subtask.personal_activity_id) {
+                                setActivePersonalActivityId(subtask.personal_activity_id)
+                              }
+                            }}
+                          >
+                            <span className={subtask.is_done ? 'is-complete' : ''} style={{ fontWeight: 500 }}>
+                              {subtask.title}
+                            </span>
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, flexWrap: 'wrap' }}>
+                          {(subtask.checklist_total ?? 0) > 0 && (
+                            <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }} title="Checklist da tarefa">
+                              <CheckSquare size={12} /> {subtask.checklist_done ?? 0}/{subtask.checklist_total}
+                            </small>
+                          )}
+                          {(subtask.comments_count ?? 0) > 0 && (
+                            <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }} title="Comentários na tarefa">
+                              <MessageCircle size={12} /> {subtask.comments_count}
+                            </small>
+                          )}
+                          {(subtask.attachments_count ?? 0) > 0 && (
+                            <small style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }} title="Anexos na tarefa">
+                              <Paperclip size={12} /> {subtask.attachments_count}
+                            </small>
+                          )}
+                          {subtask.assignee_name && <small>{subtask.assignee_name}</small>}
+                          {subtask.due_at && <small>{formatDate(subtask.due_at)}</small>}
+                          {subtask.personal_activity_id && (
+                            <button
+                              type="button"
+                              className="text-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setActivePersonalActivityId(subtask.personal_activity_id!)
+                              }}
+                              title="Abrir tela completa da tarefa"
+                            >
+                              Detalhes
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="icon-button icon-button-danger"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void deleteSubtask(subtask)
+                            }}
+                            title="Excluir tarefa"
+                            aria-label={`Excluir tarefa ${subtask.title}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </li>
+                    )
+                  })}
                 </ul>
               ) : !showSubtaskForm && (
-                <p className="ticket-empty-inline">Nenhuma subtarefa registrada.</p>
+                <p className="ticket-empty-inline">Nenhuma tarefa registrada.</p>
               )}
             </section>
           </div>
@@ -2402,10 +2813,25 @@ async function optimizeImageForAttachment(file: File): Promise<{
                 </button>
                 {completionTerms.length ? completionTerms.map((term) => (
                   <div className="ticket-card-saved-term" key={term.id}>
-                    <button type="button" className="ticket-card-saved-term-open" onClick={() => onDownloadTerm(term)} title={`Baixar ${term.file_name}`}>
-                      <Download size={14} /><span>{term.file_name}</span>
+                    <button
+                      type="button"
+                      className="ticket-card-saved-term-open"
+                      onClick={() => openMediaViewer(`term-${term.id}`)}
+                      title={`Visualizar ${term.file_name}`}
+                    >
+                      <Eye size={14} /><span>{term.file_name}</span>
                     </button>
                     <small>{Math.ceil(term.file_size / 1024)} KB · {term.uploaded_by_name} · {formatDate(term.created_at)}</small>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => onDownloadTerm(term)}
+                      title={`Baixar ${term.file_name}`}
+                      aria-label={`Baixar ${term.file_name}`}
+                      style={{ marginLeft: 'auto' }}
+                    >
+                      <Download size={14} />
+                    </button>
                     {(currentUser.role === 'admin' || String(term.uploaded_by) === String(currentUser.id)) && (
                       <button type="button" className="ticket-card-saved-term-delete" onClick={() => onDeleteTerm(term)} aria-label={`Excluir ${term.file_name}`} title="Excluir termo">
                         <Trash2 size={14} />
@@ -2439,6 +2865,15 @@ async function optimizeImageForAttachment(file: File): Promise<{
                     <li key={entry.id}>
                       <Paperclip size={15} />
                       <span><strong>{entry.file_name}</strong><small>{Math.ceil(entry.file_size / 1024)} KB · {entry.uploaded_by_name}</small></span>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        title={`Visualizar ${entry.file_name}`}
+                        aria-label={`Visualizar ${entry.file_name}`}
+                        onClick={() => openMediaViewer(`internal-${entry.id}`)}
+                      >
+                        <Eye size={15} />
+                      </button>
                       <button className="icon-button" type="button" title={`Baixar ${entry.file_name}`} aria-label={`Baixar ${entry.file_name}`} onClick={() => void downloadAttachment(entry)}>
                         <Download size={15} />
                       </button>
@@ -2461,6 +2896,51 @@ async function optimizeImageForAttachment(file: File): Promise<{
           </div>
         )}
       </div>
+
+      {activePersonalActivityId !== null && (
+        <PersonalActivityDetailModal
+          activityId={activePersonalActivityId}
+          onClose={() => {
+            setActivePersonalActivityId(null)
+            setRefresh((value) => value + 1)
+          }}
+          onChanged={() => {
+            setRefresh((value) => value + 1)
+          }}
+        />
+      )}
+
+      {viewerOpen && (
+        <MediaViewerModal
+          items={allTicketMediaItems}
+          initialIndex={viewerInitialIndex}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+
+      {cancellingSchedule && (
+        <ProgrammingCancellationModal
+          appointment={{
+            id: cancellingSchedule.id,
+            ticket_id: ticket.id,
+            protocol: ticket.protocol,
+            subject: ticket.subject,
+            collaborator_id: cancellingSchedule.collaborator_id,
+            collaborator_name: cancellingSchedule.collaborator_name,
+            activity_description: cancellingSchedule.activity_description,
+            starts_at: cancellingSchedule.starts_at,
+            ends_at: cancellingSchedule.ends_at,
+            enterprise: cancellingSchedule.enterprise,
+            block: cancellingSchedule.block,
+            unit: cancellingSchedule.unit,
+          }}
+          onClose={() => setCancellingSchedule(null)}
+          onCancelled={() => {
+            setCancellingSchedule(null)
+            setRefresh((value) => value + 1)
+          }}
+        />
+      )}
     </section>
   )
 }

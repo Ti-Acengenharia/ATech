@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
+  BriefcaseBusiness,
   Calendar,
   CalendarDays,
   Check,
@@ -9,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  ClipboardList,
   Download,
+  ExternalLink,
   FileText,
   GripVertical,
   LayoutGrid,
@@ -59,6 +62,11 @@ interface PersonalActivity {
   attachmentsCount?: number
   checklistTotal?: number
   checklistDone?: number
+  ticketId?: string | null
+  ticketProtocol?: string | null
+  legalProcessId?: number | null
+  legalProcessTitle?: string | null
+  legalProcessNumber?: string | null
 }
 
 interface ActivityChecklistItem {
@@ -102,6 +110,11 @@ interface ActivityDraft {
   startDate: string
   dueDate: string
   tags: string[]
+  ticketId?: string | null
+  ticketProtocol?: string | null
+  legalProcessId?: number | null
+  legalProcessTitle?: string | null
+  legalProcessNumber?: string | null
 }
 
 const PRIORITY_CONFIG: Record<
@@ -409,6 +422,11 @@ export default function PersonalActivitiesPage({
       startDate: activity.startDate ?? '',
       dueDate: activity.dueDate ?? '',
       tags: safeTags,
+      ticketId: activity.ticketId,
+      ticketProtocol: activity.ticketProtocol,
+      legalProcessId: activity.legalProcessId,
+      legalProcessTitle: activity.legalProcessTitle,
+      legalProcessNumber: activity.legalProcessNumber,
     }
     draftSessionRef.current += 1
     closeRequestedSessionRef.current = null
@@ -1879,6 +1897,64 @@ export default function PersonalActivitiesPage({
             <div className="sheet-split-body">
               {/* Lado Esquerdo (65%): Conteúdo Principal */}
               <div className="sheet-main-column">
+                {(draft.ticketId || draft.legalProcessId) && (
+                  <div className="sheet-origin-badges" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                    {draft.ticketId && (
+                      <a
+                        href={`?page=tickets&ticketId=${encodeURIComponent(draft.ticketId)}`}
+                        className="sheet-origin-badge"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 10px',
+                          borderRadius: '999px',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                          backgroundColor: '#eff6ff',
+                          color: '#0f3b99',
+                          border: '1px solid #bfdbfe',
+                          textDecoration: 'none',
+                        }}
+                        title="Abrir chamado vinculado"
+                      >
+                        <ClipboardList size={13} />
+                        <span>
+                          Chamado {draft.ticketProtocol ? `#${draft.ticketProtocol}` : `ID ${draft.ticketId}`}
+                        </span>
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
+                    {draft.legalProcessId && (
+                      <a
+                        href={`?page=legal-processes&processId=${encodeURIComponent(String(draft.legalProcessId))}`}
+                        className="sheet-origin-badge"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 10px',
+                          borderRadius: '999px',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                          backgroundColor: '#fffbeb',
+                          color: '#b45309',
+                          border: '1px solid #fde68a',
+                          textDecoration: 'none',
+                        }}
+                        title="Abrir processo jurídico vinculado"
+                      >
+                        <BriefcaseBusiness size={13} />
+                        <span>
+                          Processo Jurídico #{draft.legalProcessId}
+                          {draft.legalProcessTitle ? ` · ${draft.legalProcessTitle}` : ''}
+                        </span>
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </div>
+                )}
+
                 <input
                   type="text"
                   className="sheet-title-input"

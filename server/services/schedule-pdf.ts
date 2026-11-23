@@ -28,6 +28,9 @@ export interface DailyAppointment {
   completed: boolean
   is_finalization: boolean
   completion_term_delivered: boolean
+  cancelled?: boolean
+  cancellation_reason_type?: string | null
+  cancellation_reason?: string | null
   programming_type: 'general' | 'foreman'
   collaborator_name: string
   collaborator_role: string
@@ -192,6 +195,9 @@ export async function fetchDailyProgrammingData(
               p.materials, p.equipment, p.tools, p.completed,
               COALESCE(p.is_finalization, FALSE) AS is_finalization,
               COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              COALESCE(p.cancelled, FALSE) AS cancelled,
+              p.cancellation_reason_type,
+              p.cancellation_reason,
               p.programming_type,
               c.name AS collaborator_name,
               c.role AS collaborator_role, r.label AS collaborator_role_label
@@ -480,16 +486,29 @@ export async function generateSchedulePdf({
             drawCollaboratorHeader(person, true)
           }
 
-          doc.setFillColor(235, 243, 249)
-          doc.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
-          doc.setFont('helvetica', 'bold')
-          doc.setFontSize(8.5)
-          doc.setTextColor(40, 91, 132)
-          doc.text(
-            `${displayTimePt(appointment.starts_at)}–${displayTimePt(appointment.ends_at)}`,
-            margin + 5,
-            y + 5.2,
-          )
+          if (appointment.cancelled) {
+            doc.setFillColor(254, 242, 242)
+            doc.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
+            doc.setFont('helvetica', 'bold')
+            doc.setFontSize(8.5)
+            doc.setTextColor(185, 28, 28)
+            doc.text(
+              `${displayTimePt(appointment.starts_at)}–${displayTimePt(appointment.ends_at)}  ·  [CANCELADA]${appointment.cancellation_reason ? ` (${appointment.cancellation_reason})` : ''}`,
+              margin + 5,
+              y + 5.2,
+            )
+          } else {
+            doc.setFillColor(235, 243, 249)
+            doc.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
+            doc.setFont('helvetica', 'bold')
+            doc.setFontSize(8.5)
+            doc.setTextColor(40, 91, 132)
+            doc.text(
+              `${displayTimePt(appointment.starts_at)}–${displayTimePt(appointment.ends_at)}`,
+              margin + 5,
+              y + 5.2,
+            )
+          }
 
           if (appointment.is_finalization) {
             y += 9.5

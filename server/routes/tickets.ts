@@ -1,13 +1,14 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin, requireAuth, requirePageAccess } from '../auth.js'
-import { APP_TIMEZONE } from '../config.js'
+import { APP_TIMEZONE, env } from '../config.js'
 import { pool, safeRollback } from '../db.js'
 import { decryptPersonalData, fingerprintPhoneQuery, isPersonalDataEncryptionConfigured } from '../services/personal-data.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 import { evaluateTicketWarranty } from '../services/warranties.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
 import { validateBinaryFileSignature } from '../services/file-validation.js'
+import { createUnifiedTicketTask, syncPersonalActivityFromSource } from '../services/unified-tasks.js'
 import {
   fetchAndImportCvcrmTicketByProtocol,
   fetchCvcrmTicketByProtocol,
@@ -45,6 +46,36 @@ function parseRepeatedTextFilter(url: string, key: string, maxLength: number) {
   const queryStart = url.indexOf('?')
   const values = new URLSearchParams(queryStart < 0 ? '' : url.slice(queryStart + 1)).getAll(key)
   return values.length ? parseTextFilter(values, maxLength) : []
+}
+
+function normalizeForSearch(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function tokenizeSearchPatterns(input: string): string[] {
+  return normalizeForSearch(input)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 15)
+    .map((token) => `%${token.replace(/[%_\\]/g, '\\$&')}%`)
+}
+
+function tokenizeSearchWords(input: string): string[] {
+  return normalizeForSearch(input)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 15)
+}
+
+const SQL_ACCENT_FROM = 'áàâãäéèêëíìîïóòôõöúùûüçñ'
+const SQL_ACCENT_TO = 'aaaaaeeeeiiiiooooouuuucn'
+function sqlUnaccentLower(expr: string): string {
+  return `translate(lower(${expr}), '${SQL_ACCENT_FROM}', '${SQL_ACCENT_TO}')`
 }
 
 const ticketIdSchema = z.coerce.number().int().positive()
@@ -226,7 +257,7 @@ router.get('/workflow', async (_req, res, next) => {
 router.get('/letters/search', async (req, res, next) => {
   const parsed = z.string().trim().max(100).catch('').parse(req.query.search)
   const customerName = z.string().trim().max(240).catch('').parse(req.query.customerName)
-  const term = `%${parsed}%`
+  const searchTokens = tokenizeSearchPatterns(parsed)
   try {
     const result = await pool.query<{
       id: string
@@ -296,14 +327,25 @@ router.get('/letters/search', async (req, res, next) => {
            stage.position = 7.1
            OR stage.name ~* '(^|[^[:digit:]])7[.,]1([^[:digit:]]|$)'
          )
-         AND ($1 = '' OR t.source_id::text ILIKE $2 OR t.protocol ILIKE $2
-           OR t.customer_name ILIKE $2 OR t.enterprise ILIKE $2
-           OR t.subject ILIKE $2 OR t.subsubject ILIKE $2
-         OR t.block ILIKE $2 OR t.unit ILIKE $2 OR t.description ILIKE $2)
-       AND ($3 = '' OR lower(btrim(t.customer_name)) = lower(btrim($3)))
+         AND (cardinality($1::text[]) = 0 OR NOT EXISTS (
+           SELECT 1
+           FROM unnest($1::text[]) AS tok(pattern)
+           WHERE ${sqlUnaccentLower(`
+             COALESCE(t.source_id::text, '') || ' ' ||
+             COALESCE(t.protocol, '') || ' ' ||
+             COALESCE(t.customer_name, '') || ' ' ||
+             COALESCE(t.enterprise, '') || ' ' ||
+             COALESCE(t.block, '') || ' ' ||
+             COALESCE(t.unit, '') || ' ' ||
+             COALESCE(t.subject, '') || ' ' ||
+             COALESCE(t.subsubject, '') || ' ' ||
+             COALESCE(t.description, '')
+           `)} NOT LIKE tok.pattern
+         ))
+       AND ($2 = '' OR lower(btrim(t.customer_name)) = lower(btrim($2)))
        ORDER BY lower(t.customer_name), t.enterprise, t.block, t.unit, t.source_id DESC
        `,
-      [parsed, term, customerName],
+      [searchTokens, customerName],
     )
     res.json({
       tickets: result.rows.map((ticket) => ({
@@ -513,6 +555,7 @@ interface FilterOptionsCacheEntry {
   data: {
     enterprises: string[]
     blocks: string[]
+    blockOptions: Array<{ value: string; label: string; meta: string }>
     units: string[]
     subjects: string[]
     subsubjects: string[]
@@ -585,18 +628,33 @@ router.get('/filter-options', async (_req, res, next) => {
            lower(min(clean_enterprise))`,
         [includeInactive],
       ),
-      pool.query<{ value: string }>(
-        `SELECT min(btrim(block)) AS value FROM tickets
-         WHERE ($1::boolean OR source_active = TRUE) AND btrim(block) <> ''
-           AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (enterprise IS NULL OR btrim(enterprise) = '')))
-         GROUP BY lower(btrim(block)) ORDER BY lower(min(btrim(block)))`,
+      pool.query<{ block_name: string; enterprise_name: string }>(
+        `SELECT min(btrim(block)) AS block_name,
+                min(clean_enterprise) AS enterprise_name
+         FROM (
+           SELECT btrim(block) AS block,
+                  CASE
+                    WHEN enterprise IS NULL OR btrim(enterprise) = '' THEN 'Sem empreendimento'
+                    ELSE btrim(enterprise)
+                  END AS clean_enterprise
+           FROM tickets
+           WHERE ($1::boolean OR source_active = TRUE)
+             AND btrim(block) <> ''
+             AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (enterprise IS NULL OR btrim(enterprise) = '')))
+         ) t
+         GROUP BY lower(btrim(block)), lower(clean_enterprise)
+         ORDER BY lower(min(btrim(block))), lower(min(clean_enterprise))`,
         [includeInactive, selectedEnterprises],
       ),
       pool.query<{ value: string }>(
         `SELECT min(btrim(unit)) AS value FROM tickets
          WHERE ($1::boolean OR source_active = TRUE) AND btrim(unit) <> ''
            AND (cardinality($2::text[]) = 0 OR lower(btrim(enterprise)) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (enterprise IS NULL OR btrim(enterprise) = '')))
-           AND (cardinality($3::text[]) = 0 OR lower(btrim(block)) = ANY($3::text[]))
+           AND (
+             cardinality($3::text[]) = 0
+             OR lower(btrim(block)) = ANY($3::text[])
+             OR (lower(btrim(block)) || '@@' || lower(COALESCE(NULLIF(btrim(enterprise), ''), 'sem empreendimento'))) = ANY($3::text[])
+           )
          GROUP BY lower(btrim(unit)) ORDER BY lower(min(btrim(unit)))`,
         [includeInactive, selectedEnterprises, selectedBlocks],
       ),
@@ -663,9 +721,24 @@ router.get('/filter-options', async (_req, res, next) => {
         )
         : Promise.resolve({ rows: [] as { value: string; label: string }[] }),
     ])
+    const blockCounts = new Map<string, number>()
+    for (const row of blocks.rows) {
+      const key = row.block_name.toLocaleLowerCase('pt-BR')
+      blockCounts.set(key, (blockCounts.get(key) ?? 0) + 1)
+    }
+    const blockOptions = blocks.rows.map((row) => {
+      const count = blockCounts.get(row.block_name.toLocaleLowerCase('pt-BR')) ?? 0
+      return {
+        value: count > 1 ? `${row.block_name}@@${row.enterprise_name}` : row.block_name,
+        label: row.block_name,
+        meta: row.enterprise_name,
+      }
+    })
+    const distinctBlocks = Array.from(new Set(blocks.rows.map((row) => row.block_name)))
     const responsePayload = {
       enterprises: enterprises.rows.map((row) => row.value),
-      blocks: blocks.rows.map((row) => row.value),
+      blocks: distinctBlocks,
+      blockOptions,
       units: units.rows.map((row) => row.value),
       subjects: subjects.rows.map((row) => row.value),
       subsubjects: subsubjects.rows.map((row) => row.value),
@@ -698,8 +771,8 @@ router.get('/dashboard', async (req, res, next) => {
     .optional()
     .safeParse(typeof req.query.referenceMonth === 'string' && req.query.referenceMonth ? req.query.referenceMonth : undefined)
   if ([enterprises, blocks, units, subjects, subsubjects, ticketTypes].some((filter) => filter === null) ||
-      !customer.success || !fromYear.success || !referenceMonth.success ||
-      (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium' && type !== 'internal')) {
+    !customer.success || !fromYear.success || !referenceMonth.success ||
+    (ticketTypes ?? []).some((type) => type !== 'client' && type !== 'condominium' && type !== 'internal')) {
     res.status(400).json({ error: 'Um ou mais filtros do dashboard são inválidos.' })
     return
   }
@@ -709,6 +782,7 @@ router.get('/dashboard', async (req, res, next) => {
   const selectedSubjects = subjects ?? []
   const selectedSubsubjects = subsubjects ?? []
   const selectedTicketTypes = ticketTypes ?? []
+  const customerTokens = tokenizeSearchPatterns(customer.data)
   const targetMonth = referenceMonth.data ?? null
   const isFresh = req.query.fresh === 'true' || req.headers['cache-control'] === 'no-cache'
 
@@ -716,7 +790,7 @@ router.get('/dashboard', async (req, res, next) => {
     selectedEnterprises.slice().sort().join(','),
     selectedBlocks.slice().sort().join(','),
     selectedUnits.slice().sort().join(','),
-    customer.data,
+    customerTokens.join(','),
     selectedSubjects.slice().sort().join(','),
     selectedSubsubjects.slice().sort().join(','),
     selectedTicketTypes.slice().sort().join(','),
@@ -765,9 +839,20 @@ router.get('/dashboard', async (req, res, next) => {
            OR ($9::text IS NOT NULL AND $9::text <> '' AND NOT t.source_active AND t.source_modified_at >= ($9::text || '-01')::date)
          )
            AND (cardinality($1::text[]) = 0 OR lower(btrim(COALESCE(t.enterprise, ''))) = ANY($1::text[]) OR ('sem empreendimento' = ANY($1::text[]) AND (t.enterprise IS NULL OR btrim(t.enterprise) = '')))
-           AND (cardinality($2::text[]) = 0 OR lower(btrim(t.block)) = ANY($2::text[]))
+           AND (
+             cardinality($2::text[]) = 0
+             OR lower(btrim(t.block)) = ANY($2::text[])
+             OR (lower(btrim(t.block)) || '@@' || lower(COALESCE(NULLIF(btrim(t.enterprise), ''), 'sem empreendimento'))) = ANY($2::text[])
+           )
            AND (cardinality($3::text[]) = 0 OR lower(btrim(t.unit)) = ANY($3::text[]))
-           AND ($4 = '' OR lower(t.customer_name) LIKE '%' || lower($4) || '%')
+           AND (
+             cardinality($4::text[]) = 0
+             OR NOT EXISTS (
+               SELECT 1
+               FROM unnest($4::text[]) AS tok(pattern)
+               WHERE ${sqlUnaccentLower("COALESCE(t.customer_name, '')")} NOT LIKE tok.pattern
+             )
+           )
            AND (cardinality($5::text[]) = 0 OR
              (EXISTS (
                SELECT 1
@@ -921,7 +1006,7 @@ router.get('/dashboard', async (req, res, next) => {
        LEFT JOIN month_aggregates ma ON TRUE
        LEFT JOIN closures_aggregates ca ON TRUE`,
       [
-        selectedEnterprises, selectedBlocks, selectedUnits, customer.data, selectedSubjects, selectedSubsubjects,
+        selectedEnterprises, selectedBlocks, selectedUnits, customerTokens, selectedSubjects, selectedSubsubjects,
         selectedTicketTypes, fromYear.data, targetMonth,
       ],
     )
@@ -982,8 +1067,9 @@ router.get('/', async (req, res, next) => {
     res.status(400).json({ error: 'Identificador de chamado inválido.' })
     return
   }
-  const term = search ? `%${search.toLowerCase()}%` : ''
-  const customerTerm = customerName ? `%${customerName.toLowerCase()}%` : ''
+  const searchTokens = tokenizeSearchPatterns(search)
+  const searchWords = tokenizeSearchWords(search)
+  const customerTokens = tokenizeSearchPatterns(customerName)
   const phoneToken = phoneLookup ? fingerprintPhoneQuery(phoneDigits) : ''
 
   try {
@@ -1054,13 +1140,35 @@ router.get('/', async (req, res, next) => {
          LIMIT 1
        ) warranty ON TRUE
        WHERE ($9::boolean OR t.source_active = TRUE)
-         AND ($1 = '' OR lower(t.protocol) LIKE $1 OR lower(t.customer_name) LIKE $1
-           OR lower(t.enterprise) LIKE $1 OR lower(t.subject) LIKE $1 OR lower(t.subsubject) LIKE $1
-           OR lower(t.description) LIKE $1
-           OR t.source_id::text LIKE $1
+         AND (
+           cardinality($1::text[]) = 0
+           OR NOT EXISTS (
+             SELECT 1
+             FROM unnest($1::text[]) AS tok(pattern)
+             WHERE ${sqlUnaccentLower(`
+               COALESCE(t.source_id::text, '') || ' ' ||
+               COALESCE(t.protocol, '') || ' ' ||
+               COALESCE(t.customer_name, '') || ' ' ||
+               COALESCE(t.enterprise, '') || ' ' ||
+               COALESCE(t.block, '') || ' ' ||
+               COALESCE(t.unit, '') || ' ' ||
+               COALESCE(t.subject, '') || ' ' ||
+               COALESCE(t.subsubject, '') || ' ' ||
+               COALESCE(t.description, '')
+             `)} NOT LIKE tok.pattern
+           )
            OR ($10::boolean AND (t.customer_phone_tokens @> ARRAY[$14::text]
-             OR (t.customer_phone_tokens IS NULL AND t.customer_phone_ciphertext IS NOT NULL))))
-         AND ($13 <> 'id' OR t.source_id::text LIKE $1 OR lower(t.protocol) LIKE $1)
+             OR (t.customer_phone_tokens IS NULL AND t.customer_phone_ciphertext IS NOT NULL)))
+         )
+         AND (
+           $13 <> 'id'
+           OR cardinality($1::text[]) = 0
+           OR NOT EXISTS (
+             SELECT 1
+             FROM unnest($1::text[]) AS tok(pattern)
+             WHERE ${sqlUnaccentLower("COALESCE(t.source_id::text, '') || ' ' || COALESCE(t.protocol, '')")} NOT LIKE tok.pattern
+           )
+         )
          AND (cardinality($11::text[]) = 0 OR
            CASE
              WHEN btrim(t.block) <> '' AND btrim(t.unit) <> '' THEN 'client'
@@ -1069,9 +1177,20 @@ router.get('/', async (req, res, next) => {
              ELSE 'internal'
            END = ANY($11::text[]))
          AND (cardinality($2::text[]) = 0 OR lower(btrim(COALESCE(t.enterprise, ''))) = ANY($2::text[]) OR ('sem empreendimento' = ANY($2::text[]) AND (t.enterprise IS NULL OR btrim(t.enterprise) = '')))
-         AND (cardinality($3::text[]) = 0 OR lower(btrim(t.block)) = ANY($3::text[]))
+         AND (
+           cardinality($3::text[]) = 0
+           OR lower(btrim(t.block)) = ANY($3::text[])
+           OR (lower(btrim(t.block)) || '@@' || lower(COALESCE(NULLIF(btrim(t.enterprise), ''), 'sem empreendimento'))) = ANY($3::text[])
+         )
          AND (cardinality($4::text[]) = 0 OR lower(btrim(t.unit)) = ANY($4::text[]))
-         AND ($5 = '' OR lower(t.customer_name) LIKE $5)
+         AND (
+           cardinality($5::text[]) = 0
+           OR NOT EXISTS (
+             SELECT 1
+             FROM unnest($5::text[]) AS tok(pattern)
+             WHERE ${sqlUnaccentLower("COALESCE(t.customer_name, '')")} NOT LIKE tok.pattern
+           )
+         )
          AND (cardinality($6::text[]) = 0 OR (t.source_subject_id = 16 AND 'assistência técnica' = ANY($6::text[]))
            OR lower(btrim(t.subject)) = ANY($6::text[]))
          AND (cardinality($7::text[]) = 0 OR lower(btrim(t.subsubject)) = ANY($7::text[]))
@@ -1081,7 +1200,7 @@ router.get('/', async (req, res, next) => {
                 t.opened_at ASC NULLS LAST, t.protocol
        LIMIT 3500`,
       [
-        term, selectedEnterprises, selectedBlocks, selectedUnits, customerTerm, selectedSubjects, selectedSubsubjects,
+        searchTokens, selectedEnterprises, selectedBlocks, selectedUnits, customerTokens, selectedSubjects, selectedSubsubjects,
         requestedId?.success ? requestedId.data : null,
         includeInactive,
         phoneLookup,
@@ -1095,13 +1214,25 @@ router.get('/', async (req, res, next) => {
 
     const matchedTickets = phoneLookup
       ? result.rows.filter((ticket) => {
-        const matchesText = [ticket.source_id, ticket.protocol, ticket.customer_name, ticket.enterprise, ticket.subject, ticket.subsubject]
-          .some((value) => value.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')))
+        const haystack = normalizeForSearch(
+          [
+            ticket.source_id,
+            ticket.protocol,
+            ticket.customer_name,
+            ticket.enterprise,
+            ticket.block,
+            ticket.unit,
+            ticket.subject,
+            ticket.subsubject,
+            ticket.description,
+          ].join(' '),
+        )
+        const matchesText = searchWords.length > 0 && searchWords.every((word) => haystack.includes(word))
         const matchesPhone = ticket.customer_phone_ciphertext
           ? decryptPersonalData(ticket.customer_phone_ciphertext, 'ticket-phone').replace(/\D/g, '').includes(phoneDigits)
           : false
         return matchesText || matchesPhone
-        })
+      })
       : result.rows
 
     res.json({
@@ -1135,7 +1266,7 @@ router.get('/', async (req, res, next) => {
           ...(ticket.block.trim() && ticket.unit.trim()
             ? [{ id: 'system-client', name: 'Cliente', color: '#3178a8' }]
             : !ticket.block.trim() && !ticket.unit.trim() && ticket.enterprise.trim() &&
-                ticket.source_creator_name.toLocaleLowerCase('pt-BR').includes(ticket.enterprise.toLocaleLowerCase('pt-BR'))
+              ticket.source_creator_name.toLocaleLowerCase('pt-BR').includes(ticket.enterprise.toLocaleLowerCase('pt-BR'))
               ? [{ id: 'system-condominium', name: 'Condomínio', color: '#7862a8' }]
               : [{ id: 'system-internal', name: 'Interno', color: '#64748b' }]),
           ...ticket.custom_tags,
@@ -1312,8 +1443,8 @@ router.post('/:id/attachments', async (req, res, next) => {
   ])
   const content = Buffer.from(parsed.data.contentBase64, 'base64')
   if (!safeName || !allowedTypes.has(contentType) || content.length === 0 ||
-      content.length > 5 * 1024 * 1024 ||
-      content.toString('base64') !== parsed.data.contentBase64) {
+    content.length > 5 * 1024 * 1024 ||
+    content.toString('base64') !== parsed.data.contentBase64) {
     res.status(400).json({ error: 'Tipo de arquivo não permitido ou arquivo maior que 5 MiB.' })
     return
   }
@@ -1385,10 +1516,66 @@ router.get('/:id/attachments/:attachmentId', async (req, res, next) => {
       return
     }
     const asciiName = attachment.file_name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
+    const isDownload = req.query.download === '1'
     res.setHeader('Content-Type', attachment.content_type)
-    res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.file_name)}`)
+    res.setHeader('Content-Disposition', `${isDownload ? 'attachment' : 'inline'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.file_name)}`)
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.send(attachment.content)
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/:id/cv-attachment-view', async (req, res, next) => {
+  const ticketId = ticketIdSchema.safeParse(req.params.id)
+  if (!ticketId.success) {
+    res.status(400).json({ error: 'Identificador de chamado inválido.' })
+    return
+  }
+  const fileUrl = typeof req.query.url === 'string' ? req.query.url.trim() : ''
+  if (!fileUrl) {
+    res.status(400).json({ error: 'URL do anexo não informada.' })
+    return
+  }
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(fileUrl)
+  } catch {
+    res.status(400).json({ error: 'URL inválida.' })
+    return
+  }
+  if (parsedUrl.protocol !== 'https:' || (!parsedUrl.hostname.endsWith('.cvcrm.com.br') && parsedUrl.hostname !== 'cvcrm.com.br')) {
+    res.status(400).json({ error: 'Origem do anexo não permitida.' })
+    return
+  }
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': 'ATech/2.5',
+    }
+    if (env.CVCRM_API_EMAIL && env.CVCRM_API_TOKEN) {
+      headers.email = env.CVCRM_API_EMAIL
+      headers.token = env.CVCRM_API_TOKEN
+    }
+    const cvResponse = await fetch(parsedUrl.toString(), {
+      headers,
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!cvResponse.ok) {
+      res.status(cvResponse.status).json({ error: 'Não foi possível carregar o anexo do CVCRM.' })
+      return
+    }
+    const contentType = cvResponse.headers.get('content-type') || 'application/octet-stream'
+    const fileName = typeof req.query.fileName === 'string' && req.query.fileName.trim()
+      ? req.query.fileName.trim()
+      : parsedUrl.pathname.split('/').pop() || 'anexo'
+    const asciiName = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
+    const isDownload = req.query.download === '1'
+    res.setHeader('Content-Type', contentType)
+    res.setHeader('Content-Disposition', `${isDownload ? 'attachment' : 'inline'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`)
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+
+    const arrayBuffer = await cvResponse.arrayBuffer()
+    res.send(Buffer.from(arrayBuffer))
   } catch (error) {
     next(error)
   }
@@ -1455,8 +1642,8 @@ router.post('/:id/completion-terms', async (req, res, next) => {
 
   const content = Buffer.from(parsed.data.contentBase64, 'base64')
   if (content.length === 0 || content.length > 5 * 1024 * 1024 ||
-      content.toString('base64') !== parsed.data.contentBase64 ||
-      content.subarray(0, 5).toString('ascii') !== '%PDF-') {
+    content.toString('base64') !== parsed.data.contentBase64 ||
+    content.subarray(0, 5).toString('ascii') !== '%PDF-') {
     res.status(400).json({ error: 'O termo precisa ser um PDF válido de até 5 MiB.' })
     return
   }
@@ -1747,17 +1934,95 @@ router.get('/:id/subtasks', async (req, res, next) => {
     res.status(400).json({ error: 'Identificador de chamado inválido.' })
     return
   }
+  const client = await pool.connect()
   try {
-    const result = await pool.query(
+    // Se houver alguma tarefa legada sem vínculo de atividade pessoal, garante o vínculo automaticamente
+    const unlinked = await client.query<{
+      id: string
+      title: string
+      due_at: Date | null
+      is_done: boolean
+      created_by: string | null
+    }>(
+      `SELECT id::text, title, due_at, is_done, created_by::text
+       FROM ticket_subtasks
+       WHERE ticket_id = $1 AND personal_activity_id IS NULL`,
+      [ticketId.data],
+    )
+    if (unlinked.rowCount) {
+      await client.query('BEGIN')
+      const ticketInfo = await client.query<{ protocol: string }>(
+        'SELECT protocol FROM tickets WHERE source_id = $1',
+        [ticketId.data],
+      )
+      const protocol = String(ticketInfo.rows[0]?.protocol || ticketId.data)
+      const tag = `Chamado #${protocol.trim() || ticketId.data}`.slice(0, 40)
+      for (const row of unlinked.rows) {
+        const ownerId = Number(row.created_by || req.session.user!.id)
+        await client.query(
+          `INSERT INTO personal_activity_columns (user_id, name, position)
+           SELECT $1, defaults.name, defaults.position
+           FROM (VALUES ('Novo', 0), ('Em andamento', 1), ('Pendente Validação', 2), ('Concluído', 3)) AS defaults(name, position)
+           WHERE NOT EXISTS (SELECT 1 FROM personal_activity_columns WHERE user_id = $1)`,
+          [ownerId],
+        )
+        await client.query(
+          `INSERT INTO personal_activity_tags (user_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [ownerId, tag],
+        )
+        const colRes = await client.query<{ id: string }>(
+          row.is_done
+            ? `SELECT id::text FROM personal_activity_columns WHERE user_id = $1 ORDER BY (name ~* 'conclu') DESC, position DESC, id DESC LIMIT 1`
+            : `SELECT id::text FROM personal_activity_columns WHERE user_id = $1 ORDER BY position, id LIMIT 1`,
+          [ownerId],
+        )
+        if (colRes.rowCount) {
+          const actInsert = await client.query<{ id: string }>(
+            `INSERT INTO personal_activities (user_id, column_id, title, description, priority, due_date, tags, ticket_id)
+             VALUES ($1, $2, $3, '', 'medium', $4, $5, $6)
+             RETURNING id::text`,
+            [
+              ownerId,
+              colRes.rows[0].id,
+              row.title.trim().slice(0, 240),
+              row.due_at ? row.due_at.toISOString().slice(0, 10) : null,
+              [tag],
+              ticketId.data,
+            ],
+          )
+          await client.query(
+            `UPDATE ticket_subtasks SET personal_activity_id = $1 WHERE id = $2`,
+            [actInsert.rows[0].id, row.id],
+          )
+        }
+      }
+      await client.query('COMMIT')
+    }
+
+    const result = await client.query(
       `SELECT st.id, st.title, st.assigned_to, st.due_at, st.is_done, st.created_at,
-              u.display_name AS assignee_name
-       FROM ticket_subtasks st LEFT JOIN users u ON u.id = st.assigned_to
-       WHERE st.ticket_id = $1 ORDER BY st.created_at, st.id`,
+              st.personal_activity_id::int AS personal_activity_id,
+              u.display_name AS assignee_name,
+              creator.display_name AS creator_name,
+              COALESCE(pa.priority, 'medium') AS priority,
+              COALESCE((SELECT count(*)::int FROM personal_activity_comments c WHERE c.activity_id = st.personal_activity_id), 0) AS comments_count,
+              COALESCE((SELECT count(*)::int FROM personal_activity_attachments f WHERE f.activity_id = st.personal_activity_id), 0) AS attachments_count,
+              COALESCE((SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = st.personal_activity_id), 0) AS checklist_total,
+              COALESCE((SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = st.personal_activity_id AND ch.is_done = TRUE), 0) AS checklist_done
+       FROM ticket_subtasks st
+       LEFT JOIN users u ON u.id = st.assigned_to
+       LEFT JOIN users creator ON creator.id = st.created_by
+       LEFT JOIN personal_activities pa ON pa.id = st.personal_activity_id
+       WHERE st.ticket_id = $1
+       ORDER BY st.created_at, st.id`,
       [ticketId.data],
     )
     res.json({ subtasks: result.rows })
   } catch (error) {
+    await safeRollback(client)
     next(error)
+  } finally {
+    client.release()
   }
 })
 
@@ -1771,24 +2036,32 @@ router.post('/:id/subtasks', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const result = await client.query<{ id: string }>(
-      `INSERT INTO ticket_subtasks (ticket_id, title, assigned_to, due_at, created_by)
-       SELECT $1, $2, $3, $4, $5 WHERE EXISTS (
-         SELECT 1 FROM tickets WHERE source_id = $1 AND source_active = TRUE
-       ) RETURNING id`,
-      [ticketId.data, parsed.data.title, parsed.data.assignedTo, parsed.data.dueAt, req.session.user!.id],
+    const ticketCheck = await client.query<{ protocol: string }>(
+      'SELECT protocol FROM tickets WHERE source_id = $1 AND source_active = TRUE',
+      [ticketId.data],
     )
-    if (!result.rowCount) {
+    if (!ticketCheck.rowCount) {
       await client.query('ROLLBACK')
       res.status(404).json({ error: 'Chamado ativo não encontrado.' })
       return
     }
-    await recordTicketActivity(client, ticketId.data, req.session.user!.id, 'subtask_added', `Criou a subtarefa "${parsed.data.title}".`, {
-      subtaskId: result.rows[0].id,
+    const { subtaskId, personalActivityId } = await createUnifiedTicketTask(client, {
+      ticketId: ticketId.data,
+      protocol: ticketCheck.rows[0].protocol,
+      title: parsed.data.title,
+      assignedTo: parsed.data.assignedTo,
+      dueAt: parsed.data.dueAt,
+      createdBy: req.session.user!.id,
+    })
+    await recordTicketActivity(client, ticketId.data, req.session.user!.id, 'subtask_added', `Criou a tarefa "${parsed.data.title}".`, {
+      subtaskId,
+      personalActivityId,
       title: parsed.data.title,
     })
     await client.query('COMMIT')
-    res.status(201).json({ id: result.rows[0].id })
+    void broadcastSyncEvent({ scope: 'tickets', action: 'subtask-added', entityId: ticketId.data })
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'create' })
+    res.status(201).json({ id: subtaskId, personalActivityId })
   } catch (error) {
     await client.query('ROLLBACK')
     next(error)
@@ -1800,34 +2073,95 @@ router.post('/:id/subtasks', async (req, res, next) => {
 router.patch('/:id/subtasks/:subtaskId', async (req, res, next) => {
   const ticketId = ticketIdSchema.safeParse(req.params.id)
   const subtaskId = ticketIdSchema.safeParse(req.params.subtaskId)
-  const isDone = z.boolean().safeParse(req.body?.isDone)
-  if (!ticketId.success || !subtaskId.success || !isDone.success) {
-    res.status(400).json({ error: 'Atualização de subtarefa inválida.' })
+  const isDone = z.boolean().optional().safeParse(req.body?.isDone)
+  const title = z.string().trim().min(1).max(300).optional().safeParse(req.body?.title)
+  if (!ticketId.success || !subtaskId.success || !isDone.success || !title.success || (isDone.data === undefined && title.data === undefined)) {
+    res.status(400).json({ error: 'Atualização de tarefa inválida.' })
     return
   }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const result = await client.query<{ title: string; is_done: boolean }>(
-      `UPDATE ticket_subtasks SET is_done = $1, updated_at = now()
-       WHERE id = $2 AND ticket_id = $3 RETURNING title, is_done`,
-      [isDone.data, subtaskId.data, ticketId.data],
+    const result = await client.query<{ title: string; is_done: boolean; personal_activity_id: string | null }>(
+      `UPDATE ticket_subtasks
+       SET is_done = COALESCE($1, is_done),
+           title = COALESCE($2, title),
+           updated_at = now()
+       WHERE id = $3 AND ticket_id = $4
+       RETURNING title, is_done, personal_activity_id::text`,
+      [isDone.data ?? null, title.data ?? null, subtaskId.data, ticketId.data],
     )
     if (!result.rowCount) {
       await client.query('ROLLBACK')
-      res.status(404).json({ error: 'Subtarefa não encontrada.' })
+      res.status(404).json({ error: 'Tarefa não encontrada.' })
       return
+    }
+    const row = result.rows[0]
+    if (row.personal_activity_id) {
+      await syncPersonalActivityFromSource(client, {
+        personalActivityId: row.personal_activity_id,
+        title: title.data,
+        isDone: isDone.data,
+      })
+    }
+    if (isDone.data !== undefined) {
+      await recordTicketActivity(
+        client,
+        ticketId.data,
+        req.session.user!.id,
+        'subtask_updated',
+        `${row.is_done ? 'Concluiu' : 'Reabriu'} a tarefa "${row.title}".`,
+        { subtaskId: subtaskId.data, isDone: row.is_done },
+      )
+    }
+    await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.delete('/:id/subtasks/:subtaskId', async (req, res, next) => {
+  const ticketId = ticketIdSchema.safeParse(req.params.id)
+  const subtaskId = ticketIdSchema.safeParse(req.params.subtaskId)
+  if (!ticketId.success || !subtaskId.success) {
+    res.status(400).json({ error: 'Identificador de tarefa inválido.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query<{ title: string; personal_activity_id: string | null }>(
+      `DELETE FROM ticket_subtasks
+       WHERE id = $1 AND ticket_id = $2
+       RETURNING title, personal_activity_id::text`,
+      [subtaskId.data, ticketId.data],
+    )
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Tarefa não encontrada.' })
+      return
+    }
+    const row = result.rows[0]
+    if (row.personal_activity_id) {
+      await client.query('DELETE FROM personal_activities WHERE id = $1', [row.personal_activity_id])
     }
     await recordTicketActivity(
       client,
       ticketId.data,
       req.session.user!.id,
       'subtask_updated',
-      `${result.rows[0].is_done ? 'Concluiu' : 'Reabriu'} a subtarefa "${result.rows[0].title}".`,
-      { subtaskId: subtaskId.data, isDone: result.rows[0].is_done },
+      `Excluiu a tarefa "${row.title}".`,
+      { subtaskId: subtaskId.data },
     )
     await client.query('COMMIT')
     void broadcastSyncEvent({ scope: 'tickets', action: 'enterprise-address' })
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')

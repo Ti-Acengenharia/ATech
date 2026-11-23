@@ -5,6 +5,8 @@ import { requireAuth, requirePageAccess } from '../auth.js'
 import { pool } from '../db.js'
 import { recordAuditLog } from '../services/audit-log.js'
 import { validateBinaryFileSignature } from '../services/file-validation.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
+import { createUnifiedLegalTask, syncPersonalActivityFromSource } from '../services/unified-tasks.js'
 
 const router = Router()
 const idSchema = z.coerce.number().int().positive()
@@ -45,6 +47,7 @@ const processSchema = z.object({
   })).max(100),
   items: z.array(z.object({
     id: z.number().int().positive().optional(),
+    personalActivityId: z.number().int().positive().nullable().optional(),
     title: z.string().trim().min(1).max(500),
     isDone: z.boolean(),
   })).max(100),
@@ -663,10 +666,19 @@ router.get('/:id', async (req, res, next) => {
                         FROM legal_process_children c WHERE c.process_id = p.id), '[]'::json) AS children,
               COALESCE((SELECT json_agg(json_build_object(
                                         'id', i.id::int,
+                                        'personalActivityId', i.personal_activity_id::int,
                                         'title', i.title,
-                                        'isDone', i.is_done)
+                                        'isDone', i.is_done,
+                                        'priority', COALESCE(pa.priority, 'medium'),
+                                        'dueDate', pa.due_date::text,
+                                        'commentsCount', COALESCE((SELECT count(*)::int FROM personal_activity_comments pac WHERE pac.activity_id = i.personal_activity_id), 0),
+                                        'attachmentsCount', COALESCE((SELECT count(*)::int FROM personal_activity_attachments paa WHERE paa.activity_id = i.personal_activity_id), 0),
+                                        'checklistTotal', COALESCE((SELECT count(*)::int FROM personal_activity_checklists pach WHERE pach.activity_id = i.personal_activity_id), 0),
+                                        'checklistDone', COALESCE((SELECT count(*)::int FROM personal_activity_checklists pach WHERE pach.activity_id = i.personal_activity_id AND pach.is_done = TRUE), 0))
                                         ORDER BY i.position, i.id)
-                        FROM legal_process_items i WHERE i.process_id = p.id), '[]'::json) AS items,
+                        FROM legal_process_items i
+                        LEFT JOIN personal_activities pa ON pa.id = i.personal_activity_id
+                        WHERE i.process_id = p.id), '[]'::json) AS items,
               COALESCE((SELECT json_agg(json_build_object(
                 'id', c.id::int, 'body', c.body, 'parentCommentId', c.parent_comment_id::int,
                 'authorId', c.author_id::int, 'authorName', u.display_name,
@@ -786,13 +798,16 @@ router.post('/', async (req, res, next) => {
       )
     }
     for (const [position, item] of values.items.entries()) {
-      await client.query(
-        `INSERT INTO legal_process_items (process_id, title, is_done, position)
-         VALUES ($1, $2, $3, $4)`,
-        [processId, item.title, item.isDone, position],
-      )
+      await createUnifiedLegalTask(client, {
+        processId,
+        title: item.title,
+        isDone: item.isDone,
+        position,
+        createdBy: req.session.user!.id,
+      })
     }
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'create' })
     res.status(201).json({ id: processId })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -886,15 +901,68 @@ router.put('/:id', async (req, res, next) => {
         [processId.data, child.processNumber, child.description, child.statusId, child.movementDate, child.isDone, position],
       )
     }
-    await client.query('DELETE FROM legal_process_items WHERE process_id = $1', [processId.data])
+    const existingItemsRes = await client.query<{
+      id: number
+      title: string
+      is_done: boolean
+      personal_activity_id: number | null
+    }>(
+      `SELECT id::int AS id, title, is_done, personal_activity_id::int AS personal_activity_id
+       FROM legal_process_items
+       WHERE process_id = $1
+       ORDER BY position, id`,
+      [processId.data],
+    )
+    const processInfo = await client.query<{ is_demo: boolean }>(
+      'SELECT is_demo FROM legal_processes WHERE id = $1',
+      [processId.data],
+    )
+    const isDemo = Boolean(processInfo.rows[0]?.is_demo)
+
+    const existingById = new Map(existingItemsRes.rows.map((r) => [r.id, r]))
+    const keptItemIds = new Set<number>()
+
     for (const [position, item] of values.items.entries()) {
-      await client.query(
-        `INSERT INTO legal_process_items (process_id, title, is_done, position)
-         VALUES ($1, $2, $3, $4)`,
-        [processId.data, item.title, item.isDone, position],
-      )
+      const matched = item.id ? existingById.get(item.id) : undefined
+      if (matched) {
+        keptItemIds.add(matched.id)
+        await client.query(
+          `UPDATE legal_process_items
+           SET title = $1, is_done = $2, position = $3
+           WHERE id = $4 AND process_id = $5`,
+          [item.title, item.isDone, position, matched.id, processId.data],
+        )
+        if (matched.personal_activity_id) {
+          await syncPersonalActivityFromSource(client, {
+            personalActivityId: matched.personal_activity_id,
+            title: item.title,
+            isDone: item.isDone,
+          })
+        }
+      } else {
+        const created = await createUnifiedLegalTask(client, {
+          processId: processId.data,
+          title: item.title,
+          isDone: item.isDone,
+          position,
+          createdBy: req.session.user!.id,
+          isDemo,
+        })
+        keptItemIds.add(created.itemId)
+      }
     }
+
+    for (const oldItem of existingItemsRes.rows) {
+      if (!keptItemIds.has(oldItem.id)) {
+        await client.query('DELETE FROM legal_process_items WHERE id = $1', [oldItem.id])
+        if (oldItem.personal_activity_id) {
+          await client.query('DELETE FROM personal_activities WHERE id = $1', [oldItem.personal_activity_id])
+        }
+      }
+    }
+
     await client.query('COMMIT')
+    void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')

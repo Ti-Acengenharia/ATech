@@ -147,7 +147,7 @@ router.use((req, res, next) => {
       return
     }
     const legalReadPath = req.method === 'GET' &&
-      ['/legal-processes', '/collaborators', '/availability'].includes(req.path)
+      ['/legal-processes', '/collaborators', '/availability', '/week'].includes(req.path)
     const legalCreate = req.method === 'POST' && req.path === '/' && req.body?.activityType === 'legal_process'
     if (hasLegalAccess && (legalReadPath || legalCreate)) {
       next()
@@ -174,7 +174,8 @@ router.get('/collaborators', async (_req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT c.id::text AS id, c.name, c.nickname, c.role, r.label AS role_label,
-              TRUE AS is_active, c.is_on_leave
+              TRUE AS is_active, c.is_on_leave,
+              CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS photo_url
        FROM collaborators c
        JOIN collaborator_roles r ON r.role_key = c.role
        WHERE c.termination_date IS NULL OR c.termination_date > CURRENT_DATE
@@ -382,6 +383,12 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       completed: boolean
       is_finalization: boolean
       completion_term_delivered: boolean
+      cancelled: boolean
+      cancellation_reason_type: string | null
+      cancellation_reason: string | null
+      cancellation_reassigned_to: string | null
+      cancellation_reassigned_name: string | null
+      cancelled_at: string | null
       programming_type: 'general' | 'foreman'
       collaborator_name: string
       collaborator_role: string
@@ -396,6 +403,12 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
               p.materials, p.equipment, p.tools, p.completed,
               COALESCE(p.is_finalization, FALSE) AS is_finalization,
               COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              COALESCE(p.cancelled, FALSE) AS cancelled,
+              p.cancellation_reason_type,
+              p.cancellation_reason,
+              p.cancellation_reassigned_to::text AS cancellation_reassigned_to,
+              c2.name AS cancellation_reassigned_name,
+              p.cancelled_at,
               p.programming_type,
               c.name AS collaborator_name,
               c.role AS collaborator_role, r.label AS collaborator_role_label,
@@ -405,6 +418,7 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
        LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
        JOIN collaborators c ON c.id = p.collaborator_id
        JOIN collaborator_roles r ON r.role_key = c.role
+       LEFT JOIN collaborators c2 ON c2.id = p.cancellation_reassigned_to
        WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
          AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
          AND p.programming_type = $2
@@ -454,6 +468,193 @@ router.get('/', async (req, res, next) => {
   }
 })
 
+router.get('/week', async (req, res, next) => {
+  const startDate = dateSchema.safeParse(req.query.startDate)
+  const endDate = dateSchema.safeParse(req.query.endDate)
+  if (!startDate.success || !endDate.success || !isRangeWithinLimit(startDate.data, endDate.data)) {
+    res.status(400).json({ error: 'Informe um intervalo de datas válido (início e fim).' })
+    return
+  }
+
+  let collaboratorIds: number[] | null = null
+  if (req.query.collaboratorIds) {
+    const rawIds = Array.isArray(req.query.collaboratorIds)
+      ? req.query.collaboratorIds.flatMap((id) => String(id).split(','))
+      : String(req.query.collaboratorIds).split(',')
+    const parsedIds = rawIds
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isInteger(id) && id > 0)
+    if (parsedIds.length > 0) {
+      collaboratorIds = [...new Set(parsedIds)]
+    }
+  }
+
+  try {
+    const apptParams: (string | number[])[] = [startDate.data, endDate.data]
+    let apptCollabClause = ''
+    if (collaboratorIds && collaboratorIds.length > 0) {
+      apptParams.push(collaboratorIds)
+      apptCollabClause = `AND p.collaborator_id = ANY($${apptParams.length}::bigint[])`
+    }
+
+    const absenceParams: (string | number[])[] = [startDate.data, endDate.data]
+    let absenceCollabClause = ''
+    if (collaboratorIds && collaboratorIds.length > 0) {
+      absenceParams.push(collaboratorIds)
+      absenceCollabClause = `AND abs.collaborator_id = ANY($${absenceParams.length}::bigint[])`
+    }
+
+    const collabParams: (string | number[])[] = [startDate.data]
+    let collabFilterClause = ''
+    if (collaboratorIds && collaboratorIds.length > 0) {
+      collabParams.push(collaboratorIds)
+      collabFilterClause = `AND c.id = ANY($${collabParams.length}::bigint[])`
+    }
+
+    const [appointmentsResult, absencesResult, collaboratorsResult] = await Promise.all([
+      pool.query<{
+        id: string
+        ticket_id: string | null
+        legal_process_id: string | null
+        collaborator_id: string
+        activity_description: string
+        starts_at: Date
+        ends_at: Date
+        protocol: string | null
+        subject: string | null
+        legal_process_number: string | null
+        legal_process_claimant: string | null
+        standalone_location: string
+        enterprise: string
+        block: string
+        unit: string
+        common_area_location: string
+        materials: string[]
+        equipment: string[]
+        tools: string[]
+        completed: boolean
+        is_finalization: boolean
+        completion_term_delivered: boolean
+        cancelled: boolean
+        cancellation_reason_type: string | null
+        cancellation_reason: string | null
+        cancellation_reassigned_to: string | null
+        cancellation_reassigned_name: string | null
+        cancelled_at: string | null
+        programming_type: 'general' | 'foreman'
+        collaborator_name: string
+        collaborator_nickname: string
+        collaborator_role: string
+        collaborator_role_label: string
+        collaborator_photo_url: string | null
+      }>(
+        `SELECT p.id, p.ticket_id, p.legal_process_id, p.collaborator_id, p.activity_description,
+                p.starts_at, p.ends_at, t.protocol, t.subject,
+                lp.title AS legal_process_number, lp.claimant AS legal_process_claimant,
+                p.standalone_location, p.enterprise,
+                p.block, p.unit, p.common_area_location,
+                p.materials, p.equipment, p.tools, p.completed,
+                COALESCE(p.is_finalization, FALSE) AS is_finalization,
+                COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+                COALESCE(p.cancelled, FALSE) AS cancelled,
+                p.cancellation_reason_type,
+                p.cancellation_reason,
+                p.cancellation_reassigned_to::text AS cancellation_reassigned_to,
+                c2.name AS cancellation_reassigned_name,
+                p.cancelled_at,
+                p.programming_type,
+                c.name AS collaborator_name,
+                c.nickname AS collaborator_nickname,
+                c.role AS collaborator_role, r.label AS collaborator_role_label,
+                CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS collaborator_photo_url
+         FROM ticket_programming p
+         LEFT JOIN tickets t ON t.source_id = p.ticket_id
+         LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
+         JOIN collaborators c ON c.id = p.collaborator_id
+         JOIN collaborator_roles r ON r.role_key = c.role
+         LEFT JOIN collaborators c2 ON c2.id = p.cancellation_reassigned_to
+         WHERE p.starts_at < (($2::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
+           AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
+           ${apptCollabClause}
+         ORDER BY p.starts_at, c.id`,
+        apptParams,
+      ),
+      pool.query<{
+        id: string
+        collaborator_id: string
+        type: 'atestado' | 'falta_injustificada'
+        start_date: string
+        end_date: string
+        start_time: string | null
+        end_time: string | null
+        cid: string | null
+        notes: string | null
+        collaborator_name: string
+        collaborator_role: string
+        collaborator_role_label: string
+      }>(
+        `SELECT abs.id, abs.collaborator_id, abs.type,
+                abs.start_date::text AS start_date,
+                abs.end_date::text AS end_date,
+                abs.start_time, abs.end_time,
+                abs.cid, abs.notes,
+                c.name AS collaborator_name,
+                c.role AS collaborator_role,
+                r.label AS collaborator_role_label
+         FROM collaborator_absences abs
+         JOIN collaborators c ON c.id = abs.collaborator_id
+         JOIN collaborator_roles r ON r.role_key = c.role
+         WHERE abs.start_date <= $2::date AND abs.end_date >= $1::date
+           ${absenceCollabClause}
+         ORDER BY abs.start_date, c.name`,
+        absenceParams,
+      ),
+      pool.query<{
+        id: string
+        name: string
+        nickname: string
+        role: string
+        role_label: string
+        is_on_leave: boolean
+        photo_url: string | null
+      }>(
+        `SELECT c.id::text AS id, c.name, c.nickname, c.role, r.label AS role_label,
+                c.is_on_leave,
+                CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS photo_url
+         FROM collaborators c
+         JOIN collaborator_roles r ON r.role_key = c.role
+         WHERE (c.termination_date IS NULL OR c.termination_date >= $1::date)
+           ${collabFilterClause}
+         ORDER BY lower(c.name), c.id`,
+        collabParams,
+      ),
+    ])
+
+    res.json({
+      startDate: startDate.data,
+      endDate: endDate.data,
+      collaborators: collaboratorsResult.rows,
+      absences: absencesResult.rows.map((row) => ({
+        id: row.id,
+        collaboratorId: row.collaborator_id,
+        type: row.type,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        startTime: row.start_time ?? null,
+        endTime: row.end_time ?? null,
+        cid: row.cid,
+        notes: row.notes,
+        collaboratorName: row.collaborator_name,
+        collaboratorRole: row.collaborator_role,
+        collaboratorRoleLabel: row.collaborator_role_label,
+      })),
+      appointments: appointmentsResult.rows,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 router.get('/availability', async (req, res, next) => {
   const startDate = dateSchema.safeParse(req.query.startDate ?? req.query.date)
   const endDate = dateSchema.safeParse(req.query.endDate ?? req.query.date)
@@ -481,6 +682,7 @@ router.get('/availability', async (req, res, next) => {
            AND starts_at < (($3::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
            AND ends_at > ($2::date AT TIME ZONE '${programmingTimeZone}')
            AND ($4::bigint IS NULL OR id <> $4)
+           AND (cancelled = FALSE OR cancelled IS NULL)
          ORDER BY starts_at`,
         [collaboratorId.data, startDate.data, endDate.data, excludeId.data],
       ),
@@ -558,8 +760,16 @@ router.get('/ticket/:ticketId', async (req, res, next) => {
               p.starts_at, p.ends_at, p.completed, p.programming_type,
               COALESCE(p.is_finalization, FALSE) AS is_finalization,
               COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              COALESCE(p.cancelled, FALSE) AS cancelled,
+              p.cancellation_reason_type,
+              p.cancellation_reason,
+              p.cancellation_reassigned_to::text AS cancellation_reassigned_to,
+              c2.name AS cancellation_reassigned_name,
+              p.cancelled_at,
               c.name AS collaborator_name, c.nickname AS collaborator_nickname
-       FROM ticket_programming p JOIN collaborators c ON c.id = p.collaborator_id
+       FROM ticket_programming p
+       JOIN collaborators c ON c.id = p.collaborator_id
+       LEFT JOIN collaborators c2 ON c2.id = p.cancellation_reassigned_to
        WHERE p.ticket_id = $1 ORDER BY p.starts_at, c.id`,
       [ticketId.data],
     )
@@ -744,6 +954,7 @@ async function validateAvailability(
      LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
      WHERE p.collaborator_id = $1 AND p.starts_at < $3 AND p.ends_at > $2
        AND ($4::bigint IS NULL OR p.id <> $4)
+       AND (p.cancelled = FALSE OR p.cancelled IS NULL)
      ORDER BY p.starts_at
      `,
     [collaboratorId, startsAt, endsAt, excludeId ?? null],
@@ -1058,6 +1269,311 @@ router.patch('/:id/term-delivery', async (req, res, next) => {
     res.status(204).end()
   } catch (error) {
     next(error)
+  }
+})
+
+const cancelProgrammingSchema = z.object({
+  reasonType: z.enum(['cliente', 'remanejamento', 'ac_engenharia']),
+  reassignedToCollaboratorId: z.coerce.number().int().positive().optional(),
+  reasonNotes: z.string().trim().max(1000).optional(),
+})
+
+router.post('/:id/cancel', requireAuth, async (req, res, next) => {
+  const programmingId = z.coerce.number().int().positive().safeParse(req.params.id)
+  const parsed = cancelProgrammingSchema.safeParse(req.body)
+  if (!programmingId.success || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Identificador inválido.' : parsed.error.issues[0]?.message ?? 'Dados de cancelamento inválidos.' })
+    return
+  }
+
+  const { reasonType, reassignedToCollaboratorId, reasonNotes } = parsed.data
+  const userId = req.session.user!.id
+  const client = await pool.connect()
+
+  try {
+    await client.query('BEGIN')
+    const existingResult = await client.query<{
+      id: string
+      ticket_id: string | null
+      legal_process_id: string | null
+      collaborator_id: string
+      activity_description: string
+      enterprise: string
+      block: string
+      unit: string
+      common_area_location: string
+      materials: string[]
+      equipment: string[]
+      tools: string[]
+      standalone_location: string
+      starts_at: Date
+      ends_at: Date
+      programming_type: 'general' | 'foreman'
+      is_finalization: boolean
+      protocol: string | null
+      collaborator_name: string
+      cancelled: boolean
+    }>(
+      `SELECT p.id, p.ticket_id, p.legal_process_id, p.collaborator_id, p.activity_description,
+              p.enterprise, p.block, p.unit, p.common_area_location, p.materials, p.equipment, p.tools,
+              p.standalone_location, p.starts_at, p.ends_at, p.programming_type,
+              COALESCE(p.is_finalization, FALSE) AS is_finalization,
+              COALESCE(p.cancelled, FALSE) AS cancelled,
+              t.protocol, c.name AS collaborator_name
+       FROM ticket_programming p
+       LEFT JOIN tickets t ON t.source_id = p.ticket_id
+       JOIN collaborators c ON c.id = p.collaborator_id
+       WHERE p.id = $1 FOR UPDATE OF p`,
+      [programmingId.data],
+    )
+
+    if (!existingResult.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Programação não encontrada.' })
+      return
+    }
+
+    const existing = existingResult.rows[0]
+    if (existing.cancelled) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Esta atividade já está cancelada.' })
+      return
+    }
+
+    let finalReason = ''
+    let reassignedTargetId: number | null = null
+    let newProgrammingId: string | null = null
+
+    if (reasonType === 'cliente') {
+      finalReason = reasonNotes && reasonNotes.length > 0
+        ? reasonNotes
+        : 'Cancelamento por parte do cliente'
+    } else if (reasonType === 'ac_engenharia') {
+      if (!reasonNotes || reasonNotes.trim().length < 2) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'Informe o motivo do cancelamento pela AC Engenharia.' })
+        return
+      }
+      finalReason = reasonNotes.trim()
+    } else if (reasonType === 'remanejamento') {
+      if (!reassignedToCollaboratorId) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'Selecione o profissional que receberá a atividade remanejada.' })
+        return
+      }
+      if (reassignedToCollaboratorId === Number(existing.collaborator_id)) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: 'O profissional destinatário deve ser diferente do profissional atual.' })
+        return
+      }
+
+      const targetCollabRes = await client.query<{ id: string; name: string; role: string; is_on_leave: boolean }>(
+        `SELECT id, name, role, is_on_leave FROM collaborators
+         WHERE id = $1 AND (termination_date IS NULL OR termination_date > CURRENT_DATE)`,
+        [reassignedToCollaboratorId],
+      )
+      if (!targetCollabRes.rowCount) {
+        await client.query('ROLLBACK')
+        res.status(404).json({ error: 'Profissional destinatário não encontrado ou inativo.' })
+        return
+      }
+
+      const targetCollab = targetCollabRes.rows[0]
+      if (targetCollab.is_on_leave) {
+        await client.query('ROLLBACK')
+        res.status(400).json({ error: `O profissional ${targetCollab.name} está afastado e não pode receber a atividade.` })
+        return
+      }
+
+      const targetProgrammingType = targetCollab.role === 'encarregado' ? 'foreman' : 'general'
+
+      // Validar disponibilidade do novo profissional no mesmo horário
+      const conflicts = await validateAvailability(
+        client,
+        reassignedToCollaboratorId,
+        targetProgrammingType,
+        existing.ticket_id ? Number(existing.ticket_id) : null,
+        new Date(existing.starts_at),
+        new Date(existing.ends_at),
+      )
+      if (conflicts.length) {
+        await client.query('ROLLBACK')
+        res.status(409).json({ error: `Conflito de agenda para ${targetCollab.name}:\n${formatScheduleConflicts(conflicts)}` })
+        return
+      }
+
+      reassignedTargetId = reassignedToCollaboratorId
+      finalReason = `Remanejado para ${targetCollab.name}${reasonNotes ? ` (${reasonNotes.trim()})` : ''}`
+
+      // Criar nova programação para o novo profissional
+      const insertResult = await client.query<{ id: string }>(
+        `INSERT INTO ticket_programming
+           (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
+            enterprise, block, unit, common_area_location, materials, equipment, tools,
+            standalone_location, programming_type, created_by, is_finalization, completion_term_delivered, cancelled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, FALSE, FALSE)
+         RETURNING id`,
+        [
+          existing.ticket_id,
+          existing.legal_process_id,
+          reassignedTargetId,
+          existing.activity_description,
+          existing.starts_at,
+          existing.ends_at,
+          existing.enterprise,
+          existing.block,
+          existing.unit,
+          existing.common_area_location,
+          existing.materials,
+          existing.equipment,
+          existing.tools,
+          existing.standalone_location,
+          targetProgrammingType,
+          userId,
+          existing.is_finalization,
+        ],
+      )
+      newProgrammingId = insertResult.rows[0].id
+    }
+
+    // Cancelar a atividade atual
+    await client.query(
+      `UPDATE ticket_programming
+       SET cancelled = TRUE,
+           cancellation_reason_type = $1,
+           cancellation_reason = $2,
+           cancellation_reassigned_to = $3,
+           cancelled_at = now(),
+           cancelled_by = $4,
+           updated_at = now()
+       WHERE id = $5`,
+      [reasonType, finalReason, reassignedTargetId, userId, programmingId.data],
+    )
+
+    if (existing.ticket_id) {
+      const actionSummary = reasonType === 'remanejamento'
+        ? `Remanejou a programação de ${existing.collaborator_name}: ${finalReason}.`
+        : `Cancelou a programação de ${existing.collaborator_name}: ${finalReason}.`
+
+      await recordTicketActivity(
+        client,
+        existing.ticket_id,
+        userId,
+        'programming_cancelled',
+        actionSummary,
+        {
+          programmingId: programmingId.data,
+          reasonType,
+          reason: finalReason,
+          reassignedToCollaboratorId: reassignedTargetId,
+          newProgrammingId,
+        },
+      )
+    }
+
+    await client.query('COMMIT')
+    res.json({
+      success: true,
+      cancelledId: programmingId.data,
+      reasonType,
+      reason: finalReason,
+      newProgrammingId,
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde/.test(error.message)) {
+      res.status(409).json({ error: error.message })
+      return
+    }
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
+router.post('/:id/reactivate', requireAuth, async (req, res, next) => {
+  const programmingId = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!programmingId.success) {
+    res.status(400).json({ error: 'Identificador inválido.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const existing = await client.query<{
+      id: string
+      ticket_id: string | null
+      collaborator_id: string
+      programming_type: 'general' | 'foreman'
+      starts_at: Date
+      ends_at: Date
+      cancelled: boolean
+      collaborator_name: string
+    }>(
+      `SELECT p.id, p.ticket_id, p.collaborator_id, p.programming_type, p.starts_at, p.ends_at,
+              COALESCE(p.cancelled, FALSE) as cancelled, c.name as collaborator_name
+       FROM ticket_programming p
+       JOIN collaborators c ON c.id = p.collaborator_id
+       WHERE p.id = $1 FOR UPDATE OF p`,
+      [programmingId.data],
+    )
+    if (!existing.rowCount) {
+      await client.query('ROLLBACK')
+      res.status(404).json({ error: 'Programação não encontrada.' })
+      return
+    }
+    if (!existing.rows[0].cancelled) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Esta atividade não está cancelada.' })
+      return
+    }
+
+    const conflicts = await validateAvailability(
+      client,
+      Number(existing.rows[0].collaborator_id),
+      existing.rows[0].programming_type,
+      existing.rows[0].ticket_id ? Number(existing.rows[0].ticket_id) : null,
+      new Date(existing.rows[0].starts_at),
+      new Date(existing.rows[0].ends_at),
+      programmingId.data,
+    )
+    if (conflicts.length) {
+      await client.query('ROLLBACK')
+      res.status(409).json({ error: `Não é possível reativar devido a conflito de agenda:\n${formatScheduleConflicts(conflicts)}` })
+      return
+    }
+
+    await client.query(
+      `UPDATE ticket_programming
+       SET cancelled = FALSE,
+           cancellation_reason_type = NULL,
+           cancellation_reason = NULL,
+           cancellation_reassigned_to = NULL,
+           cancelled_at = NULL,
+           cancelled_by = NULL,
+           updated_at = now()
+       WHERE id = $1`,
+      [programmingId.data],
+    )
+
+    if (existing.rows[0].ticket_id) {
+      await recordTicketActivity(
+        client,
+        existing.rows[0].ticket_id,
+        req.session.user!.id,
+        'programming_reactivated',
+        `Reativou a programação cancelada de ${existing.rows[0].collaborator_name}.`,
+        { programmingId: programmingId.data },
+      )
+    }
+
+    await client.query('COMMIT')
+    res.json({ success: true })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
   }
 })
 

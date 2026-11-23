@@ -22,12 +22,13 @@ import {
   X,
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
-import SearchableMultiSelect from '../SearchableMultiSelect'
+import SearchableMultiSelect, { type SearchableMultiSelectOption } from '../SearchableMultiSelect'
 import './TicketDashboardPage.css'
 
 interface DashboardOptions {
   enterprises: string[]
   blocks: string[]
+  blockOptions?: SearchableMultiSelectOption[]
   units: string[]
   subjects: string[]
   subsubjects: string[]
@@ -296,6 +297,46 @@ export default function TicketDashboardPage({
       cancelled = true
     }
   }, [fromYear])
+
+  const enterpriseFilterKey = JSON.stringify([...enterprises].sort())
+  const blockFilterKey = JSON.stringify([...blocks].sort())
+
+  useEffect(() => {
+    let cancelled = false
+    const params = new URLSearchParams()
+    params.set('includeInactive', 'true')
+    for (const enterprise of enterprises) params.append('enterprise', enterprise)
+    for (const block of blocks) params.append('block', block)
+    apiRequest<{ blocks: string[]; blockOptions?: SearchableMultiSelectOption[]; units: string[] }>(
+      `/api/tickets/filter-options?${params.toString()}`,
+    )
+      .then((result) => {
+        if (cancelled) return
+        const nextBlockOptions = result.blockOptions ?? result.blocks.map((b) => ({ value: b, label: b }))
+        const validBlockValues = new Set(nextBlockOptions.map((opt) => opt.value))
+        const validUnits = new Set(result.units)
+        setOptions((current) => ({
+          ...current,
+          blocks: result.blocks,
+          blockOptions: nextBlockOptions,
+          units: result.units,
+        }))
+        setBlocks((current) => {
+          const filtered = current.filter((item) => validBlockValues.has(item))
+          return filtered.length === current.length ? current : filtered
+        })
+        setUnits((current) => {
+          const filtered = current.filter((item) => validUnits.has(item))
+          return filtered.length === current.length ? current : filtered
+        })
+      })
+      .catch(() => {
+        // Mantém opções atuais se falhar
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [enterpriseFilterKey, blockFilterKey])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setCustomer(customerQuery.trim()), 250)
@@ -653,9 +694,16 @@ export default function TicketDashboardPage({
             label="Empreendimentos"
             options={options.enterprises}
             value={enterprises}
-            onChange={setEnterprises}
+            onChange={(value) => {
+              setEnterprises(value)
+            }}
           />
-          <SearchableMultiSelect label="Blocos" options={options.blocks} value={blocks} onChange={setBlocks} />
+          <SearchableMultiSelect
+            label="Blocos"
+            options={options.blockOptions ?? options.blocks}
+            value={blocks}
+            onChange={setBlocks}
+          />
           <SearchableMultiSelect label="Unidades" options={options.units} value={units} onChange={setUnits} />
           <label className="ticket-dashboard-customer">
             <span>Cliente</span>

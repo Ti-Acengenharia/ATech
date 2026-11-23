@@ -1,10 +1,11 @@
 import { Router, type Request, type Response } from 'express'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
-import { requireAuth, requirePageAccess } from '../auth.js'
+import { requireAuth, requirePageAccess, type PageAccessKey } from '../auth.js'
 import { pool } from '../db.js'
 import { validateBinaryFileSignature } from '../services/file-validation.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
+import { ensureUserActivityColumns, syncSourceFromPersonalActivity } from '../services/unified-tasks.js'
 
 const router = Router()
 const columnSchema = z.object({ name: z.string().trim().min(1).max(80) })
@@ -36,7 +37,23 @@ const uploadSchema = z.object({
   contentBase64: z.string().min(4).max(7_000_000),
 })
 
-router.use(requireAuth, requirePageAccess('personal-activities'))
+router.use(requireAuth)
+
+async function userHasPageAccess(req: Request, pageKey: PageAccessKey): Promise<boolean> {
+  const user = req.session.user
+  if (!user) return false
+  if (user.role === 'admin') return true
+  if (Array.isArray(req.session.pageAccess)) {
+    return req.session.pageAccess.includes(pageKey)
+  }
+  const res = await pool.query<{ page_key: string }>(
+    'SELECT page_key FROM user_page_access WHERE user_id = $1',
+    [user.id],
+  )
+  const accesses = res.rows.map((r) => r.page_key)
+  req.session.pageAccess = accesses
+  return accesses.includes(pageKey)
+}
 
 async function getOwnerId(req: Request, res: Response) {
   const currentUserId = Number(req.session.user!.id)
@@ -79,10 +96,19 @@ async function getOwnerId(req: Request, res: Response) {
 
 async function getActivityAccess(req: Request, res: Response, activityId: number, write = false) {
   const currentUserId = Number(req.session.user!.id)
-  const result = await pool.query<{ user_id: string; status: string; role: string; has_page: boolean }>(
-    `SELECT a.user_id, u.status, u.role,
+  const result = await pool.query<{
+    user_id: string
+    status: string
+    role: string
+    has_page: boolean
+    ticket_id: string | null
+    legal_process_id: string | null
+  }>(
+    `SELECT a.user_id::text, u.status, u.role,
             EXISTS (SELECT 1 FROM user_page_access p
-                    WHERE p.user_id = u.id AND p.page_key = 'personal-activities') AS has_page
+                    WHERE p.user_id = u.id AND p.page_key = 'personal-activities') AS has_page,
+            COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1))::text AS ticket_id,
+            COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1))::text AS legal_process_id
      FROM personal_activities a JOIN users u ON u.id = a.user_id
      WHERE a.id = $1`,
     [activityId],
@@ -91,8 +117,25 @@ async function getActivityAccess(req: Request, res: Response, activityId: number
     res.status(404).json({ error: 'Atividade não encontrada.' })
     return null
   }
-  const ownerId = Number(result.rows[0].user_id)
-  if (result.rows[0].status !== 'active' || (result.rows[0].role !== 'admin' && !result.rows[0].has_page)) {
+  const row = result.rows[0]
+  const ownerId = Number(row.user_id)
+
+  // Se a tarefa está vinculada a um chamado ou processo jurídico e o usuário tem acesso a chamados ou processos jurídicos,
+  // ele pode visualizar e interagir com a tarefa unificada (mesma tarefa para toda a equipe daquele módulo).
+  const hasLinkedTicketAccess = row.ticket_id !== null && (await userHasPageAccess(req, 'tickets'))
+  const hasLinkedLegalAccess = row.legal_process_id !== null && (await userHasPageAccess(req, 'legal-processes'))
+
+  if (hasLinkedTicketAccess || hasLinkedLegalAccess) {
+    return ownerId
+  }
+
+  // Caso contrário, exige acesso à página de Minhas Atividades
+  if (!(await userHasPageAccess(req, 'personal-activities'))) {
+    res.status(403).json({ error: 'Você não tem acesso a esta página.' })
+    return null
+  }
+
+  if (row.status !== 'active' || (row.role !== 'admin' && !row.has_page)) {
     res.status(404).json({ error: 'Atividade não encontrada.' })
     return null
   }
@@ -141,7 +184,7 @@ async function canonicalizeTagNames(client: PoolClient, userId: number, tags: st
   })
 }
 
-router.get('/', async (req, res, next) => {
+router.get('/', requirePageAccess('personal-activities'), async (req, res, next) => {
   try {
     const userId = await getOwnerId(req, res)
     if (userId === null) return
@@ -177,14 +220,20 @@ router.get('/', async (req, res, next) => {
         [userId],
       ),
       pool.query<{
-        id: string; column_id: string; title: string; description: string; priority: string; start_date: string | null; due_date: string | null; tags: string[]; comments_count: number; attachments_count: number; checklist_total: number; checklist_done: number
+        id: string; column_id: string; title: string; description: string; priority: string; start_date: string | null; due_date: string | null; tags: string[]; comments_count: number; attachments_count: number; checklist_total: number; checklist_done: number;
+        ticket_id: string | null; ticket_protocol: string | null; legal_process_id: string | null; legal_process_title: string | null; legal_process_number: string | null
       }>(
         `SELECT a.id, a.column_id, a.title, a.description, COALESCE(a.priority, 'medium') AS priority,
                 a.start_date::text, a.due_date::text, a.tags,
                 (SELECT count(*)::int FROM personal_activity_comments c WHERE c.activity_id = a.id) AS comments_count,
                 (SELECT count(*)::int FROM personal_activity_attachments f WHERE f.activity_id = a.id) AS attachments_count,
                 (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id) AS checklist_total,
-                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id AND ch.is_done = TRUE) AS checklist_done
+                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id AND ch.is_done = TRUE) AS checklist_done,
+                COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1))::text AS ticket_id,
+                (SELECT t.protocol FROM tickets t WHERE t.source_id = COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS ticket_protocol,
+                COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1))::text AS legal_process_id,
+                (SELECT lp.title FROM legal_processes lp WHERE lp.id = COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS legal_process_title,
+                (SELECT lp.process_number FROM legal_processes lp WHERE lp.id = COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS legal_process_number
          FROM personal_activities a WHERE a.user_id = $1 ORDER BY a.created_at, a.id`,
         [userId],
       ),
@@ -213,6 +262,11 @@ router.get('/', async (req, res, next) => {
         attachmentsCount: activity.attachments_count,
         checklistTotal: activity.checklist_total,
         checklistDone: activity.checklist_done,
+        ticketId: activity.ticket_id,
+        ticketProtocol: activity.ticket_protocol,
+        legalProcessId: activity.legal_process_id ? Number(activity.legal_process_id) : null,
+        legalProcessTitle: activity.legal_process_title,
+        legalProcessNumber: activity.legal_process_number,
       })),
     })
   } catch (error) {
@@ -220,7 +274,7 @@ router.get('/', async (req, res, next) => {
   }
 })
 
-router.get('/users', async (req, res, next) => {
+router.get('/users', requirePageAccess('personal-activities'), async (req, res, next) => {
   try {
     const permission = await pool.query<{ can_view_others: boolean }>(
       `SELECT can_view_others FROM user_personal_activity_permissions WHERE user_id = $1`,
@@ -496,7 +550,7 @@ router.delete('/columns/:id', async (req, res, next) => {
   }
 })
 
-router.post('/items', async (req, res, next) => {
+router.post('/items', requirePageAccess('personal-activities'), async (req, res, next) => {
   const parsed = activitySchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Atividade inválida.' })
@@ -535,6 +589,112 @@ router.post('/items', async (req, res, next) => {
   }
 })
 
+router.get('/items/:id', async (req, res, next) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id)
+  if (!id.success) {
+    res.status(400).json({ error: 'Identificador de atividade inválido.' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    const ownerId = await getActivityAccess(req, res, id.data, false)
+    if (ownerId === null) return
+
+    const { columns } = await ensureUserActivityColumns(client, ownerId)
+
+    const [actResult, tagsResult, ownerResult] = await Promise.all([
+      client.query<{
+        id: string
+        user_id: string
+        column_id: string
+        title: string
+        description: string
+        priority: string
+        start_date: string | null
+        due_date: string | null
+        tags: string[]
+        comments_count: number
+        attachments_count: number
+        checklist_total: number
+        checklist_done: number
+        ticket_id: string | null
+        ticket_protocol: string | null
+        legal_process_id: string | null
+        legal_process_title: string | null
+        legal_process_number: string | null
+      }>(
+        `SELECT a.id::text, a.user_id::text, a.column_id::text, a.title, a.description,
+                COALESCE(a.priority, 'medium') AS priority,
+                a.start_date::text, a.due_date::text, a.tags,
+                (SELECT count(*)::int FROM personal_activity_comments c WHERE c.activity_id = a.id) AS comments_count,
+                (SELECT count(*)::int FROM personal_activity_attachments f WHERE f.activity_id = a.id) AS attachments_count,
+                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id) AS checklist_total,
+                (SELECT count(*)::int FROM personal_activity_checklists ch WHERE ch.activity_id = a.id AND ch.is_done = TRUE) AS checklist_done,
+                COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1))::text AS ticket_id,
+                (SELECT t.protocol FROM tickets t WHERE t.source_id = COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS ticket_protocol,
+                COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1))::text AS legal_process_id,
+                (SELECT lp.title FROM legal_processes lp WHERE lp.id = COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS legal_process_title,
+                (SELECT lp.process_number FROM legal_processes lp WHERE lp.id = COALESCE(a.legal_process_id, (SELECT lpi.process_id FROM legal_process_items lpi WHERE lpi.personal_activity_id = a.id LIMIT 1)) LIMIT 1) AS legal_process_number
+         FROM personal_activities a
+         WHERE a.id = $1`,
+        [id.data],
+      ),
+      client.query<{ id: string; name: string }>(
+        `SELECT id::text, name FROM personal_activity_tags
+         WHERE user_id = $1 ORDER BY lower(name), id`,
+        [ownerId],
+      ),
+      client.query<{ display_name: string }>(
+        'SELECT display_name FROM users WHERE id = $1',
+        [ownerId],
+      ),
+    ])
+
+    if (!actResult.rowCount) {
+      res.status(404).json({ error: 'Atividade não encontrada.' })
+      return
+    }
+
+    const activity = actResult.rows[0]
+    const currentUserId = Number(req.session.user!.id)
+    const canEdit =
+      ownerId === currentUserId ||
+      (activity.ticket_id !== null && (await userHasPageAccess(req, 'tickets'))) ||
+      (activity.legal_process_id !== null && (await userHasPageAccess(req, 'legal-processes')))
+
+    res.json({
+      ownerId,
+      ownerName: ownerResult.rows[0]?.display_name ?? 'Colaborador',
+      canEdit,
+      columns,
+      tags: tagsResult.rows.map((t) => ({ id: Number(t.id), name: t.name })),
+      activity: {
+        id: Number(activity.id),
+        columnId: Number(activity.column_id),
+        title: activity.title,
+        description: activity.description,
+        priority: activity.priority || 'medium',
+        startDate: activity.start_date,
+        dueDate: activity.due_date,
+        tags: activity.tags,
+        commentsCount: activity.comments_count,
+        attachmentsCount: activity.attachments_count,
+        checklistTotal: activity.checklist_total,
+        checklistDone: activity.checklist_done,
+        ticketId: activity.ticket_id,
+        ticketProtocol: activity.ticket_protocol,
+        legalProcessId: activity.legal_process_id ? Number(activity.legal_process_id) : null,
+        legalProcessTitle: activity.legal_process_title,
+        legalProcessNumber: activity.legal_process_number,
+      },
+    })
+  } catch (error) {
+    next(error)
+  } finally {
+    client.release()
+  }
+})
+
 router.patch('/items/:id', async (req, res, next) => {
   const id = z.coerce.number().int().positive().safeParse(req.params.id)
   const parsed = activityUpdateSchema.safeParse(req.body)
@@ -542,13 +702,16 @@ router.patch('/items/:id', async (req, res, next) => {
     res.status(400).json({ error: 'Atividade inválida.' })
     return
   }
+  const ownerId = await getActivityAccess(req, res, id.data, true)
+  if (ownerId === null) return
+
   const { columnId, title, description, priority, startDate, dueDate, tags } = parsed.data
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
     const canonicalTags = tags === undefined
       ? undefined
-      : await canonicalizeTagNames(client, Number(req.session.user!.id), tags)
+      : await canonicalizeTagNames(client, ownerId, tags)
     const result = await client.query(
       `UPDATE personal_activities a
        SET column_id = COALESCE($1, a.column_id),
@@ -565,16 +728,20 @@ router.patch('/items/:id', async (req, res, next) => {
          ))
        RETURNING a.id`,
       [columnId ?? null, title ?? null, description ?? null, priority ?? null, dueDate !== undefined, dueDate ?? null,
-        startDate !== undefined, startDate ?? null, tags !== undefined, canonicalTags ?? null, id.data, req.session.user!.id],
+        startDate !== undefined, startDate ?? null, tags !== undefined, canonicalTags ?? null, id.data, ownerId],
     )
     if (!result.rowCount) {
       await client.query('ROLLBACK')
       res.status(404).json({ error: 'Atividade ou coluna não encontrada.' })
       return
     }
-    if (canonicalTags !== undefined) await persistTagNames(client, Number(req.session.user!.id), canonicalTags)
+    if (canonicalTags !== undefined) await persistTagNames(client, ownerId, canonicalTags)
+    const synced = await syncSourceFromPersonalActivity(client, id.data)
     await client.query('COMMIT')
     void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
+    if (synced.ticketId) {
+      void broadcastSyncEvent({ scope: 'tickets', action: 'subtask-updated', entityId: synced.ticketId })
+    }
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
@@ -959,19 +1126,40 @@ router.delete('/items/:id', async (req, res, next) => {
     res.status(400).json({ error: 'Atividade inválida.' })
     return
   }
+  const ownerId = await getActivityAccess(req, res, id.data, true)
+  if (ownerId === null) return
+
+  const client = await pool.connect()
   try {
-    const result = await pool.query(
+    await client.query('BEGIN')
+    const linked = await client.query<{ ticket_id: string | null }>(
+      `SELECT COALESCE(a.ticket_id, (SELECT st.ticket_id FROM ticket_subtasks st WHERE st.personal_activity_id = a.id LIMIT 1))::text AS ticket_id
+       FROM personal_activities a
+       WHERE a.id = $1`,
+      [id.data],
+    )
+    await client.query('DELETE FROM ticket_subtasks WHERE personal_activity_id = $1', [id.data])
+    await client.query('DELETE FROM legal_process_items WHERE personal_activity_id = $1', [id.data])
+    const result = await client.query(
       `DELETE FROM personal_activities WHERE id = $1 AND user_id = $2 RETURNING id`,
-      [id.data, req.session.user!.id],
+      [id.data, ownerId],
     )
     if (!result.rowCount) {
+      await client.query('ROLLBACK')
       res.status(404).json({ error: 'Atividade não encontrada.' })
       return
     }
+    await client.query('COMMIT')
     void broadcastSyncEvent({ scope: 'personal-activities', action: 'update' })
+    if (linked.rows[0]?.ticket_id) {
+      void broadcastSyncEvent({ scope: 'tickets', action: 'subtask-deleted', entityId: linked.rows[0].ticket_id })
+    }
     res.status(204).end()
   } catch (error) {
+    await client.query('ROLLBACK')
     next(error)
+  } finally {
+    client.release()
   }
 })
 

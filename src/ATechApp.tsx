@@ -585,6 +585,28 @@ function Brand() {
   )
 }
 
+function positionUserPageAccessMenu(details: HTMLDetailsElement) {
+  if (!details.open) return
+  const summary = details.querySelector('summary')
+  const menu = details.querySelector<HTMLDivElement>('div')
+  if (!summary || !menu) return
+
+  const anchor = summary.getBoundingClientRect()
+  const maxMenuHeight = Math.min(window.innerHeight * 0.68, 420)
+  const desiredHeight = Math.min(menu.scrollHeight, maxMenuHeight)
+  const spaceBelow = window.innerHeight - anchor.bottom - 14
+  const spaceAbove = anchor.top - 14
+  const openAbove = spaceBelow < desiredHeight && spaceAbove > spaceBelow
+  const availableHeight = Math.max(80, (openAbove ? spaceAbove : spaceBelow) - 6)
+  const menuWidth = menu.getBoundingClientRect().width
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - menuWidth - 8))
+
+  menu.style.top = openAbove ? 'auto' : `${anchor.bottom + 6}px`
+  menu.style.bottom = openAbove ? `${window.innerHeight - anchor.top + 6}px` : 'auto'
+  menu.style.left = `${left}px`
+  menu.style.maxHeight = `${Math.min(maxMenuHeight, availableHeight)}px`
+}
+
 function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities, onSignOut, onUserUpdated }: { user: SessionUser; domain: string; pageAccess: AdminPage[]; canViewOtherPersonalActivities: boolean; onSignOut: () => void; onUserUpdated: (displayName: string) => void }) {
   const [pageState, setPageState] = useState<AppPage>(readPageFromLocation)
   const [ticketView, setTicketView] = useState<'kanban' | 'list' | 'dashboard'>(() => {
@@ -795,6 +817,19 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [closeCommandPalette, commandOpen, showNotifications])
+
+  useEffect(() => {
+    function repositionOpenMenus() {
+      document.querySelectorAll<HTMLDetailsElement>('.user-page-access[open]').forEach(positionUserPageAccessMenu)
+    }
+
+    window.addEventListener('scroll', repositionOpenMenus, true)
+    window.addEventListener('resize', repositionOpenMenus)
+    return () => {
+      window.removeEventListener('scroll', repositionOpenMenus, true)
+      window.removeEventListener('resize', repositionOpenMenus)
+    }
+  }, [])
 
   useEffect(() => {
     const trimmed = commandQuery.trim()
@@ -1224,10 +1259,21 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                       aria-label="Ir para chamados"
                       className={`nav-item nav-subitem ${page === 'tickets' ? 'nav-item-active' : ''}`}
                       onClick={() => {
-                        navigateToPage('tickets')
-                        if (ticketView === 'dashboard') {
-                          window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
+                        try {
+                          if (localStorage.getItem('atech.ticket-active-view') === 'dashboard') {
+                            localStorage.setItem('atech.ticket-active-view', 'kanban')
+                          }
+                        } catch {
+                          // ignore
                         }
+                        const url = new URL(window.location.href)
+                        if (url.searchParams.get('view') === 'dashboard') {
+                          url.searchParams.set('view', 'kanban')
+                          window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+                        }
+                        setTicketView('kanban')
+                        navigateToPage('tickets')
+                        window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
                       }}
                     >
                       <ClipboardList size={15} />
@@ -1259,10 +1305,21 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               aria-label="Ir para processos jurídicos"
               className={`nav-item ${page === 'legal-processes' ? 'nav-item-active' : ''}`}
               onClick={() => {
-                navigateToPage('legal-processes')
-                if (legalView === 'dashboard') {
-                  window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: 'board' } }))
+                try {
+                  if (localStorage.getItem('atech-legal-active-tab') === 'dashboard') {
+                    localStorage.setItem('atech-legal-active-tab', 'board')
+                  }
+                } catch {
+                  // ignore
                 }
+                const url = new URL(window.location.href)
+                if (url.searchParams.get('view') === 'dashboard') {
+                  url.searchParams.set('view', 'board')
+                  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+                }
+                setLegalView('board')
+                navigateToPage('legal-processes')
+                window.dispatchEvent(new CustomEvent('atech:legal-view-navigate', { detail: { view: 'board' } }))
               }}
             >
               <BriefcaseBusiness size={17} />
@@ -1661,7 +1718,12 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
                     )}
                   </td>
                   <td>{member.role === 'admin' ? <span className="role-label role-admin">Acesso total</span> : (
-                    <details className="user-page-access">
+                    <details className="user-page-access" onToggle={(event) => {
+                      const details = event.currentTarget
+                      if (details.open) {
+                        window.requestAnimationFrame(() => positionUserPageAccessMenu(details))
+                      }
+                    }}>
                       <summary>{member.pageAccess.length} de {availablePages.length} páginas</summary>
                       <div>
                         {availablePages.map(({ key, label }) => (
@@ -1791,10 +1853,21 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
               type="button"
               className={`mobile-bottom-nav-item ${page === 'tickets' ? 'is-active' : ''}`}
               onClick={() => {
-                navigateToPage('tickets')
-                if (ticketView === 'dashboard') {
-                  window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
+                try {
+                  if (localStorage.getItem('atech.ticket-active-view') === 'dashboard') {
+                    localStorage.setItem('atech.ticket-active-view', 'kanban')
+                  }
+                } catch {
+                  // ignore
                 }
+                const url = new URL(window.location.href)
+                if (url.searchParams.get('view') === 'dashboard') {
+                  url.searchParams.set('view', 'kanban')
+                  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+                }
+                setTicketView('kanban')
+                navigateToPage('tickets')
+                window.dispatchEvent(new CustomEvent('atech:ticket-view-navigate', { detail: { view: 'kanban' } }))
               }}
             >
               <ClipboardList size={19} />

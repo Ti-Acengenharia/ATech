@@ -2,6 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Search } from 'lucide-react'
 import './SearchableMultiSelect.css'
 
+export interface SearchableMultiSelectOption {
+  value: string
+  label: string
+  meta?: string
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
 export default function SearchableMultiSelect({
   label,
   options,
@@ -11,21 +24,27 @@ export default function SearchableMultiSelect({
   emptyLabel = 'Nenhuma opção disponível.',
 }: {
   label: string
-  options: Array<string | { value: string; label: string }>
+  options: Array<string | SearchableMultiSelectOption>
   value: string[]
   onChange: (value: string[]) => void
   disabled?: boolean
   emptyLabel?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [alignRight, setAlignRight] = useState(false)
   const [query, setQuery] = useState('')
   const wrapperRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  const normalizedOptions = options.map((option) => typeof option === 'string'
-    ? { value: option, label: option }
-    : option)
+  const normalizedOptions: SearchableMultiSelectOption[] = options.map((option) =>
+    typeof option === 'string' ? { value: option, label: option } : option,
+  )
   const selectedSummary = value.length ? `${value.length} selecionado${value.length === 1 ? '' : 's'}` : 'Todos'
-  const filteredOptions = normalizedOptions.filter((option) => option.label.toLocaleLowerCase('pt-BR').includes(query.trim().toLocaleLowerCase('pt-BR')))
+  const queryWords = normalizeSearch(query).trim().split(/\s+/).filter(Boolean)
+  const filteredOptions = normalizedOptions.filter((option) => {
+    if (!queryWords.length) return true
+    const haystack = normalizeSearch(`${option.label} ${option.meta ?? ''}`)
+    return queryWords.every((word) => haystack.includes(word))
+  })
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -49,30 +68,89 @@ export default function SearchableMultiSelect({
   }, [])
 
   useEffect(() => {
-    if (open) searchRef.current?.focus()
+    if (!open) return
+    searchRef.current?.focus()
+    if (wrapperRef.current && typeof window !== 'undefined') {
+      const rect = wrapperRef.current.getBoundingClientRect()
+      const estimatedWidth = Math.max(rect.width, 280)
+      setAlignRight(rect.left + estimatedWidth > window.innerWidth - 20 && rect.right > estimatedWidth)
+    }
   }, [open])
 
   function toggleOption(option: string) {
     onChange(value.includes(option) ? value.filter((item) => item !== option) : [...value, option])
   }
 
-  return <div className={`searchable-multiselect ${open ? 'searchable-multiselect-open' : ''}`} ref={wrapperRef}>
-    <span className="searchable-multiselect-label">{label}</span>
-    <button className="searchable-multiselect-trigger" type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
-      <span>{selectedSummary}</span>
-      <ChevronDown size={15} />
-    </button>
-    {open && <div className="searchable-multiselect-popover">
-      <label className="searchable-multiselect-search"><Search size={15} /><input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Pesquisar ${label.toLocaleLowerCase('pt-BR')}`} /></label>
-      <div className="searchable-multiselect-options" role="listbox" aria-label={label} aria-multiselectable="true">
-        {filteredOptions.length ? filteredOptions.map((option) => {
-          const selected = value.includes(option.value)
-          return <button type="button" key={option.value} className={selected ? 'selected' : ''} role="option" aria-selected={selected} onClick={() => toggleOption(option.value)}>
-            <span className="searchable-multiselect-checkbox">{selected && <Check size={12} />}</span><span>{option.label}</span>
-          </button>
-        }) : <span className="searchable-multiselect-empty">{normalizedOptions.length ? 'Nenhum resultado.' : emptyLabel}</span>}
-      </div>
-      <footer><span>{value.length} selecionado(s)</span><button type="button" onClick={() => { onChange([]); setOpen(false); setQuery('') }} disabled={!value.length}>Limpar</button></footer>
-    </div>}
-  </div>
+  return (
+    <div className={`searchable-multiselect ${open ? 'searchable-multiselect-open' : ''}`} ref={wrapperRef}>
+      <span className="searchable-multiselect-label">{label}</span>
+      <button
+        className="searchable-multiselect-trigger"
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selectedSummary}</span>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className={`searchable-multiselect-popover ${alignRight ? 'is-align-right' : ''}`}>
+          <label className="searchable-multiselect-search">
+            <Search size={15} />
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`Pesquisar ${label.toLocaleLowerCase('pt-BR')}`}
+            />
+          </label>
+          <div className="searchable-multiselect-options" role="listbox" aria-label={label} aria-multiselectable="true">
+            {filteredOptions.length ? (
+              filteredOptions.map((option) => {
+                const selected = value.includes(option.value)
+                return (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={selected ? 'selected' : ''}
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => toggleOption(option.value)}
+                  >
+                    <span className="searchable-multiselect-checkbox">{selected && <Check size={12} />}</span>
+                    <span className="searchable-multiselect-option-text">
+                      <span className="searchable-multiselect-option-label">{option.label}</span>
+                      {option.meta && <span className="searchable-multiselect-option-meta">({option.meta})</span>}
+                    </span>
+                  </button>
+                )
+              })
+            ) : (
+              <span className="searchable-multiselect-empty">
+                {normalizedOptions.length ? 'Nenhum resultado.' : emptyLabel}
+              </span>
+            )}
+          </div>
+          <footer>
+            <span>{value.length} selecionado(s)</span>
+            <button
+              type="button"
+              onClick={() => {
+                onChange([])
+                setOpen(false)
+                setQuery('')
+              }}
+              disabled={!value.length}
+            >
+              Limpar
+            </button>
+          </footer>
+        </div>
+      )}
+    </div>
+  )
 }

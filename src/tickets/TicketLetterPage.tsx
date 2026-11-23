@@ -108,28 +108,72 @@ export default function TicketLetterPage() {
   }, [search, selectedCustomerName])
 
   const selectedIds = useMemo(() => new Set(selectedTickets.map((ticket) => ticket.id)), [selectedTickets])
-  const filterOptions = useMemo(() => ({
-    enterprises: [...new Set(tickets.map((ticket) => ticket.enterprise.trim()).filter(Boolean))]
-      .sort((left, right) => left.localeCompare(right, 'pt-BR')),
-    blocks: [...new Set(tickets
-      .filter((ticket) => !enterpriseFilter || ticket.enterprise === enterpriseFilter)
-      .map((ticket) => ticket.block.trim())
-      .filter(Boolean))]
-      .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true })),
-    units: [...new Set(tickets
+  const filterOptions = useMemo(() => {
+    const enterprises = [...new Set(tickets.map((ticket) => ticket.enterprise.trim()).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, 'pt-BR'))
+    const blockPairsMap = new Map<string, { block: string; enterprise: string }>()
+    for (const ticket of tickets) {
+      if (enterpriseFilter && ticket.enterprise !== enterpriseFilter) continue
+      const b = ticket.block.trim()
+      if (!b) continue
+      const ent = ticket.enterprise.trim() || 'Sem empreendimento'
+      const pairKey = `${b.toLocaleLowerCase('pt-BR')}@@${ent.toLocaleLowerCase('pt-BR')}`
+      if (!blockPairsMap.has(pairKey)) {
+        blockPairsMap.set(pairKey, { block: b, enterprise: ent })
+      }
+    }
+    const blockPairs = [...blockPairsMap.values()].sort(
+      (a, b) =>
+        a.block.localeCompare(b.block, 'pt-BR', { numeric: true }) ||
+        a.enterprise.localeCompare(b.enterprise, 'pt-BR'),
+    )
+    const blockNameCount = new Map<string, number>()
+    for (const pair of blockPairs) {
+      const k = pair.block.toLocaleLowerCase('pt-BR')
+      blockNameCount.set(k, (blockNameCount.get(k) ?? 0) + 1)
+    }
+    const blocks = blockPairs.map((pair) => {
+      const isDup = (blockNameCount.get(pair.block.toLocaleLowerCase('pt-BR')) ?? 0) > 1
+      return {
+        value: isDup ? `${pair.block}@@${pair.enterprise}` : pair.block,
+        label: `${pair.block} (${pair.enterprise})`,
+        block: pair.block,
+        enterprise: pair.enterprise,
+      }
+    })
+    const matchesBlock = (ticket: LetterSearchResult) => {
+      if (!blockFilter) return true
+      if (blockFilter.includes('@@')) {
+        const [b, ent] = blockFilter.split('@@')
+        return ticket.block.trim() === b && (ticket.enterprise.trim() || 'Sem empreendimento') === ent
+      }
+      return ticket.block.trim() === blockFilter
+    }
+    const units = [...new Set(tickets
       .filter((ticket) =>
         (!enterpriseFilter || ticket.enterprise === enterpriseFilter) &&
-        (!blockFilter || ticket.block === blockFilter),
+        matchesBlock(ticket),
       )
       .map((ticket) => ticket.unit.trim())
       .filter(Boolean))]
-      .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true })),
-  }), [tickets, enterpriseFilter, blockFilter])
-  const filteredTickets = useMemo(() => tickets.filter((ticket) =>
-    (!enterpriseFilter || ticket.enterprise === enterpriseFilter) &&
-    (!blockFilter || ticket.block === blockFilter) &&
-    (!unitFilter || ticket.unit === unitFilter),
-  ), [tickets, enterpriseFilter, blockFilter, unitFilter])
+      .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true }))
+    return { enterprises, blocks, units }
+  }, [tickets, enterpriseFilter, blockFilter])
+  const filteredTickets = useMemo(() => tickets.filter((ticket) => {
+    const matchesBlock = !blockFilter
+      ? true
+      : blockFilter.includes('@@')
+        ? (() => {
+            const [b, ent] = blockFilter.split('@@')
+            return ticket.block.trim() === b && (ticket.enterprise.trim() || 'Sem empreendimento') === ent
+          })()
+        : ticket.block.trim() === blockFilter
+    return (
+      (!enterpriseFilter || ticket.enterprise === enterpriseFilter) &&
+      matchesBlock &&
+      (!unitFilter || ticket.unit === unitFilter)
+    )
+  }), [tickets, enterpriseFilter, blockFilter, unitFilter])
   const addressGroups = useMemo(() => {
     const groups = new Map<string, { enterprise: string; workAddress: string }>()
     for (const ticket of selectedTickets) {
@@ -239,7 +283,7 @@ export default function TicketLetterPage() {
           <label className="ticket-letter-search"><Search size={16} /><input type="search" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Buscar chamado, cliente, protocolo..." aria-label="Pesquisar chamados da etapa 7.1" /></label>
           <div className="ticket-letter-filters" aria-label="Filtros de chamados">
             <label><span>Centro de custo</span><select value={enterpriseFilter} onChange={(event) => updateEnterpriseFilter(event.target.value)}><option value="">Todos os centros de custo</option>{filterOptions.enterprises.map((enterprise) => <option key={enterprise} value={enterprise}>{enterprise}</option>)}</select></label>
-            <label><span>Bloco</span><select value={blockFilter} onChange={(event) => updateBlockFilter(event.target.value)} disabled={!filterOptions.blocks.length}><option value="">Todos os blocos</option>{filterOptions.blocks.map((block) => <option key={block} value={block}>{block}</option>)}</select></label>
+            <label><span>Bloco</span><select value={blockFilter} onChange={(event) => updateBlockFilter(event.target.value)} disabled={!filterOptions.blocks.length}><option value="">Todos os blocos</option>{filterOptions.blocks.map((block) => <option key={block.value} value={block.value}>{block.label}</option>)}</select></label>
             <label><span>Apartamento / unidade</span><select value={unitFilter} onChange={(event) => setUnitFilter(event.target.value)} disabled={!filterOptions.units.length}><option value="">Todas as unidades</option>{filterOptions.units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label>
           </div>
           {selectedTickets.length > 0 && <div className="ticket-letter-client-lock"><ShieldCheck size={15} /><span>Exibindo chamados 7.1 do mesmo cliente: <strong>{selectedTickets[0].customerName || 'Nome não informado'}</strong>.</span><button type="button" onClick={() => setSelectedTickets([])}>Limpar seleção</button></div>}

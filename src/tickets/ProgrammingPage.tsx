@@ -1,9 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, CircleAlert, Clock3, FileSignature, Loader2, Pencil, Plus, Printer, RefreshCw, Search, Send, ShieldAlert, Trash2, UsersRound } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Ban,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  ExternalLink,
+  FileSignature,
+  LayoutGrid,
+  List,
+  Loader2,
+  Pencil,
+  Plus,
+  Printer,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Send,
+  ShieldAlert,
+  Trash2,
+  UsersRound,
+  X,
+  XCircle,
+} from 'lucide-react'
+import SearchableMultiSelect, { type SearchableMultiSelectOption } from '../SearchableMultiSelect'
 import { apiRequest } from '../api/client'
 import { useLiveSync } from '../api/liveSync'
 import { getCompanyLogoDataUrl } from '../utils/companyLogo'
 import TicketProgrammingForm from './TicketProgrammingForm'
+import ProgrammingCancellationModal from './ProgrammingCancellationModal'
 import type { TicketSummary } from './types'
 import { getProgrammingRoleVisibility, saveProgrammingRoleVisibility } from './programming-role-visibility'
 import {
@@ -23,6 +52,31 @@ interface CalendarEntry {
   date: string
   description: string
   type: 'holiday' | 'work_saturday'
+}
+
+interface CollaboratorOption {
+  id: string
+  name: string
+  nickname: string
+  role: string
+  role_label: string
+  photo_url: string | null
+  is_on_leave: boolean
+}
+
+interface WeeklyAbsence {
+  id: string
+  collaboratorId: string
+  type: 'atestado' | 'falta_injustificada'
+  startDate: string
+  endDate: string
+  startTime: string | null
+  endTime: string | null
+  cid: string | null
+  notes: string | null
+  collaboratorName: string
+  collaboratorRole: string
+  collaboratorRoleLabel: string
 }
 
 interface Appointment {
@@ -48,6 +102,12 @@ interface Appointment {
   completed: boolean
   is_finalization?: boolean
   completion_term_delivered?: boolean
+  cancelled?: boolean
+  cancellation_reason_type?: 'cliente' | 'remanejamento' | 'ac_engenharia' | string | null
+  cancellation_reason?: string | null
+  cancellation_reassigned_to?: string | null
+  cancellation_reassigned_name?: string | null
+  cancelled_at?: string | null
   programming_type: 'general' | 'foreman'
   collaborator_name: string
   collaborator_role: string
@@ -265,12 +325,21 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
           drawRoleHeader({ ...group, people: scheduledPeople }, true)
           drawCollaboratorHeader(person, true)
         }
-        document.setFillColor(235, 243, 249)
-        document.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
-        document.setFont('helvetica', 'bold')
-        document.setFontSize(8.5)
-        document.setTextColor(40, 91, 132)
-        document.text(`${displayTime(appointment.starts_at)}–${displayTime(appointment.ends_at)}`, margin + 5, y + 5.2)
+        if (appointment.cancelled) {
+          document.setFillColor(254, 242, 242)
+          document.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
+          document.setFont('helvetica', 'bold')
+          document.setFontSize(8.5)
+          document.setTextColor(185, 28, 28)
+          document.text(`${displayTime(appointment.starts_at)}–${displayTime(appointment.ends_at)}  ·  [CANCELADA]${appointment.cancellation_reason ? ` (${appointment.cancellation_reason})` : ''}`, margin + 5, y + 5.2)
+        } else {
+          document.setFillColor(235, 243, 249)
+          document.roundedRect(margin + 2, y, contentWidth - 4, 7.5, 1.5, 1.5, 'F')
+          document.setFont('helvetica', 'bold')
+          document.setFontSize(8.5)
+          document.setTextColor(40, 91, 132)
+          document.text(`${displayTime(appointment.starts_at)}–${displayTime(appointment.ends_at)}`, margin + 5, y + 5.2)
+        }
         if (appointment.is_finalization) {
           y += 9.5
           if (y + 12 > bottom) {
@@ -348,6 +417,12 @@ function formatDatePt(value: string) {
   return `${day}/${month}/${year}`
 }
 
+function formatShortDatePt(value: string) {
+  if (!value) return ''
+  const [, month, day] = value.slice(0, 10).split('-')
+  return `${day}/${month}`
+}
+
 export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean } = {}) {
   const programmingFormRef = useRef<HTMLElement>(null)
   const [date, setDate] = useState(() => {
@@ -371,6 +446,27 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     return () => window.removeEventListener('popstate', checkUrlDate)
   }, [date])
   const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
+  const [viewMode, setViewMode] = useState<'daily' | 'collaborator'>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('view')
+      if (urlParam === 'collaborator') return 'collaborator'
+    }
+    return 'daily'
+  })
+  const [selectedCollaboratorIds, setSelectedCollaboratorIds] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('collaboratorId')
+      if (urlParam) {
+        return urlParam.split(',').map((id) => id.trim()).filter(Boolean)
+      }
+    }
+    return []
+  })
+  const [weeklyLayout, setWeeklyLayout] = useState<'by-day' | 'by-collaborator'>('by-day')
+  const [allCollaborators, setAllCollaborators] = useState<CollaboratorOption[]>([])
+  const [weekLoading, setWeekLoading] = useState(false)
+  const [weekAppointments, setWeekAppointments] = useState<Appointment[]>([])
+  const [weekAbsences, setWeekAbsences] = useState<WeeklyAbsence[]>([])
   const [collaboratorSearch, setCollaboratorSearch] = useState('')
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
@@ -380,6 +476,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
+  const [cancellingAppointment, setCancellingAppointment] = useState<Appointment | null>(null)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [generatingPdf, setGeneratingPdf] = useState(false)
@@ -476,6 +573,54 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     return () => { cancelled = true }
   }, [showForm, editingAppointment, ticketsLoaded, ticketsRetry])
 
+  const week = weekdayStrip(date)
+
+  useEffect(() => {
+    let cancelled = false
+    apiRequest<{ collaborators: CollaboratorOption[] }>('/api/programming/collaborators')
+      .then((res) => {
+        if (!cancelled) setAllCollaborators(res.collaborators)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [refresh])
+
+  useEffect(() => {
+    if (viewMode !== 'collaborator' || selectedCollaboratorIds.length === 0) {
+      setWeekAppointments([])
+      setWeekAbsences([])
+      return
+    }
+    let cancelled = false
+    setWeekLoading(true)
+    const startDate = week[0].date
+    const endDate = week[6].date
+    const params = new URLSearchParams({
+      startDate,
+      endDate,
+      collaboratorIds: selectedCollaboratorIds.join(','),
+    })
+    apiRequest<{
+      appointments: Appointment[]
+      absences: WeeklyAbsence[]
+    }>(`/api/programming/week?${params}`)
+      .then((data) => {
+        if (!cancelled) {
+          setWeekAppointments(data.appointments)
+          setWeekAbsences(data.absences)
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar a programação semanal.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWeekLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [viewMode, selectedCollaboratorIds, week[0].date, week[6].date, refresh])
+
   function shiftWeek(amount: number) {
     const next = new Date(`${date}T12:00:00Z`)
     next.setUTCDate(next.getUTCDate() + amount * 7)
@@ -492,14 +637,29 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     setError('')
     try {
       await apiRequest(`/api/programming/${appointment.id}`, { method: 'DELETE' })
+      setWeekAppointments((current) => current.filter((item) => item.id !== appointment.id))
       setRefresh((value) => value + 1)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir a programação.')
     }
   }
 
+  async function reactivateAppointment(appointment: Appointment) {
+    if (!window.confirm(`Deseja reativar a atividade de ${appointment.collaborator_name}?`)) return
+    setError('')
+    try {
+      await apiRequest(`/api/programming/${appointment.id}/reactivate`, { method: 'POST' })
+      setRefresh((value) => value + 1)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível reativar a programação.')
+    }
+  }
+
   async function updateAppointmentCompletion(appointment: Appointment, completed: boolean) {
     setUpdatingAppointments((current) => new Set(current).add(appointment.id))
+    setWeekAppointments((current) =>
+      current.map((item) => (item.id === appointment.id ? { ...item, completed } : item)),
+    )
     setError('')
     try {
       await apiRequest(`/api/programming/${appointment.id}/completion`, {
@@ -508,6 +668,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
       })
       setRefresh((value) => value + 1)
     } catch (requestError) {
+      setWeekAppointments((current) =>
+        current.map((item) => (item.id === appointment.id ? { ...item, completed: !completed } : item)),
+      )
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a realização da programação.')
     } finally {
       setUpdatingAppointments((current) => {
@@ -520,6 +683,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
   async function updateAppointmentTermDelivery(appointment: Appointment, delivered: boolean) {
     setUpdatingAppointments((current) => new Set(current).add(appointment.id))
+    setWeekAppointments((current) =>
+      current.map((item) => (item.id === appointment.id ? { ...item, completion_term_delivered: delivered } : item)),
+    )
     setError('')
     try {
       await apiRequest(`/api/programming/${appointment.id}/term-delivery`, {
@@ -528,6 +694,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
       })
       setRefresh((value) => value + 1)
     } catch (requestError) {
+      setWeekAppointments((current) =>
+        current.map((item) => (item.id === appointment.id ? { ...item, completion_term_delivered: !delivered } : item)),
+      )
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar o status de entrega do termo.')
     } finally {
       setUpdatingAppointments((current) => {
@@ -596,7 +765,46 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     }
   }
 
-  const week = weekdayStrip(date)
+  const collaboratorSelectOptions: SearchableMultiSelectOption[] = useMemo(() => {
+    return allCollaborators.map((c) => ({
+      value: c.id,
+      label: c.nickname ? `${c.name} (${c.nickname})` : c.name,
+      meta: roleName(c.role, c.role_label),
+    }))
+  }, [allCollaborators])
+
+  const selectedCollaboratorsList = useMemo(() => {
+    return allCollaborators.filter((c) => selectedCollaboratorIds.includes(c.id))
+  }, [allCollaborators, selectedCollaboratorIds])
+
+  const rolesWithCount = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; count: number; ids: string[] }>()
+    for (const c of allCollaborators) {
+      const existing = map.get(c.role)
+      if (existing) {
+        existing.count++
+        existing.ids.push(c.id)
+      } else {
+        map.set(c.role, {
+          key: c.role,
+          label: roleName(c.role, c.role_label),
+          count: 1,
+          ids: [c.id],
+        })
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
+  }, [allCollaborators])
+
+  const isCurrentWeek = useMemo(() => {
+    const today = programmingDateString(new Date())
+    return today >= week[0].date && today <= week[6].date
+  }, [week])
+
+  const weekLabel = useMemo(() => {
+    return `Semana de ${formatShortDatePt(week[0].date)} a ${formatDatePt(week[6].date)}`
+  }, [week])
+
   const roleOrder = ['pedreiro', 'ajudante', 'pintor', 'eletricista', 'analista', 'gestor', 'gerente']
   const roles = Array.from(new Map(staff.map((person) => [
     person.role,
@@ -638,14 +846,45 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   return (
     <section className="programming-page">
       <div className="programming-heading">
-        <div><span className="eyebrow">PROGRAMAÇÃO DA ASSISTÊNCIA TÉCNICA</span><h1>{programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</h1><p>Atividades por colaborador, com reserva de horário sem sobreposição.</p></div>
+        <div>
+          <span className="eyebrow">PROGRAMAÇÃO DA ASSISTÊNCIA TÉCNICA</span>
+          <h1>{viewMode === 'collaborator' ? 'Programação por Colaborador' : (programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados')}</h1>
+          <p>{viewMode === 'collaborator' ? 'Visualização semanal das atividades agendadas por colaborador.' : 'Atividades por colaborador, com reserva de horário sem sobreposição.'}</p>
+        </div>
         <button className="primary-button" type="button" onClick={() => { setEditingAppointment(null); setShowForm((value) => !value) }}><Plus size={16} /> Nova programação</button>
       </div>
 
-      <nav className="programming-tabs no-print" aria-label="Vertentes da programação">
-        <button type="button" className={programmingType === 'general' ? 'is-active' : ''} aria-pressed={programmingType === 'general'} onClick={() => { setProgrammingType('general'); setShowForm(false); setEditingAppointment(null) }}>Programação Geral</button>
-        <button type="button" className={programmingType === 'foreman' ? 'is-active' : ''} aria-pressed={programmingType === 'foreman'} onClick={() => { setProgrammingType('foreman'); setShowForm(false); setEditingAppointment(null) }}>Encarregados</button>
-      </nav>
+      <div className="programming-top-nav no-print">
+        <div className="programming-view-modes" role="tablist" aria-label="Modo de visualização da programação">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'daily'}
+            className={`programming-view-mode-btn ${viewMode === 'daily' ? 'is-active' : ''}`}
+            onClick={() => { setViewMode('daily'); setShowForm(false); setEditingAppointment(null) }}
+          >
+            <CalendarDays size={16} />
+            <span>Visão Diária</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'collaborator'}
+            className={`programming-view-mode-btn ${viewMode === 'collaborator' ? 'is-active' : ''}`}
+            onClick={() => { setViewMode('collaborator'); setShowForm(false); setEditingAppointment(null) }}
+          >
+            <UsersRound size={16} />
+            <span>Visão por Colaborador (Semanal)</span>
+          </button>
+        </div>
+
+        {viewMode === 'daily' && (
+          <nav className="programming-tabs" aria-label="Vertentes da programação">
+            <button type="button" className={programmingType === 'general' ? 'is-active' : ''} aria-pressed={programmingType === 'general'} onClick={() => { setProgrammingType('general'); setShowForm(false); setEditingAppointment(null) }}>Programação Geral</button>
+            <button type="button" className={programmingType === 'foreman' ? 'is-active' : ''} aria-pressed={programmingType === 'foreman'} onClick={() => { setProgrammingType('foreman'); setShowForm(false); setEditingAppointment(null) }}>Encarregados</button>
+          </nav>
+        )}
+      </div>
 
       {error && <div className="notice notice-error" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={() => setError('')} aria-label="Fechar aviso">×</button></div>}
       {whatsappNotice && <div className="notice notice-success" role="status"><Check size={16} />{whatsappNotice.text}<button type="button" onClick={() => setWhatsappNotice(null)} aria-label="Fechar aviso">×</button></div>}
@@ -658,220 +897,960 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   setRefresh((value) => value + 1)
 }} />}</section>}
 
-      <section className="programming-calendar" aria-label="Programação diária da equipe">
-        <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {collaboratorSearchTerm ? `${filteredStaffCount} colaborador(es) encontrado(s) · ${filteredDayEvents} atividade(s)` : `${visibleStaff.length} colaboradores · ${visibleDayEvents} atividades visíveis`}</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
-        <div className="calendar-week-strip-container no-print">
-          <div className="calendar-week-strip">
-            {week.map((day) => {
-              const isHoliday = holidayMap.has(day.date)
-              const holiday = holidayMap.get(day.date)
-              const isWorkSat = workSaturdayMap.has(day.date)
-              const workSat = workSaturdayMap.get(day.date)
-              return (
+      {viewMode === 'daily' ? (
+        <section className="programming-calendar" aria-label="Programação diária da equipe">
+          <header className="calendar-toolbar"><div><span className="eyebrow">DIA SELECIONADO</span><h2>{displayDate(date)}</h2><p><UsersRound size={14} /> {collaboratorSearchTerm ? `${filteredStaffCount} colaborador(es) encontrado(s) · ${filteredDayEvents} atividade(s)` : `${visibleStaff.length} colaboradores · ${visibleDayEvents} atividades visíveis`}</p></div><div className="calendar-controls"><button className="icon-button no-print" type="button" aria-label="Semana anterior" title="Semana anterior" onClick={() => shiftWeek(-1)}><ArrowLeft size={17} /></button><label className="calendar-date-picker no-print"><CalendarDays size={15} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Selecionar data da programação" /></label><button className="icon-button no-print" type="button" aria-label="Próxima semana" title="Próxima semana" onClick={() => shiftWeek(1)}><ArrowRight size={17} /></button><button className="secondary-button today-button no-print" type="button" onClick={() => setDate(programmingDateString(new Date()))}>Hoje</button><button className="icon-button no-print" type="button" aria-label="Atualizar programação" title="Atualizar programação" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={15} /></button><button className="secondary-button no-print" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf} onClick={() => void downloadPdf()}><Printer size={15} /> {generatingPdf ? 'Gerando PDF...' : 'Baixar relatório PDF'}</button><button className="secondary-button no-print whatsapp-send-button" type="button" disabled={loading || visibleDayEvents === 0 || generatingPdf || sendingWhatsapp} onClick={() => void handleSendWhatsapp()} title={programmingType === 'general' ? 'Enviar programação geral diretamente no grupo do WhatsApp' : 'Gerar e enviar a programação individual para cada encarregado no WhatsApp'}>{sendingWhatsapp ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} {sendingWhatsapp ? (programmingType === 'general' ? 'Enviando no grupo...' : 'Enviando aos encarregados...') : (programmingType === 'general' ? 'Enviar no grupo (WhatsApp)' : 'Enviar aos encarregados (WhatsApp)')}</button></div></header>
+          <div className="calendar-week-strip-container no-print">
+            <div className="calendar-week-strip">
+              {week.map((day) => {
+                const isHoliday = holidayMap.has(day.date)
+                const holiday = holidayMap.get(day.date)
+                const isWorkSat = workSaturdayMap.has(day.date)
+                const workSat = workSaturdayMap.get(day.date)
+                return (
+                  <button
+                    type="button"
+                    key={day.date}
+                    className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
+                    onClick={() => setDate(day.date)}
+                    aria-pressed={day.date === date}
+                    title={isHoliday ? `Feriado: ${holiday?.description}` : isWorkSat ? `Compensação: ${workSat?.description}` : undefined}
+                  >
+                    <span>{day.shortName}</span>
+                    <strong>{day.number}</strong>
+                    {isHoliday && <span className="calendar-day-tag holiday-tag">Feriado</span>}
+                    {isWorkSat && <span className="calendar-day-tag saturday-tag">Compensação</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="calendar-week-continuity-hint mobile-only-text" aria-hidden="true">
+              <span>Deslize para ver outros dias</span> <ChevronRight size={13} />
+            </div>
+          </div>
+          <label className="schedule-collaborator-search no-print">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="search"
+              value={collaboratorSearch}
+              onChange={(event) => setCollaboratorSearch(event.target.value)}
+              placeholder="Buscar colaborador por nome ou apelido"
+              aria-label="Buscar programação por nome ou apelido do colaborador"
+            />
+          </label>
+          {holidayMap.has(date) && (
+            <div className="calendar-day-notice holiday-notice no-print" role="alert">
+              <CalendarDays size={16} />
+              <div>
+                <strong>Data marcada como feriado: {holidayMap.get(date)?.description}</strong>
+                <p>O expediente está suspenso e novos agendamentos não são permitidos neste dia.</p>
+              </div>
+            </div>
+          )}
+          {workSaturdayMap.has(date) && (
+            <div className="calendar-day-notice saturday-notice no-print">
+              <CalendarDays size={16} />
+              <div>
+                <strong>Sábado com expediente liberado (Compensação): {workSaturdayMap.get(date)?.description}</strong>
+                <p>Jornada autorizada para atendimentos e programações de campo.</p>
+              </div>
+            </div>
+          )}
+          {programmingType === 'general' && isAdmin && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
+            <strong>Funções na programação</strong>
+            {savingRoleVisibility && <span className="schedule-role-saving">Salvando para todos...</span>}
+            {roles.map((role) => {
+              const selected = !hiddenRoleKeys.has(role.key)
+              return <button type="button" key={role.key} disabled={!roleVisibilityLoaded || savingRoleVisibility} className={`schedule-role-filter ${selected ? 'is-selected' : ''}`} aria-pressed={selected} onClick={() => {
+                const next = new Set(hiddenRoleKeys)
+                if (selected) next.add(role.key)
+                else next.delete(role.key)
+                void updateRoleVisibility(next)
+              }}>{role.title}<span>{selected ? 'Visível' : 'Oculto'}</span></button>
+            })}
+            {roles.length > 1 && <div className="schedule-role-filter-actions">
+              <button type="button" disabled={!roleVisibilityLoaded || savingRoleVisibility} onClick={() => void updateRoleVisibility(new Set())}>Mostrar todas</button>
+              <button type="button" disabled={!roleVisibilityLoaded || savingRoleVisibility} onClick={() => void updateRoleVisibility(new Set(roles.map((role) => role.key)))}>Ocultar todas</button>
+            </div>}
+          </div>}
+          <p className="programming-print-date">{displayDate(date)} · {programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</p>
+          <div className="schedule-day-content">
+            {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : collaboratorSearchTerm && filteredRoleGroups.length === 0 ? <p className="programming-empty">Nenhum colaborador encontrado para “{collaboratorSearch}”.</p> : filteredRoleGroups.map((group) => (
+              <section className={`schedule-role-group ${group.hasProgrammedPeople ? '' : 'schedule-role-group-empty'}`} key={group.key}>
+                <h3>{group.title}</h3>
+                <div className="schedule-staff-cards">
+                  {group.people.map((collaborator) => (
+                    <article className={`schedule-staff-card ${collaborator.is_on_leave ? 'schedule-staff-away' : ''} ${collaborator.absence ? 'schedule-staff-has-absence' : ''} ${collaborator.appointments.length ? '' : 'schedule-staff-unscheduled'}`} key={collaborator.id}>
+                      <header className="schedule-person">
+                        {collaborator.photo_url
+                          ? <img className="collaborator-avatar schedule-avatar" src={collaborator.photo_url} alt={`Foto de ${collaborator.name}`} />
+                          : <span className="collaborator-avatar schedule-avatar">{collaborator.name.slice(0, 1).toUpperCase()}</span>}
+                        <span>
+                          <strong>{collaborator.name}</strong>
+                          <small>
+                            {roleName(collaborator.role, collaborator.role_label)}
+                            {collaborator.absence ? (
+                              <span className="schedule-absence-header-badge">
+                                {collaborator.absence.startTime && collaborator.absence.endTime
+                                  ? ` · ${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'} (${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
+                                  : ` · Bloqueado (${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'})`}
+                              </span>
+                            ) : collaborator.is_on_leave ? ' · Afastado' : ''}
+                          </small>
+                        </span>
+                      </header>
+
+                      {collaborator.absence && (
+                        <div className={`schedule-card-absence-banner ${collaborator.appointments.length && !collaborator.absence.startTime ? 'has-conflict' : 'is-blocked'}`}>
+                          <div className="schedule-card-absence-banner-title">
+                            {collaborator.appointments.length && !collaborator.absence.startTime ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+                            <strong>
+                              {collaborator.appointments.length && !collaborator.absence.startTime
+                                ? '⚠️ ATENÇÃO: Ausência com atividades pendentes de reprogramação!'
+                                : collaborator.absence.startTime && collaborator.absence.endTime
+                                  ? `AUSÊNCIA EM HORÁRIO ESPECÍFICO · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`
+                                  : `PROGRAMAÇÃO BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
+                            </strong>
+                          </div>
+                          <p>
+                            {collaborator.absence.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}
+                            {collaborator.absence.cid ? ` (CID ${collaborator.absence.cid})` : ''} · Período de{' '}
+                            {formatDatePt(collaborator.absence.startDate)} a {formatDatePt(collaborator.absence.endDate)}
+                            {collaborator.absence.startTime && collaborator.absence.endTime
+                              ? ` (das ${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
+                              : ''}.
+                          </p>
+                          {collaborator.absence.notes && <small className="schedule-absence-notes">Obs: {collaborator.absence.notes}</small>}
+                          {collaborator.appointments.length > 0 && !collaborator.absence.startTime && (
+                            <p className="schedule-card-absence-action-hint">
+                              Existem <strong>{collaborator.appointments.length} atividade(s)</strong> agendada(s) hoje que precisam ser reprogramadas ou excluídas.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {collaborator.appointments.length ? collaborator.appointments.map((appointment) => (
+                        <div className={`schedule-appointment-summary ${appointment.is_finalization ? 'is-finalization-activity' : ''} ${appointment.cancelled ? 'is-cancelled' : ''}`} key={appointment.id}>
+                          {appointment.cancelled && (
+                            <div className="ticket-programming-cancellation-banner">
+                              <div className="ticket-programming-cancellation-header">
+                                <span className="programming-cancellation-badge">
+                                  <XCircle size={11} /> Cancelada
+                                </span>
+                                <span className="cancellation-reason-tag">
+                                  {appointment.cancellation_reason_type === 'cliente'
+                                    ? 'Pelo Cliente'
+                                    : appointment.cancellation_reason_type === 'remanejamento'
+                                      ? 'Remanejamento'
+                                      : 'AC Engenharia'}
+                                </span>
+                              </div>
+                              {appointment.cancellation_reason && (
+                                <p className="ticket-programming-cancellation-desc">
+                                  {appointment.cancellation_reason}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          {appointment.is_finalization && (
+                            <div className="ticket-programming-finalization-alert">
+                              <div className="ticket-programming-finalization-alert-top">
+                                <div className="ticket-programming-alert-tag">
+                                  <FileSignature size={12} />
+                                  <span>FINALIZAÇÃO DO CHAMADO</span>
+                                </div>
+                                <span className={`ticket-programming-delivery-badge ${appointment.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
+                                  {appointment.completion_term_delivered ? (
+                                    <><Check size={11} /> Termo entregue ao colaborador</>
+                                  ) : (
+                                    <><Clock3 size={11} /> Termo pendente de entrega</>
+                                  )}
+                                </span>
+                              </div>
+                              <p className="ticket-programming-alert-msg">
+                                Solicitar a assinatura do termo de finalização ao cliente após a realização do serviço.
+                              </p>
+                            </div>
+                          )}
+                          <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.cancelled ? '[CANCELADA] ' : ''}{appointment.protocol ? `Protocolo #${appointment.protocol}` : appointment.legal_process_number ? `Processo jurídico ${appointment.legal_process_number}` : 'Atividade avulsa'}</strong>
+                          <span>{appointment.protocol ? `${appointment.subject || 'Atendimento'} · ${appointment.enterprise}` : appointment.legal_process_number ? `${appointment.legal_process_claimant || 'Requerente não informado'} · ${appointment.enterprise || 'Sem condomínio associado'}` : 'Sem vínculo com chamado'}</span>
+                          <span>{appointment.standalone_location || (appointment.common_area_location
+                            ? `Área comum: ${appointment.common_area_location}`
+                            : appointment.block || appointment.unit
+                              ? `Bloco ${appointment.block || '—'} · Unidade ${appointment.unit || '—'}`
+                              : 'Local não especificado')}</span>
+                          <small className="schedule-appointment-description">{appointment.activity_description}</small>
+                          {[
+                            ['Materiais', appointment.materials],
+                            ['Equipamentos', appointment.equipment],
+                            ['Ferramentas', appointment.tools],
+                          ].filter(([, items]) => Array.isArray(items) && items.length > 0).map(([label, items]) => (
+                            <span className="schedule-kit-line" key={label as string}><strong>{label as string}:</strong> {(items as string[]).join(', ')}</span>
+                          ))}
+                          <div className="ticket-programming-footer">
+                            <div className="ticket-programming-checks">
+                              {appointment.cancelled ? (
+                                <span className="programming-cancelled-pill">
+                                  <XCircle size={11} /> Cancelada
+                                </span>
+                              ) : (
+                                <>
+                                  <label className={`programming-pill-check ${appointment.completed ? 'is-checked' : ''}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={appointment.completed}
+                                      disabled={updatingAppointments.has(appointment.id)}
+                                      onChange={(event) => void updateAppointmentCompletion(appointment, event.target.checked)}
+                                    />
+                                    <span>{appointment.completed ? 'Realizada' : 'Marcar como realizada'}</span>
+                                  </label>
+                                  {appointment.is_finalization && (
+                                    <label className={`programming-pill-check is-term ${appointment.completion_term_delivered ? 'is-checked' : ''}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(appointment.completion_term_delivered)}
+                                        disabled={updatingAppointments.has(appointment.id)}
+                                        onChange={(event) => void updateAppointmentTermDelivery(appointment, event.target.checked)}
+                                      />
+                                      <span>{appointment.completion_term_delivered ? 'Termo entregue' : 'Termo entregue ao colaborador'}</span>
+                                    </label>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <div className="ticket-programming-buttons">
+                              {!appointment.cancelled ? (
+                                <button
+                                  type="button"
+                                  className="text-action-btn cancel-action"
+                                  onClick={() => setCancellingAppointment(appointment)}
+                                  title="Cancelar atividade"
+                                >
+                                  <Ban size={12} /> Cancelar
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="text-action-btn reactivate-action"
+                                  onClick={() => void reactivateAppointment(appointment)}
+                                  title="Reativar atividade na agenda"
+                                >
+                                  <RotateCcw size={12} /> Reativar
+                                </button>
+                              )}
+                              <button type="button" className="text-action-btn" onClick={() => { setShowForm(false); setEditingAppointment(appointment) }}>
+                                <Pencil size={12} /> Editar
+                              </button>
+                              <button type="button" className="text-action-btn danger-action" onClick={() => void deleteAppointment(appointment)}>
+                                <Trash2 size={12} /> Excluir
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )) : (
+                        <p className="schedule-free-label">
+                          {collaborator.absence ? 'Programação bloqueada por ausência/atestado' : 'Sem atividades programadas'}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+      ) : (
+        /* Visualização Semanal por Colaborador */
+        <section className="collaborator-schedule-section" aria-label="Programação semanal por colaborador">
+          <header className="collaborator-schedule-toolbar">
+            <div className="collaborator-schedule-toolbar-left">
+              <span className="eyebrow">SEMANA SELECIONADA</span>
+              <div className="collaborator-schedule-week-heading">
+                <h2>{weekLabel}</h2>
+                {isCurrentWeek && <span className="weekly-current-week-tag"><Check size={12} /> Esta semana</span>}
+              </div>
+              <p>
+                <UsersRound size={14} />
+                {selectedCollaboratorsList.length === 0
+                  ? 'Nenhum colaborador selecionado'
+                  : `${selectedCollaboratorsList.length} colaborador(es) selecionado(s) · ${weekAppointments.length} atividade(s) na semana`}
+              </p>
+            </div>
+
+            <div className="collaborator-schedule-controls">
+              <div className="collaborator-week-nav-group no-print">
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Semana anterior"
+                  title="Semana anterior"
+                  onClick={() => shiftWeek(-1)}
+                >
+                  <ArrowLeft size={17} />
+                </button>
+                <label className="calendar-date-picker" title="Pular para semana">
+                  <CalendarDays size={15} />
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(event) => setDate(event.target.value)}
+                    aria-label="Selecionar data de referência"
+                  />
+                </label>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Próxima semana"
+                  title="Próxima semana"
+                  onClick={() => shiftWeek(1)}
+                >
+                  <ArrowRight size={17} />
+                </button>
+                <button
+                  className="secondary-button today-button"
+                  type="button"
+                  onClick={() => setDate(programmingDateString(new Date()))}
+                >
+                  Esta semana
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Atualizar programação"
+                  title="Atualizar programação"
+                  onClick={() => setRefresh((value) => value + 1)}
+                >
+                  <RefreshCw size={15} />
+                </button>
+              </div>
+
+              <div className="weekly-layout-toggle no-print" role="group" aria-label="Disposição das atividades">
                 <button
                   type="button"
-                  key={day.date}
-                  className={`calendar-day ${day.date === date ? 'calendar-day-selected' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
-                  onClick={() => setDate(day.date)}
-                  aria-pressed={day.date === date}
-                  title={isHoliday ? `Feriado: ${holiday?.description}` : isWorkSat ? `Compensação: ${workSat?.description}` : undefined}
+                  className={`weekly-layout-btn ${weeklyLayout === 'by-day' ? 'is-active' : ''}`}
+                  onClick={() => setWeeklyLayout('by-day')}
+                  title="Exibir em colunas por dia da semana"
                 >
-                  <span>{day.shortName}</span>
-                  <strong>{day.number}</strong>
-                  {isHoliday && <span className="calendar-day-tag holiday-tag">Feriado</span>}
-                  {isWorkSat && <span className="calendar-day-tag saturday-tag">Compensação</span>}
+                  <LayoutGrid size={14} />
+                  <span>Grade por Dia</span>
                 </button>
-              )
-            })}
-          </div>
-          <div className="calendar-week-continuity-hint mobile-only-text" aria-hidden="true">
-            <span>Deslize para ver outros dias</span> <ChevronRight size={13} />
-          </div>
-        </div>
-        <label className="schedule-collaborator-search no-print">
-          <Search size={16} aria-hidden="true" />
-          <input
-            type="search"
-            value={collaboratorSearch}
-            onChange={(event) => setCollaboratorSearch(event.target.value)}
-            placeholder="Buscar colaborador por nome ou apelido"
-            aria-label="Buscar programação por nome ou apelido do colaborador"
-          />
-        </label>
-        {holidayMap.has(date) && (
-          <div className="calendar-day-notice holiday-notice no-print" role="alert">
-            <CalendarDays size={16} />
-            <div>
-              <strong>Data marcada como feriado: {holidayMap.get(date)?.description}</strong>
-              <p>O expediente está suspenso e novos agendamentos não são permitidos neste dia.</p>
+                <button
+                  type="button"
+                  className={`weekly-layout-btn ${weeklyLayout === 'by-collaborator' ? 'is-active' : ''}`}
+                  onClick={() => setWeeklyLayout('by-collaborator')}
+                  title="Exibir separado por colaborador"
+                >
+                  <List size={14} />
+                  <span>Por Colaborador</span>
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-        {workSaturdayMap.has(date) && (
-          <div className="calendar-day-notice saturday-notice no-print">
-            <CalendarDays size={16} />
-            <div>
-              <strong>Sábado com expediente liberado (Compensação): {workSaturdayMap.get(date)?.description}</strong>
-              <p>Jornada autorizada para atendimentos e programações de campo.</p>
+          </header>
+
+          <div className="collaborator-selection-bar no-print">
+            <div className="collaborator-multiselect-wrap">
+              <SearchableMultiSelect
+                label="Colaboradores"
+                options={collaboratorSelectOptions}
+                value={selectedCollaboratorIds}
+                onChange={setSelectedCollaboratorIds}
+                emptyLabel="Nenhum colaborador encontrado."
+              />
             </div>
+
+            <div className="collaborator-selection-actions">
+              <button
+                type="button"
+                className="collaborator-action-btn"
+                onClick={() => setSelectedCollaboratorIds(allCollaborators.map((c) => c.id))}
+              >
+                Selecionar todos ({allCollaborators.length})
+              </button>
+              {selectedCollaboratorIds.length > 0 && (
+                <button
+                  type="button"
+                  className="collaborator-action-btn is-clear"
+                  onClick={() => setSelectedCollaboratorIds([])}
+                >
+                  Limpar seleção
+                </button>
+              )}
+            </div>
+
+            {rolesWithCount.length > 0 && (
+              <div className="collaborator-role-pills" aria-label="Atalhos por função">
+                <span className="collaborator-role-pills-label">Por função:</span>
+                {rolesWithCount.map((roleGroup) => {
+                  const allRoleSelected = roleGroup.ids.length > 0 && roleGroup.ids.every((id) => selectedCollaboratorIds.includes(id))
+                  return (
+                    <button
+                      key={roleGroup.key}
+                      type="button"
+                      className={`collaborator-role-pill ${allRoleSelected ? 'is-active' : ''}`}
+                      onClick={() => {
+                        if (allRoleSelected) {
+                          setSelectedCollaboratorIds((current) => current.filter((id) => !roleGroup.ids.includes(id)))
+                        } else {
+                          setSelectedCollaboratorIds((current) => [...new Set([...current, ...roleGroup.ids])])
+                        }
+                      }}
+                    >
+                      {roleGroup.label} ({roleGroup.count})
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
-        )}
-        {programmingType === 'general' && isAdmin && <div className="schedule-role-filters no-print" aria-label="Filtrar programação por função">
-          <strong>Funções na programação</strong>
-          {savingRoleVisibility && <span className="schedule-role-saving">Salvando para todos...</span>}
-          {roles.map((role) => {
-            const selected = !hiddenRoleKeys.has(role.key)
-            return <button type="button" key={role.key} disabled={!roleVisibilityLoaded || savingRoleVisibility} className={`schedule-role-filter ${selected ? 'is-selected' : ''}`} aria-pressed={selected} onClick={() => {
-              const next = new Set(hiddenRoleKeys)
-              if (selected) next.add(role.key)
-              else next.delete(role.key)
-              void updateRoleVisibility(next)
-            }}>{role.title}<span>{selected ? 'Visível' : 'Oculto'}</span></button>
-          })}
-          {roles.length > 1 && <div className="schedule-role-filter-actions">
-            <button type="button" disabled={!roleVisibilityLoaded || savingRoleVisibility} onClick={() => void updateRoleVisibility(new Set())}>Mostrar todas</button>
-            <button type="button" disabled={!roleVisibilityLoaded || savingRoleVisibility} onClick={() => void updateRoleVisibility(new Set(roles.map((role) => role.key)))}>Ocultar todas</button>
-          </div>}
-        </div>}
-        <p className="programming-print-date">{displayDate(date)} · {programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</p>
-        <div className="schedule-day-content">
-          {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : collaboratorSearchTerm && filteredRoleGroups.length === 0 ? <p className="programming-empty">Nenhum colaborador encontrado para “{collaboratorSearch}”.</p> : filteredRoleGroups.map((group) => (
-            <section className={`schedule-role-group ${group.hasProgrammedPeople ? '' : 'schedule-role-group-empty'}`} key={group.key}>
-              <h3>{group.title}</h3>
-              <div className="schedule-staff-cards">
-                {group.people.map((collaborator) => (
-                  <article className={`schedule-staff-card ${collaborator.is_on_leave ? 'schedule-staff-away' : ''} ${collaborator.absence ? 'schedule-staff-has-absence' : ''} ${collaborator.appointments.length ? '' : 'schedule-staff-unscheduled'}`} key={collaborator.id}>
-                    <header className="schedule-person">
-                      {collaborator.photo_url
-                        ? <img className="collaborator-avatar schedule-avatar" src={collaborator.photo_url} alt={`Foto de ${collaborator.name}`} />
-                        : <span className="collaborator-avatar schedule-avatar">{collaborator.name.slice(0, 1).toUpperCase()}</span>}
-                      <span>
-                        <strong>{collaborator.name}</strong>
-                        <small>
-                          {roleName(collaborator.role, collaborator.role_label)}
-                          {collaborator.absence ? (
-                            <span className="schedule-absence-header-badge">
-                              {collaborator.absence.startTime && collaborator.absence.endTime
-                                ? ` · ${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'} (${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
-                                : ` · Bloqueado (${collaborator.absence.type === 'atestado' ? 'Atestado' : 'Falta'})`}
-                            </span>
-                          ) : collaborator.is_on_leave ? ' · Afastado' : ''}
-                        </small>
-                      </span>
-                    </header>
 
-                    {collaborator.absence && (
-                      <div className={`schedule-card-absence-banner ${collaborator.appointments.length && !collaborator.absence.startTime ? 'has-conflict' : 'is-blocked'}`}>
-                        <div className="schedule-card-absence-banner-title">
-                          {collaborator.appointments.length && !collaborator.absence.startTime ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
-                          <strong>
-                            {collaborator.appointments.length && !collaborator.absence.startTime
-                              ? '⚠️ ATENÇÃO: Ausência com atividades pendentes de reprogramação!'
-                              : collaborator.absence.startTime && collaborator.absence.endTime
-                                ? `AUSÊNCIA EM HORÁRIO ESPECÍFICO · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`
-                                : `PROGRAMAÇÃO BLOQUEADA · ${collaborator.absence.type === 'atestado' ? 'ATESTADO MÉDICO' : 'FALTA INJUSTIFICADA'}`}
-                          </strong>
-                        </div>
-                        <p>
-                          {collaborator.absence.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}
-                          {collaborator.absence.cid ? ` (CID ${collaborator.absence.cid})` : ''} · Período de{' '}
-                          {formatDatePt(collaborator.absence.startDate)} a {formatDatePt(collaborator.absence.endDate)}
-                          {collaborator.absence.startTime && collaborator.absence.endTime
-                            ? ` (das ${collaborator.absence.startTime} às ${collaborator.absence.endTime})`
-                            : ''}.
-                        </p>
-                        {collaborator.absence.notes && <small className="schedule-absence-notes">Obs: {collaborator.absence.notes}</small>}
-                        {collaborator.appointments.length > 0 && !collaborator.absence.startTime && (
-                          <p className="schedule-card-absence-action-hint">
-                            Existem <strong>{collaborator.appointments.length} atividade(s)</strong> agendada(s) hoje que precisam ser reprogramadas ou excluídas.
-                          </p>
-                        )}
-                      </div>
+          {selectedCollaboratorsList.length > 0 && (
+            <div className="collaborator-chips-strip no-print">
+              <span className="collaborator-chips-title">Selecionados ({selectedCollaboratorsList.length}):</span>
+              <div className="collaborator-chips-list">
+                {selectedCollaboratorsList.map((collab) => (
+                  <div key={collab.id} className="collaborator-chip">
+                    {collab.photo_url ? (
+                      <img className="collaborator-chip-avatar" src={collab.photo_url} alt="" />
+                    ) : (
+                      <span className="collaborator-chip-avatar">{collab.name.slice(0, 1).toUpperCase()}</span>
                     )}
-
-                    {collaborator.appointments.length ? collaborator.appointments.map((appointment) => (
-                      <div className={`schedule-appointment-summary ${appointment.is_finalization ? 'is-finalization-activity' : ''}`} key={appointment.id}>
-                        {appointment.is_finalization && (
-                          <div className="ticket-programming-finalization-alert">
-                            <div className="ticket-programming-finalization-alert-top">
-                              <div className="ticket-programming-alert-tag">
-                                <FileSignature size={12} />
-                                <span>FINALIZAÇÃO DO CHAMADO</span>
-                              </div>
-                              <span className={`ticket-programming-delivery-badge ${appointment.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
-                                {appointment.completion_term_delivered ? (
-                                  <><Check size={11} /> Termo entregue ao colaborador</>
-                                ) : (
-                                  <><Clock3 size={11} /> Termo pendente de entrega</>
-                                )}
-                              </span>
-                            </div>
-                            <p className="ticket-programming-alert-msg">
-                              Solicitar a assinatura do termo de finalização ao cliente após a realização do serviço.
-                            </p>
-                          </div>
-                        )}
-                        <strong>{displayTime(appointment.starts_at)}–{displayTime(appointment.ends_at)} · {appointment.protocol ? `Protocolo #${appointment.protocol}` : appointment.legal_process_number ? `Processo jurídico ${appointment.legal_process_number}` : 'Atividade avulsa'}</strong>
-                        <span>{appointment.protocol ? `${appointment.subject || 'Atendimento'} · ${appointment.enterprise}` : appointment.legal_process_number ? `${appointment.legal_process_claimant || 'Requerente não informado'} · ${appointment.enterprise || 'Sem condomínio associado'}` : 'Sem vínculo com chamado'}</span>
-                        <span>{appointment.standalone_location || (appointment.common_area_location
-                          ? `Área comum: ${appointment.common_area_location}`
-                          : appointment.block || appointment.unit
-                            ? `Bloco ${appointment.block || '—'} · Unidade ${appointment.unit || '—'}`
-                            : 'Local não especificado')}</span>
-                        <small className="schedule-appointment-description">{appointment.activity_description}</small>
-                        {[
-                          ['Materiais', appointment.materials],
-                          ['Equipamentos', appointment.equipment],
-                          ['Ferramentas', appointment.tools],
-                        ].filter(([, items]) => Array.isArray(items) && items.length > 0).map(([label, items]) => (
-                          <span className="schedule-kit-line" key={label as string}><strong>{label as string}:</strong> {(items as string[]).join(', ')}</span>
-                        ))}
-                        <div className="ticket-programming-footer">
-                          <div className="ticket-programming-checks">
-                            <label className={`programming-pill-check ${appointment.completed ? 'is-checked' : ''}`}>
-                              <input
-                                type="checkbox"
-                                checked={appointment.completed}
-                                disabled={updatingAppointments.has(appointment.id)}
-                                onChange={(event) => void updateAppointmentCompletion(appointment, event.target.checked)}
-                              />
-                              <span>{appointment.completed ? 'Realizada' : 'Marcar como realizada'}</span>
-                            </label>
-                            {appointment.is_finalization && (
-                              <label className={`programming-pill-check is-term ${appointment.completion_term_delivered ? 'is-checked' : ''}`}>
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(appointment.completion_term_delivered)}
-                                  disabled={updatingAppointments.has(appointment.id)}
-                                  onChange={(event) => void updateAppointmentTermDelivery(appointment, event.target.checked)}
-                                />
-                                <span>{appointment.completion_term_delivered ? 'Termo entregue' : 'Termo entregue ao colaborador'}</span>
-                              </label>
-                            )}
-                          </div>
-                          <div className="ticket-programming-buttons">
-                            <button type="button" className="text-action-btn" onClick={() => { setShowForm(false); setEditingAppointment(appointment) }}>
-                              <Pencil size={12} /> Editar
-                            </button>
-                            <button type="button" className="text-action-btn danger-action" onClick={() => void deleteAppointment(appointment)}>
-                              <Trash2 size={12} /> Excluir
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )) : (
-                      <p className="schedule-free-label">
-                        {collaborator.absence ? 'Programação bloqueada por ausência/atestado' : 'Sem atividades programadas'}
-                      </p>
-                    )}
-                  </article>
+                    <span className="collaborator-chip-name">{collab.name}</span>
+                    <span className="collaborator-chip-role">{roleName(collab.role, collab.role_label)}</span>
+                    <button
+                      type="button"
+                      className="collaborator-chip-remove"
+                      onClick={() => setSelectedCollaboratorIds((current) => current.filter((id) => id !== collab.id))}
+                      title={`Remover ${collab.name} da visualização`}
+                      aria-label={`Remover ${collab.name}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
                 ))}
               </div>
-            </section>
-          ))}
-        </div>
-      </section>
+            </div>
+          )}
+
+          {selectedCollaboratorIds.length === 0 ? (
+            <div className="collaborator-empty-hero">
+              <div className="collaborator-empty-hero-icon">
+                <UsersRound size={42} />
+              </div>
+              <h3>Selecione um ou mais colaboradores</h3>
+              <p>Escolha os colaboradores acima ou utilize os atalhos por função para visualizar o cronograma semanal completo.</p>
+              <div className="collaborator-empty-hero-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => setSelectedCollaboratorIds(allCollaborators.map((c) => c.id))}
+                >
+                  Selecionar todos os colaboradores ({allCollaborators.length})
+                </button>
+              </div>
+            </div>
+          ) : weekLoading ? (
+            <div className="programming-empty">
+              <Loader2 className="animate-spin" size={24} />
+              <span>Carregando programação da semana...</span>
+            </div>
+          ) : weeklyLayout === 'by-day' ? (
+            /* Layout 1: Grade por Dia da Semana (7 colunas) */
+            <div className="weekly-grid-container">
+              {week.map((day) => {
+                const isHoliday = holidayMap.has(day.date)
+                const holiday = holidayMap.get(day.date)
+                const isWorkSat = workSaturdayMap.has(day.date)
+                const workSat = workSaturdayMap.get(day.date)
+                const isToday = day.date === programmingDateString(new Date())
+
+                const dayAppointments = weekAppointments.filter(
+                  (apt) => programmingDateString(new Date(apt.starts_at)) === day.date,
+                )
+                const dayAbsences = weekAbsences.filter(
+                  (abs) => abs.startDate <= day.date && abs.endDate >= day.date,
+                )
+
+                return (
+                  <div
+                    key={day.date}
+                    className={`weekly-day-column ${isToday ? 'is-today' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
+                  >
+                    <div className="weekly-day-header">
+                      <div className="weekly-day-title">
+                        <span className="weekly-day-name">{day.shortName}</span>
+                        <strong className="weekly-day-number">{day.number}</strong>
+                      </div>
+                      <div className="weekly-day-badges">
+                        {isToday && <span className="weekly-day-badge is-today">Hoje</span>}
+                        {isHoliday && <span className="weekly-day-badge is-holiday" title={holiday?.description}>Feriado</span>}
+                        {isWorkSat && <span className="weekly-day-badge is-saturday" title={workSat?.description}>Compensação</span>}
+                        {dayAppointments.length > 0 && (
+                          <span className="weekly-day-count-badge" title={`${dayAppointments.length} atividade(s)`}>
+                            {dayAppointments.length}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="weekly-day-body">
+                      {dayAbsences.map((abs) => (
+                        <div key={abs.id} className="weekly-absence-alert">
+                          <div className="weekly-absence-alert-header">
+                            <ShieldAlert size={13} />
+                            <strong>{abs.collaboratorName}</strong>
+                          </div>
+                          <p>
+                            {abs.type === 'atestado' ? 'Atestado médico' : 'Falta injustificada'}
+                            {abs.startTime && abs.endTime ? ` (${abs.startTime} às ${abs.endTime})` : ' (Integral)'}
+                            {abs.cid ? ` · CID ${abs.cid}` : ''}
+                          </p>
+                          {abs.notes && <small className="weekly-absence-notes">{abs.notes}</small>}
+                        </div>
+                      ))}
+
+                      {dayAppointments.map((apt) => (
+                        <article
+                          key={apt.id}
+                          className={`weekly-appointment-card ${apt.is_finalization ? 'is-finalization' : ''} ${apt.completed ? 'is-completed' : ''} ${apt.cancelled ? 'is-cancelled' : ''}`}
+                        >
+                          {apt.cancelled && (
+                            <div className="weekly-card-cancellation-banner">
+                              <div className="weekly-card-cancellation-header">
+                                <span className="programming-cancellation-badge mini">
+                                  <XCircle size={10} /> Cancelada
+                                </span>
+                                <span className="cancellation-reason-tag">
+                                  {apt.cancellation_reason_type === 'cliente'
+                                    ? 'Cliente'
+                                    : apt.cancellation_reason_type === 'remanejamento'
+                                      ? 'Remanejamento'
+                                      : 'AC Engenharia'}
+                                </span>
+                              </div>
+                              {apt.cancellation_reason && (
+                                <p className="weekly-card-cancellation-desc">
+                                  {apt.cancellation_reason}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {selectedCollaboratorIds.length > 1 && (
+                            <div className="weekly-card-collab-row">
+                              {apt.collaborator_photo_url ? (
+                                <img className="weekly-collab-mini-avatar" src={apt.collaborator_photo_url} alt="" />
+                              ) : (
+                                <span className="weekly-collab-mini-avatar">{apt.collaborator_name.slice(0, 1).toUpperCase()}</span>
+                              )}
+                              <span className="weekly-collab-mini-name">{apt.collaborator_name}</span>
+                              <span className="weekly-collab-mini-role">{roleName(apt.collaborator_role, apt.collaborator_role_label)}</span>
+                            </div>
+                          )}
+
+                          {apt.is_finalization && (
+                            <div className="weekly-card-finalization-banner">
+                              <FileSignature size={12} />
+                              <span>Termo de Finalização</span>
+                              <span className={`weekly-card-delivery-tag ${apt.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
+                                {apt.completion_term_delivered ? 'Entregue' : 'Pendente'}
+                              </span>
+                            </div>
+                          )}
+
+                          <div className="weekly-card-time-row">
+                            <Clock3 size={12} />
+                            <strong>{displayTime(apt.starts_at)} – {displayTime(apt.ends_at)}</strong>
+                          </div>
+
+                          <div className="weekly-card-title-row">
+                            {apt.protocol ? (
+                              <a
+                                href={`/?page=tickets&ticketId=${apt.ticket_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="weekly-card-link"
+                                title="Abrir chamado em nova guia"
+                              >
+                                <strong>{apt.cancelled ? '[CANCELADA] ' : ''}#{apt.protocol}</strong>
+                                <span>{apt.subject || 'Atendimento'}</span>
+                                <ExternalLink size={10} className="weekly-external-icon" />
+                              </a>
+                            ) : apt.legal_process_number ? (
+                              <a
+                                href={`/?page=legal-processes&processId=${apt.legal_process_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="weekly-card-link"
+                                title="Abrir processo em nova guia"
+                              >
+                                <strong>{apt.cancelled ? '[CANCELADA] ' : ''}{apt.legal_process_number}</strong>
+                                <span>{apt.legal_process_claimant || 'Requerente'}</span>
+                                <ExternalLink size={10} className="weekly-external-icon" />
+                              </a>
+                            ) : (
+                              <strong className="weekly-card-standalone-label">{apt.cancelled ? '[CANCELADA] ' : ''}Atividade avulsa</strong>
+                            )}
+                          </div>
+
+                          <div className="weekly-card-location">
+                            {apt.enterprise && <span className="weekly-card-enterprise">{apt.enterprise}</span>}
+                            <span className="weekly-card-loc-details">
+                              {apt.standalone_location || (apt.common_area_location
+                                ? `Área comum: ${apt.common_area_location}`
+                                : apt.block || apt.unit
+                                  ? `Bl. ${apt.block || '—'} · Un. ${apt.unit || '—'}`
+                                  : 'Local não especificado')}
+                            </span>
+                          </div>
+
+                          <p className="weekly-card-desc">{apt.activity_description}</p>
+
+                          {(apt.materials.length > 0 || apt.equipment.length > 0 || apt.tools.length > 0) && (
+                            <div className="weekly-card-kits">
+                              {apt.materials.length > 0 && (
+                                <div className="weekly-kit-item" title={apt.materials.join(', ')}>
+                                  <strong>Mat:</strong> {apt.materials.join(', ')}
+                                </div>
+                              )}
+                              {apt.equipment.length > 0 && (
+                                <div className="weekly-kit-item" title={apt.equipment.join(', ')}>
+                                  <strong>Eq:</strong> {apt.equipment.join(', ')}
+                                </div>
+                              )}
+                              {apt.tools.length > 0 && (
+                                <div className="weekly-kit-item" title={apt.tools.join(', ')}>
+                                  <strong>Ferr:</strong> {apt.tools.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="weekly-card-footer">
+                            <div className="weekly-card-checks">
+                              {apt.cancelled ? (
+                                <span className="programming-cancelled-pill mini">
+                                  <XCircle size={10} /> Cancelada
+                                </span>
+                              ) : (
+                                <>
+                                  <label className={`programming-pill-check ${apt.completed ? 'is-checked' : ''}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={apt.completed}
+                                      disabled={updatingAppointments.has(apt.id)}
+                                      onChange={(e) => void updateAppointmentCompletion(apt, e.target.checked)}
+                                    />
+                                    <span>{apt.completed ? 'Realizada' : 'Marcar'}</span>
+                                  </label>
+                                  {apt.is_finalization && (
+                                    <label className={`programming-pill-check is-term ${apt.completion_term_delivered ? 'is-checked' : ''}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(apt.completion_term_delivered)}
+                                        disabled={updatingAppointments.has(apt.id)}
+                                        onChange={(e) => void updateAppointmentTermDelivery(apt, e.target.checked)}
+                                      />
+                                      <span>{apt.completion_term_delivered ? 'Termo entregue' : 'Entregar termo'}</span>
+                                    </label>
+                                  )}
+                                </>
+                              )}
+                            </div>
+
+                            <div className="weekly-card-actions">
+                              {!apt.cancelled ? (
+                                <button
+                                  type="button"
+                                  className="text-action-btn cancel-action"
+                                  onClick={() => setCancellingAppointment(apt)}
+                                  title="Cancelar atividade"
+                                >
+                                  <Ban size={11} /> Cancelar
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="text-action-btn reactivate-action"
+                                  onClick={() => void reactivateAppointment(apt)}
+                                  title="Reativar atividade"
+                                >
+                                  <RotateCcw size={11} /> Reativar
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="text-action-btn"
+                                onClick={() => { setShowForm(false); setEditingAppointment(apt) }}
+                                title="Editar programação"
+                              >
+                                <Pencil size={11} /> Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="text-action-btn danger-action"
+                                onClick={() => void deleteAppointment(apt)}
+                                title="Excluir programação"
+                              >
+                                <Trash2 size={11} /> Excluir
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+
+                      {dayAppointments.length === 0 && dayAbsences.length === 0 && (
+                        <div className="weekly-day-empty">
+                          <span>Sem atividades</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            /* Layout 2: Separado por Colaborador */
+            <div className="weekly-by-collaborator-list">
+              {selectedCollaboratorsList.map((collab) => {
+                const collabAppointments = weekAppointments.filter((apt) => apt.collaborator_id === collab.id)
+                const collabAbsences = weekAbsences.filter((abs) => abs.collaboratorId === collab.id)
+
+                return (
+                  <section key={collab.id} className="weekly-collab-section">
+                    <header className="weekly-collab-section-header">
+                      <div className="weekly-collab-section-info">
+                        {collab.photo_url ? (
+                          <img className="collaborator-avatar" src={collab.photo_url} alt="" />
+                        ) : (
+                          <span className="collaborator-avatar">{collab.name.slice(0, 1).toUpperCase()}</span>
+                        )}
+                        <div>
+                          <h3>{collab.name} {collab.nickname ? `(${collab.nickname})` : ''}</h3>
+                          <div className="weekly-collab-section-meta">
+                            <span className="role-tag">{roleName(collab.role, collab.role_label)}</span>
+                            {collab.is_on_leave && <span className="status-tag is-away">Afastado</span>}
+                            <span className="activity-count-tag">{collabAppointments.length} atividade(s) nesta semana</span>
+                          </div>
+                        </div>
+                      </div>
+                    </header>
+
+                    <div className="weekly-grid-container is-nested">
+                      {week.map((day) => {
+                        const isHoliday = holidayMap.has(day.date)
+                        const holiday = holidayMap.get(day.date)
+                        const isWorkSat = workSaturdayMap.has(day.date)
+                        const workSat = workSaturdayMap.get(day.date)
+                        const isToday = day.date === programmingDateString(new Date())
+
+                        const dayApts = collabAppointments.filter(
+                          (apt) => programmingDateString(new Date(apt.starts_at)) === day.date,
+                        )
+                        const dayAbs = collabAbsences.filter(
+                          (abs) => abs.startDate <= day.date && abs.endDate >= day.date,
+                        )
+
+                        return (
+                          <div
+                            key={day.date}
+                            className={`weekly-day-column ${isToday ? 'is-today' : ''} ${isHoliday ? 'is-holiday' : ''} ${isWorkSat ? 'is-work-saturday' : ''}`}
+                          >
+                            <div className="weekly-day-header">
+                              <div className="weekly-day-title">
+                                <span className="weekly-day-name">{day.shortName}</span>
+                                <strong className="weekly-day-number">{day.number}</strong>
+                              </div>
+                              <div className="weekly-day-badges">
+                                {isToday && <span className="weekly-day-badge is-today">Hoje</span>}
+                                {isHoliday && <span className="weekly-day-badge is-holiday" title={holiday?.description}>Feriado</span>}
+                                {isWorkSat && <span className="weekly-day-badge is-saturday" title={workSat?.description}>Compensação</span>}
+                                {dayApts.length > 0 && <span className="weekly-day-count-badge">{dayApts.length}</span>}
+                              </div>
+                            </div>
+
+                            <div className="weekly-day-body">
+                              {dayAbs.map((abs) => (
+                                <div key={abs.id} className="weekly-absence-alert">
+                                  <ShieldAlert size={13} />
+                                  <div>
+                                    <strong>{abs.type === 'atestado' ? 'Atestado médico' : 'Falta'}</strong>
+                                    <p>
+                                      {abs.startTime && abs.endTime ? `${abs.startTime} às ${abs.endTime}` : 'Dia inteiro'}
+                                      {abs.cid ? ` · CID ${abs.cid}` : ''}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+
+                              {dayApts.map((apt) => (
+                                <article
+                                  key={apt.id}
+                                  className={`weekly-appointment-card ${apt.is_finalization ? 'is-finalization' : ''} ${apt.completed ? 'is-completed' : ''} ${apt.cancelled ? 'is-cancelled' : ''}`}
+                                >
+                                  {apt.cancelled && (
+                                    <div className="weekly-card-cancellation-banner">
+                                      <div className="weekly-card-cancellation-header">
+                                        <span className="programming-cancellation-badge mini">
+                                          <XCircle size={10} /> Cancelada
+                                        </span>
+                                        <span className="cancellation-reason-tag">
+                                          {apt.cancellation_reason_type === 'cliente'
+                                            ? 'Cliente'
+                                            : apt.cancellation_reason_type === 'remanejamento'
+                                              ? 'Remanejamento'
+                                              : 'AC Engenharia'}
+                                        </span>
+                                      </div>
+                                      {apt.cancellation_reason && (
+                                        <p className="weekly-card-cancellation-desc">
+                                          {apt.cancellation_reason}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {apt.is_finalization && (
+                                    <div className="weekly-card-finalization-banner">
+                                      <FileSignature size={12} />
+                                      <span>Termo de Finalização</span>
+                                      <span className={`weekly-card-delivery-tag ${apt.completion_term_delivered ? 'is-delivered' : 'is-pending'}`}>
+                                        {apt.completion_term_delivered ? 'Entregue' : 'Pendente'}
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  <div className="weekly-card-time-row">
+                                    <Clock3 size={12} />
+                                    <strong>{displayTime(apt.starts_at)} – {displayTime(apt.ends_at)}</strong>
+                                  </div>
+
+                                  <div className="weekly-card-title-row">
+                                    {apt.protocol ? (
+                                      <a
+                                        href={`/?page=tickets&ticketId=${apt.ticket_id}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="weekly-card-link"
+                                      >
+                                        <strong>{apt.cancelled ? '[CANCELADA] ' : ''}#{apt.protocol}</strong>
+                                        <span>{apt.subject || 'Atendimento'}</span>
+                                        <ExternalLink size={10} className="weekly-external-icon" />
+                                      </a>
+                                    ) : apt.legal_process_number ? (
+                                      <a
+                                        href={`/?page=legal-processes&processId=${apt.legal_process_id}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="weekly-card-link"
+                                      >
+                                        <strong>{apt.cancelled ? '[CANCELADA] ' : ''}{apt.legal_process_number}</strong>
+                                        <span>{apt.legal_process_claimant || 'Requerente'}</span>
+                                        <ExternalLink size={10} className="weekly-external-icon" />
+                                      </a>
+                                    ) : (
+                                      <strong className="weekly-card-standalone-label">{apt.cancelled ? '[CANCELADA] ' : ''}Atividade avulsa</strong>
+                                    )}
+                                  </div>
+
+                                  <div className="weekly-card-location">
+                                    {apt.enterprise && <span className="weekly-card-enterprise">{apt.enterprise}</span>}
+                                    <span className="weekly-card-loc-details">
+                                      {apt.standalone_location || (apt.common_area_location
+                                        ? `Área comum: ${apt.common_area_location}`
+                                        : apt.block || apt.unit
+                                          ? `Bl. ${apt.block || '—'} · Un. ${apt.unit || '—'}`
+                                          : 'Local não especificado')}
+                                    </span>
+                                  </div>
+
+                                  <p className="weekly-card-desc">{apt.activity_description}</p>
+
+                                  <div className="weekly-card-footer">
+                                    <div className="weekly-card-checks">
+                                      {apt.cancelled ? (
+                                        <span className="programming-cancelled-pill mini">
+                                          <XCircle size={10} /> Cancelada
+                                        </span>
+                                      ) : (
+                                        <label className={`programming-pill-check ${apt.completed ? 'is-checked' : ''}`}>
+                                          <input
+                                            type="checkbox"
+                                            checked={apt.completed}
+                                            disabled={updatingAppointments.has(apt.id)}
+                                            onChange={(e) => void updateAppointmentCompletion(apt, e.target.checked)}
+                                          />
+                                          <span>{apt.completed ? 'Realizada' : 'Marcar'}</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                    <div className="weekly-card-actions">
+                                      {!apt.cancelled ? (
+                                        <button
+                                          type="button"
+                                          className="text-action-btn cancel-action"
+                                          onClick={() => setCancellingAppointment(apt)}
+                                          title="Cancelar atividade"
+                                        >
+                                          <Ban size={11} /> Cancelar
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="text-action-btn reactivate-action"
+                                          onClick={() => void reactivateAppointment(apt)}
+                                          title="Reativar atividade"
+                                        >
+                                          <RotateCcw size={11} /> Reativar
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="text-action-btn"
+                                        onClick={() => { setShowForm(false); setEditingAppointment(apt) }}
+                                      >
+                                        <Pencil size={11} /> Editar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-action-btn danger-action"
+                                        onClick={() => void deleteAppointment(apt)}
+                                      >
+                                        <Trash2 size={11} /> Excluir
+                                      </button>
+                                    </div>
+                                  </div>
+                                </article>
+                              ))}
+
+                              {dayApts.length === 0 && dayAbs.length === 0 && (
+                                <div className="weekly-day-empty">
+                                  <span>Livre</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
       <p className="programming-availability-note no-print"><Clock3 size={14} /> A disponibilidade é recalculada ao selecionar colaborador e dia; o servidor bloqueia reservas simultâneas.</p>
+
+      {cancellingAppointment && (
+        <ProgrammingCancellationModal
+          appointment={cancellingAppointment}
+          onClose={() => setCancellingAppointment(null)}
+          onCancelled={() => {
+            setCancellingAppointment(null)
+            setRefresh((value) => value + 1)
+          }}
+        />
+      )}
     </section>
   )
 }
