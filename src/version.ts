@@ -34,7 +34,7 @@ export const APP_VERSION_HISTORY: VersionRelease[] = [
           'Filtro de blocos vinculado dinamicamente aos empreendimentos selecionados em todas as telas (Chamados, Dashboard de Chamados e Preenchimento de Cartas), exibindo ao lado de cada bloco, em cinza e entre parênteses, a qual empreendimento ele pertence.',
           'Botão "Abrir no CVCRM" no topo de cada chamado para acesso direto ao atendimento correspondente no Construtor de Vendas.',
           'Suporte a abertura direta em nova guia (clique com botão do scroll do mouse, Ctrl+Clique ou botão direito -> "Abrir link em uma nova guia") nos IDs e cartões de Chamados e Processos Jurídicos (tanto no Kanban quanto na Lista).',
-          'Quadro dinâmico "Equipe em Campo Hoje" na tela de Início agrupado por centro de custo/obra, com filtros por turno (Agora, Manhã, Tarde e Dia todo) e sinalização de transições de rota.',
+          'Quadro dinâmico "Equipe em Campo Hoje" na tela de Início agrupado por centro de custo/obra, exibindo o número do chamado (ou processo jurídico/atividade avulsa) ao lado do nome de cada colaborador, com filtros por turno (Agora, Manhã, Tarde e Dia todo), sinalização de transições de rota e substituição automática em tempo real caso uma programação seja cancelada e outra entre no mesmo horário e localidade.',
           'Gestão de atestados e faltas de colaboradores com suporte a horários parciais, edição de registros, alerta automático de conflitos com agendamentos e atalhos para reagendamento.',
           'Inclusão de chamados internos e opção "Sem empreendimento" nos filtros e indicadores do Dashboard de Chamados.',
         ],

@@ -7,8 +7,10 @@ import { recordAuditLog } from '../services/audit-log.js'
 import { getWhatsAppSettings, sendWhatsAppPdfDocument } from '../services/evolution-api.js'
 import { decryptPersonalData } from '../services/personal-data.js'
 import { fetchDailyProgrammingData, generateSchedulePdf } from '../services/schedule-pdf.js'
+import { broadcastSyncEvent } from '../services/sync-events.js'
 import { recordTicketActivity } from '../services/ticket-activity.js'
 import { getTodayDateString } from '../services/working-days.js'
+import { invalidateHomeSummaryCache } from './home.js'
 
 const router = Router()
 const programmingTimeZone = APP_TIMEZONE
@@ -31,12 +33,41 @@ function isValidDate(value: string) {
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
 }
 
-function datesInRange(startDate: string, endDate: string) {
+function isNotSunday(value: string) {
+  return isValidDate(value) && new Date(`${value}T12:00:00Z`).getUTCDay() !== 0
+}
+
+async function getExpectedWorkDatesInRange(
+  client: import('pg').PoolClient,
+  startDate: string,
+  endDate: string,
+): Promise<string[]> {
+  const calendarRes = await client.query<{ date: string; type: 'holiday' | 'work_saturday' }>(
+    `SELECT date::text AS date, type
+     FROM work_calendar
+     WHERE date >= $1::date AND date <= $2::date`,
+    [startDate, endDate],
+  )
+  const holidays = new Set<string>()
+  const workSaturdays = new Set<string>()
+  for (const row of calendarRes.rows) {
+    if (row.type === 'holiday') holidays.add(row.date)
+    else if (row.type === 'work_saturday') workSaturdays.add(row.date)
+  }
+
   const dates: string[] = []
   const date = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   while (date <= end) {
-    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) dates.push(date.toISOString().slice(0, 10))
+    const iso = date.toISOString().slice(0, 10)
+    const day = date.getUTCDay()
+    if (day !== 0 && !holidays.has(iso)) {
+      if (day === 6) {
+        if (workSaturdays.has(iso)) dates.push(iso)
+      } else {
+        dates.push(iso)
+      }
+    }
     date.setUTCDate(date.getUTCDate() + 1)
   }
   return dates
@@ -52,8 +83,7 @@ const occurrenceSchema = z.object({
   date: dateSchema,
   startsAt: datetimeSchema,
   endsAt: datetimeSchema,
-}).refine((entry) => isValidDate(entry.date) &&
-  datesInRange(entry.date, entry.date).length === 1 &&
+}).refine((entry) => isNotSunday(entry.date) &&
   new Date(entry.endsAt) > new Date(entry.startsAt), {
   path: ['endsAt'],
   message: 'Informe um dia útil válido e um horário final posterior ao inicial.',
@@ -67,7 +97,7 @@ const programmingSchema = z.object({
   collaboratorIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
   startDate: dateSchema,
   endDate: dateSchema,
-  occurrences: z.array(occurrenceSchema).min(1).max(65),
+  occurrences: z.array(occurrenceSchema).min(1).max(80),
   activityDescription: z.string().trim().min(1).max(3000),
   standaloneLocation: z.string().trim().max(500).default(''),
   isFinalization: z.boolean().default(false),
@@ -90,9 +120,14 @@ const programmingSchema = z.object({
     context.addIssue({ code: 'custom', path: ['endDate'], message: 'O intervalo deve ter no máximo 90 dias corridos.' })
     return
   }
-  const expectedDates = datesInRange(entry.startDate, entry.endDate)
   const occurrenceDates = entry.occurrences.map((occurrence) => occurrence.date)
-  if (!expectedDates.length || expectedDates.join(',') !== occurrenceDates.join(',')) {
+  const uniqueSorted = [...new Set(occurrenceDates)].sort()
+  if (
+    !occurrenceDates.length ||
+    uniqueSorted.length !== occurrenceDates.length ||
+    uniqueSorted.join(',') !== occurrenceDates.join(',') ||
+    occurrenceDates.some((d) => d < entry.startDate || d > entry.endDate)
+  ) {
     context.addIssue({ code: 'custom', path: ['occurrences'], message: 'Inclua exatamente uma programação para cada dia útil do intervalo.' })
   }
 })
@@ -110,7 +145,7 @@ const singleProgrammingSchema = z.object({
   isFinalization: z.boolean().default(false),
   completionTermDelivered: z.boolean().default(false),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
-  if (!isValidDate(entry.date) || datesInRange(entry.date, entry.date).length !== 1 || new Date(entry.endsAt) <= new Date(entry.startsAt)) {
+  if (!isNotSunday(entry.date) || new Date(entry.endsAt) <= new Date(entry.startsAt)) {
     context.addIssue({ code: 'custom', path: ['endsAt'], message: 'Informe um dia útil e um horário final posterior ao inicial.' })
   }
   if (entry.activityType === 'ticket' &&
@@ -844,8 +879,7 @@ async function validateAvailability(
     throw new Error(`Agenda bloqueada: a data ${d}/${m}/${y} é feriado (${calendarDay.rows[0].description}).`)
   }
 
-  const dateInTz = new Date(startsAt.toLocaleString('en-US', { timeZone: programmingTimeZone }))
-  const dayOfWeek = dateInTz.getDay() // 0 = Dom, 6 = Sáb
+  const dayOfWeek = new Date(`${dateIso}T12:00:00Z`).getUTCDay() // 0 = Dom, 6 = Sáb
 
   if (dayOfWeek === 0) {
     throw new Error('Agenda bloqueada: domingos não possuem expediente da assistência técnica.')
@@ -1017,6 +1051,11 @@ router.post('/', async (req, res, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    const expectedDates = await getExpectedWorkDatesInRange(client, data.startDate, data.endDate)
+    const occurrenceDates = data.occurrences.map((occurrence) => occurrence.date)
+    if (!expectedDates.length || expectedDates.join(',') !== occurrenceDates.join(',')) {
+      throw new Error('Inclua exatamente uma programação para cada dia útil do intervalo.')
+    }
     await validateLegalProcess(client, data.legalProcessId)
     const collaboratorNames = await client.query<{ id: string; name: string; role: string }>(
       'SELECT id, name, role FROM collaborators WHERE id = ANY($1::bigint[])',
@@ -1082,10 +1121,12 @@ router.post('/', async (req, res, next) => {
       }
     }
     await client.query('COMMIT')
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'created' })
     res.status(201).json({ ids })
   } catch (error) {
     await client.query('ROLLBACK')
-    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde/.test(error.message)) {
+    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde|Agenda bloqueada|Horário fora do expediente|dia útil/.test(error.message)) {
       res.status(409).json({ error: error.message })
       return
     }
@@ -1189,10 +1230,12 @@ router.put('/:id', async (req, res, next) => {
       })
     }
     await client.query('COMMIT')
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'updated', entityId: programmingId.data })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')
-    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde/.test(error.message)) {
+    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde|Agenda bloqueada|Horário fora do expediente|dia útil/.test(error.message)) {
       res.status(409).json({ error: error.message })
       return
     }
@@ -1238,6 +1281,8 @@ router.patch('/:id/completion', async (req, res, next) => {
       res.status(404).json({ error: 'Programação não encontrada.' })
       return
     }
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'completion_updated', entityId: programmingId.data })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -1266,6 +1311,8 @@ router.patch('/:id/term-delivery', async (req, res, next) => {
       res.status(404).json({ error: 'Programação não encontrada.' })
       return
     }
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'term_delivery_updated', entityId: programmingId.data })
     res.status(204).end()
   } catch (error) {
     next(error)
@@ -1472,6 +1519,8 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
     }
 
     await client.query('COMMIT')
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'cancelled', entityId: programmingId.data })
     res.json({
       success: true,
       cancelledId: programmingId.data,
@@ -1481,7 +1530,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
     })
   } catch (error) {
     await client.query('ROLLBACK')
-    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde/.test(error.message)) {
+    if (error instanceof Error && /encontrado|afastado|Conflito|corresponde|Agenda bloqueada|Horário fora do expediente|dia útil/.test(error.message)) {
       res.status(409).json({ error: error.message })
       return
     }
@@ -1568,6 +1617,8 @@ router.post('/:id/reactivate', requireAuth, async (req, res, next) => {
     }
 
     await client.query('COMMIT')
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'reactivated', entityId: programmingId.data })
     res.json({ success: true })
   } catch (error) {
     await client.query('ROLLBACK')
@@ -1625,6 +1676,8 @@ router.delete('/:id', async (req, res, next) => {
     }
     await client.query('DELETE FROM ticket_programming WHERE id = $1', [programmingId.data])
     await client.query('COMMIT')
+    invalidateHomeSummaryCache()
+    void broadcastSyncEvent({ scope: 'programming', action: 'updated', entityId: programmingId.data })
     res.status(204).end()
   } catch (error) {
     await client.query('ROLLBACK')

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight,
   ArrowRightLeft,
@@ -31,6 +31,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { apiRequest } from './api/client'
+import { useLiveSync } from './api/liveSync'
 import './HomeDashboard.css'
 
 export type AdminPage =
@@ -98,6 +99,8 @@ type FieldTeamView = 'cost-center' | 'list'
 
 interface CostCenterWorker {
   id: string
+  ticketId: string | null
+  legalProcessId: string | null
   name: string
   role: string
   startsAt: string
@@ -119,6 +122,7 @@ interface CostCenterGroup {
   type: 'ticket' | 'legal' | 'standalone'
   badge: string
   sublocation: string | null
+  uniqueWorkersCount: number
   workers: CostCenterWorker[]
 }
 
@@ -162,6 +166,8 @@ interface HomeSummaryData {
     collaboratorsCount: number
     todayAppointments: Array<{
       id: string
+      ticketId?: string | null
+      legalProcessId?: string | null
       startsAt: string
       endsAt: string
       service: string
@@ -273,23 +279,24 @@ export default function HomeDashboard({
   }
 
   // Carregar dados de resumo da Home
-  useEffect(() => {
-    let cancelled = false
+  const loadHomeSummary = useCallback(() => {
     apiRequest<HomeSummaryData>('/api/home/summary')
       .then((data) => {
-        if (!cancelled) {
-          setSummary(data)
-          setSummaryLoading(false)
-        }
+        setSummary(data)
+        setSummaryLoading(false)
       })
       .catch((_err) => {
-        if (!cancelled) setSummaryLoading(false)
+        setSummaryLoading(false)
       })
-
-    return () => {
-      cancelled = true
-    }
   }, [])
+
+  useEffect(() => {
+    loadHomeSummary()
+  }, [loadHomeSummary])
+
+  useLiveSync(['programming', 'tickets', 'collaborators', 'legal-processes'], () => {
+    loadHomeSummary()
+  })
 
   // Carregar aniversários se permitido
   useEffect(() => {
@@ -470,6 +477,7 @@ export default function HomeDashboard({
           type: cc.type,
           badge: cc.badge,
           sublocation: cc.sublocation,
+          uniqueWorkersCount: 0,
           workers: [],
         })
       }
@@ -528,19 +536,39 @@ export default function HomeDashboard({
         }
       }
 
-      const existing = group.workers.find((w) => w.name === app.collaboratorName)
-      if (!existing) {
-        const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
+      const subloc = [app.block ? `Bl. ${app.block}` : null, app.unit ? `Un. ${app.unit}` : null].filter(Boolean).join(' · ') || null
+      const serviceText = app.service || 'Serviço geral'
+      const { start, end } = formatTimeRange(app.startsAt, app.endsAt)
+
+      // Se o mesmo colaborador tiver dois blocos seguidos do MESMO chamado e mesma descrição neste centro de custo, mescla o horário;
+      // caso seja outro chamado ou atividade diferente, exibe a programação correspondente.
+      const existingSameTicket = group.workers.find(
+        (w) =>
+          w.name === app.collaboratorName &&
+          w.ticketProtocol === app.ticketProtocol &&
+          w.legalProcessNumber === app.legalProcessNumber &&
+          w.sublocation === subloc &&
+          w.service === serviceText,
+      )
+
+      if (existingSameTicket) {
+        if (new Date(app.endsAt).getTime() > new Date(existingSameTicket.endsAt).getTime()) {
+          existingSameTicket.endsAt = app.endsAt
+          existingSameTicket.timeRange = { start: existingSameTicket.timeRange.start, end }
+        }
+      } else {
         group.workers.push({
           id: app.id,
+          ticketId: app.ticketId ?? null,
+          legalProcessId: app.legalProcessId ?? null,
           name: app.collaboratorName,
           role: app.collaboratorRole.replace(/_/g, ' '),
           startsAt: app.startsAt,
           endsAt: app.endsAt,
           timeRange: { start, end },
-          service: app.service || 'Serviço geral',
+          service: serviceText,
           completed: app.completed,
-          sublocation: [app.block ? `Bl. ${app.block}` : null, app.unit ? `Un. ${app.unit}` : null].filter(Boolean).join(' · ') || null,
+          sublocation: subloc,
           ticketProtocol: app.ticketProtocol,
           legalProcessNumber: app.legalProcessNumber,
           transitionTag,
@@ -548,8 +576,22 @@ export default function HomeDashboard({
       }
     }
 
+    for (const group of groupsMap.values()) {
+      group.uniqueWorkersCount = new Set(group.workers.map((w) => w.name)).size
+      if (group.type === 'ticket') {
+        const uniqueProtocols = Array.from(new Set(group.workers.map((w) => w.ticketProtocol).filter(Boolean)))
+        if (uniqueProtocols.length === 1) {
+          group.badge = `Chamado #${uniqueProtocols[0]}`
+        } else if (uniqueProtocols.length > 1) {
+          group.badge = `${uniqueProtocols.length} chamados (${uniqueProtocols.map((p) => `#${p}`).join(', ')})`
+        } else {
+          group.badge = 'Chamado'
+        }
+      }
+    }
+
     return Array.from(groupsMap.values()).sort(
-      (a, b) => b.workers.length - a.workers.length || a.name.localeCompare(b.name, 'pt-BR'),
+      (a, b) => b.uniqueWorkersCount - a.uniqueWorkersCount || a.name.localeCompare(b.name, 'pt-BR'),
     )
   }, [allAppointments, fieldTeamPeriod, appointmentsByWorker])
 
@@ -911,7 +953,7 @@ export default function HomeDashboard({
                         </div>
                         <span className="home-cost-center-count-badge">
                           <UsersRound size={12} />
-                          <strong>{group.workers.length}</strong> {group.workers.length === 1 ? 'pessoa' : 'pessoas'}
+                          <strong>{group.uniqueWorkersCount}</strong> {group.uniqueWorkersCount === 1 ? 'pessoa' : 'pessoas'}
                         </span>
                       </div>
 
@@ -930,7 +972,30 @@ export default function HomeDashboard({
 
                               <div className="home-cc-worker-info">
                                 <div className="home-cc-worker-heading">
-                                  <span className="home-cc-worker-name">{worker.name}</span>
+                                  <div className="home-cc-worker-name-wrap">
+                                    <span className="home-cc-worker-name">{worker.name}</span>
+                                    {worker.ticketProtocol ? (
+                                      <a
+                                        href={worker.ticketId ? `/?page=tickets&ticketId=${worker.ticketId}` : undefined}
+                                        className="home-cc-worker-ticket-badge"
+                                        title={`Chamado #${worker.ticketProtocol}`}
+                                      >
+                                        Chamado #{worker.ticketProtocol}
+                                      </a>
+                                    ) : worker.legalProcessNumber ? (
+                                      <a
+                                        href={worker.legalProcessId ? `/?page=legal-processes&processId=${worker.legalProcessId}` : undefined}
+                                        className="home-cc-worker-ticket-badge is-legal"
+                                        title={`Processo Jurídico #${worker.legalProcessNumber}`}
+                                      >
+                                        Proc. #{worker.legalProcessNumber}
+                                      </a>
+                                    ) : (
+                                      <span className="home-cc-worker-ticket-badge is-standalone">
+                                        Avulsa
+                                      </span>
+                                    )}
+                                  </div>
                                   <span className="home-cc-worker-hours">
                                     <Clock size={10} /> {worker.timeRange.start} – {worker.timeRange.end}
                                   </span>
@@ -998,6 +1063,27 @@ export default function HomeDashboard({
                         <div className="home-appointment-details">
                           <div className="home-appointment-title">
                             <span className="home-appointment-worker">{app.collaboratorName}</span>
+                            {app.ticketProtocol ? (
+                              <a
+                                href={app.ticketId ? `/?page=tickets&ticketId=${app.ticketId}` : undefined}
+                                className="home-cc-worker-ticket-badge"
+                                title={`Chamado #${app.ticketProtocol}`}
+                              >
+                                Chamado #{app.ticketProtocol}
+                              </a>
+                            ) : app.legalProcessNumber ? (
+                              <a
+                                href={app.legalProcessId ? `/?page=legal-processes&processId=${app.legalProcessId}` : undefined}
+                                className="home-cc-worker-ticket-badge is-legal"
+                                title={`Processo Jurídico #${app.legalProcessNumber}`}
+                              >
+                                Proc. #{app.legalProcessNumber}
+                              </a>
+                            ) : (
+                              <span className="home-cc-worker-ticket-badge is-standalone">
+                                Avulsa
+                              </span>
+                            )}
                             <span className="home-appointment-role">{app.collaboratorRole.replace(/_/g, ' ')}</span>
                           </div>
                           <div className="home-appointment-desc">{app.service || 'Serviço técnico geral'}</div>

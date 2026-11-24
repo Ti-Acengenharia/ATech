@@ -407,6 +407,7 @@ async function findCollaboratorProgrammingConflicts(
      WHERE p.collaborator_id = $1
        AND p.starts_at < (($3::date + interval '1 day')::timestamp AT TIME ZONE 'America/Maceio')
        AND p.ends_at > ($2::date::timestamp AT TIME ZONE 'America/Maceio')
+       AND (p.cancelled = FALSE OR p.cancelled IS NULL)
      ORDER BY p.starts_at ASC`,
     [collaboratorId, startDateStr, endDateStr],
   )

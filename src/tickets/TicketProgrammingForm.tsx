@@ -893,7 +893,7 @@ export default function TicketProgrammingForm({
           value={startDate}
           onChange={(event) => {
             setStartDate(event.target.value)
-            if (event.target.value > endDate) setEndDate(event.target.value)
+            if (editingAppointment || event.target.value > endDate) setEndDate(event.target.value)
           }}
           required
         />

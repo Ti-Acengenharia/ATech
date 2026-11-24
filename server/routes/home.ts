@@ -180,7 +180,8 @@ router.get('/summary', async (req, res, next) => {
                COUNT(DISTINCT p.collaborator_id)::int AS collaborators_count
              FROM ticket_programming p
              WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
-               AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')`,
+               AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
+               AND (p.cancelled = FALSE OR p.cancelled IS NULL)`,
             [todayDateStr],
           ).then((r) => r.rows[0] ?? { total_today: 0, collaborators_count: 0 })
           .catch((err) => {
@@ -193,6 +194,8 @@ router.get('/summary', async (req, res, next) => {
       canAccess('schedule')
         ? pool.query<{
             id: string
+            ticket_id: string | null
+            legal_process_id: string | null
             starts_at: string
             ends_at: string
             service: string
@@ -210,10 +213,11 @@ router.get('/summary', async (req, res, next) => {
             legal_process_title: string | null
           }>(
             `SELECT
-               p.id, p.starts_at, p.ends_at, p.activity_description AS service, p.completed,
-               COALESCE(p.enterprise, t.enterprise) AS enterprise,
-               COALESCE(p.block, t.block) AS block,
-               COALESCE(p.unit, t.unit) AS unit,
+               p.id, p.ticket_id, p.legal_process_id,
+               p.starts_at, p.ends_at, p.activity_description AS service, p.completed,
+               COALESCE(NULLIF(TRIM(p.enterprise), ''), t.enterprise) AS enterprise,
+               COALESCE(NULLIF(TRIM(p.block), ''), t.block) AS block,
+               COALESCE(NULLIF(TRIM(p.unit), ''), t.unit) AS unit,
                p.standalone_location, p.common_area_location,
                c.id AS collaborator_id, c.name AS collaborator_name, c.role AS collaborator_role,
                t.protocol AS ticket_protocol,
@@ -224,6 +228,7 @@ router.get('/summary', async (req, res, next) => {
              LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
              WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${programmingTimeZone}')
                AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
+               AND (p.cancelled = FALSE OR p.cancelled IS NULL)
              ORDER BY p.starts_at ASC, p.id ASC`,
             [todayDateStr],
           ).then((r) => r.rows)
@@ -314,6 +319,8 @@ router.get('/summary', async (req, res, next) => {
             collaboratorsCount: scheduleCount.collaborators_count,
             todayAppointments: todayAppointments.map((app) => ({
               id: app.id,
+              ticketId: app.ticket_id,
+              legalProcessId: app.legal_process_id,
               startsAt: app.starts_at,
               endsAt: app.ends_at,
               service: app.service,
