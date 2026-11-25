@@ -99,7 +99,7 @@ export interface TicketProgramming {
   is_finalization?: boolean
   completion_term_delivered?: boolean
   cancelled?: boolean
-  cancellation_reason_type?: 'cliente' | 'remanejamento' | 'ac_engenharia' | string | null
+  cancellation_reason_type?: 'cliente' | 'reagendamento' | 'remanejamento' | 'ac_engenharia' | string | null
   cancellation_reason?: string | null
   cancellation_reassigned_to?: string | null
   cancellation_reassigned_name?: string | null

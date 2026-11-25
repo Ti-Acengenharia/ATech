@@ -1320,9 +1320,15 @@ router.patch('/:id/term-delivery', async (req, res, next) => {
 })
 
 const cancelProgrammingSchema = z.object({
-  reasonType: z.enum(['cliente', 'remanejamento', 'ac_engenharia']),
+  reasonType: z.enum(['cliente', 'remanejamento', 'ac_engenharia', 'reagendamento']),
   reassignedToCollaboratorId: z.coerce.number().int().positive().optional(),
   reasonNotes: z.string().trim().max(1000).optional(),
+  reschedule: z.object({
+    date: dateSchema,
+    startsAt: datetimeSchema,
+    endsAt: datetimeSchema,
+    collaboratorId: z.coerce.number().int().positive().optional(),
+  }).optional(),
 })
 
 router.post('/:id/cancel', requireAuth, async (req, res, next) => {
@@ -1333,7 +1339,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
     return
   }
 
-  const { reasonType, reassignedToCollaboratorId, reasonNotes } = parsed.data
+  const { reasonType, reassignedToCollaboratorId, reasonNotes, reschedule } = parsed.data
   const userId = req.session.user!.id
   const client = await pool.connect()
 
@@ -1357,6 +1363,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
       ends_at: Date
       programming_type: 'general' | 'foreman'
       is_finalization: boolean
+      completion_term_delivered: boolean
       protocol: string | null
       collaborator_name: string
       cancelled: boolean
@@ -1365,6 +1372,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
               p.enterprise, p.block, p.unit, p.common_area_location, p.materials, p.equipment, p.tools,
               p.standalone_location, p.starts_at, p.ends_at, p.programming_type,
               COALESCE(p.is_finalization, FALSE) AS is_finalization,
+              COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
               COALESCE(p.cancelled, FALSE) AS cancelled,
               t.protocol, c.name AS collaborator_name
        FROM ticket_programming p
@@ -1387,37 +1395,65 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
       return
     }
 
+    if (reasonType === 'ac_engenharia' && (!reasonNotes || reasonNotes.trim().length < 2)) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Informe o motivo do cancelamento pela AC Engenharia.' })
+      return
+    }
+
+    if (reasonType === 'reagendamento' && !reschedule) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Informe a nova data e horário para o reagendamento.' })
+      return
+    }
+
+    if (reasonType === 'remanejamento' && !reassignedToCollaboratorId) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'Selecione o profissional que receberá a atividade remanejada.' })
+      return
+    }
+
+    if (reasonType === 'remanejamento' && reassignedToCollaboratorId === Number(existing.collaborator_id)) {
+      await client.query('ROLLBACK')
+      res.status(400).json({ error: 'O profissional destinatário deve ser diferente do profissional atual.' })
+      return
+    }
+
     let finalReason = ''
     let reassignedTargetId: number | null = null
     let newProgrammingId: string | null = null
+    let newProgrammingDate: string | null = null
 
-    if (reasonType === 'cliente') {
-      finalReason = reasonNotes && reasonNotes.length > 0
-        ? reasonNotes
-        : 'Cancelamento por parte do cliente'
-    } else if (reasonType === 'ac_engenharia') {
-      if (!reasonNotes || reasonNotes.trim().length < 2) {
+    const shouldCreateNewProgramming = reasonType === 'remanejamento' || reasonType === 'reagendamento' || Boolean(reschedule)
+
+    if (shouldCreateNewProgramming) {
+      const targetCollabId = reasonType === 'remanejamento'
+        ? reassignedToCollaboratorId!
+        : (reschedule?.collaboratorId ?? Number(existing.collaborator_id))
+
+      const targetStartsAt = reschedule ? new Date(reschedule.startsAt) : new Date(existing.starts_at)
+      const targetEndsAt = reschedule ? new Date(reschedule.endsAt) : new Date(existing.ends_at)
+
+      if (targetEndsAt <= targetStartsAt) {
         await client.query('ROLLBACK')
-        res.status(400).json({ error: 'Informe o motivo do cancelamento pela AC Engenharia.' })
+        res.status(400).json({ error: 'O horário final do reagendamento deve ser posterior ao horário inicial.' })
         return
       }
-      finalReason = reasonNotes.trim()
-    } else if (reasonType === 'remanejamento') {
-      if (!reassignedToCollaboratorId) {
+
+      if (
+        targetCollabId === Number(existing.collaborator_id) &&
+        targetStartsAt.getTime() === new Date(existing.starts_at).getTime() &&
+        targetEndsAt.getTime() === new Date(existing.ends_at).getTime()
+      ) {
         await client.query('ROLLBACK')
-        res.status(400).json({ error: 'Selecione o profissional que receberá a atividade remanejada.' })
-        return
-      }
-      if (reassignedToCollaboratorId === Number(existing.collaborator_id)) {
-        await client.query('ROLLBACK')
-        res.status(400).json({ error: 'O profissional destinatário deve ser diferente do profissional atual.' })
+        res.status(400).json({ error: 'Para reagendar com o mesmo profissional, selecione um novo dia ou horário diferente do agendamento original.' })
         return
       }
 
       const targetCollabRes = await client.query<{ id: string; name: string; role: string; is_on_leave: boolean }>(
         `SELECT id, name, role, is_on_leave FROM collaborators
          WHERE id = $1 AND (termination_date IS NULL OR termination_date > CURRENT_DATE)`,
-        [reassignedToCollaboratorId],
+        [targetCollabId],
       )
       if (!targetCollabRes.rowCount) {
         await client.query('ROLLBACK')
@@ -1434,14 +1470,15 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
 
       const targetProgrammingType = targetCollab.role === 'encarregado' ? 'foreman' : 'general'
 
-      // Validar disponibilidade do novo profissional no mesmo horário
+      // Validar disponibilidade ignorando a própria atividade que está sendo cancelada (excludeId = programmingId.data)
       const conflicts = await validateAvailability(
         client,
-        reassignedToCollaboratorId,
+        targetCollabId,
         targetProgrammingType,
         existing.ticket_id ? Number(existing.ticket_id) : null,
-        new Date(existing.starts_at),
-        new Date(existing.ends_at),
+        targetStartsAt,
+        targetEndsAt,
+        programmingId.data,
       )
       if (conflicts.length) {
         await client.query('ROLLBACK')
@@ -1449,24 +1486,69 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
         return
       }
 
-      reassignedTargetId = reassignedToCollaboratorId
-      finalReason = `Remanejado para ${targetCollab.name}${reasonNotes ? ` (${reasonNotes.trim()})` : ''}`
+      if (targetCollabId !== Number(existing.collaborator_id)) {
+        reassignedTargetId = targetCollabId
+      }
 
-      // Criar nova programação para o novo profissional
+      const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: programmingTimeZone,
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      })
+      const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: programmingTimeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+      const dateIsoFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: programmingTimeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      })
+
+      const rescheduleDateLabel = dateFormatter.format(targetStartsAt)
+      const rescheduleStartLabel = timeFormatter.format(targetStartsAt)
+      const rescheduleEndLabel = timeFormatter.format(targetEndsAt)
+      newProgrammingDate = dateIsoFormatter.format(targetStartsAt)
+
+      const isDifferentTimeOrDay =
+        targetStartsAt.getTime() !== new Date(existing.starts_at).getTime() ||
+        targetEndsAt.getTime() !== new Date(existing.ends_at).getTime()
+
+      const scheduleWhenText = `${rescheduleDateLabel} das ${rescheduleStartLabel} às ${rescheduleEndLabel}`
+      const collabChangeText = targetCollabId !== Number(existing.collaborator_id) ? ` com ${targetCollab.name}` : ''
+
+      if (reasonType === 'reagendamento') {
+        finalReason = `Reagendado para ${scheduleWhenText}${collabChangeText}${reasonNotes ? ` (${reasonNotes.trim()})` : ''}`
+      } else if (reasonType === 'remanejamento') {
+        finalReason = isDifferentTimeOrDay
+          ? `Remanejado para ${targetCollab.name} e reagendado para ${scheduleWhenText}${reasonNotes ? ` (${reasonNotes.trim()})` : ''}`
+          : `Remanejado para ${targetCollab.name}${reasonNotes ? ` (${reasonNotes.trim()})` : ''}`
+      } else if (reasonType === 'cliente') {
+        const baseReason = reasonNotes && reasonNotes.length > 0 ? reasonNotes.trim() : 'Cancelamento por parte do cliente'
+        finalReason = `${baseReason} — Reagendado para ${scheduleWhenText}${collabChangeText}`
+      } else {
+        finalReason = `${reasonNotes!.trim()} — Reagendado para ${scheduleWhenText}${collabChangeText}`
+      }
+
+      // Criar a nova programação levando todas as especificações da antiga
       const insertResult = await client.query<{ id: string }>(
         `INSERT INTO ticket_programming
            (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
             enterprise, block, unit, common_area_location, materials, equipment, tools,
             standalone_location, programming_type, created_by, is_finalization, completion_term_delivered, cancelled)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, FALSE, FALSE)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, FALSE)
          RETURNING id`,
         [
           existing.ticket_id,
           existing.legal_process_id,
-          reassignedTargetId,
+          targetCollabId,
           existing.activity_description,
-          existing.starts_at,
-          existing.ends_at,
+          targetStartsAt,
+          targetEndsAt,
           existing.enterprise,
           existing.block,
           existing.unit,
@@ -1478,12 +1560,19 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
           targetProgrammingType,
           userId,
           existing.is_finalization,
+          existing.completion_term_delivered,
         ],
       )
       newProgrammingId = insertResult.rows[0].id
+    } else if (reasonType === 'cliente') {
+      finalReason = reasonNotes && reasonNotes.length > 0
+        ? reasonNotes.trim()
+        : 'Cancelamento por parte do cliente'
+    } else if (reasonType === 'ac_engenharia') {
+      finalReason = reasonNotes!.trim()
     }
 
-    // Cancelar a atividade atual
+    // Cancelar a atividade atual mantendo-a no histórico
     await client.query(
       `UPDATE ticket_programming
        SET cancelled = TRUE,
@@ -1500,7 +1589,9 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
     if (existing.ticket_id) {
       const actionSummary = reasonType === 'remanejamento'
         ? `Remanejou a programação de ${existing.collaborator_name}: ${finalReason}.`
-        : `Cancelou a programação de ${existing.collaborator_name}: ${finalReason}.`
+        : reasonType === 'reagendamento'
+          ? `Reagendou a programação de ${existing.collaborator_name}: ${finalReason}.`
+          : `Cancelou a programação de ${existing.collaborator_name}: ${finalReason}.`
 
       await recordTicketActivity(
         client,
@@ -1514,6 +1605,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
           reason: finalReason,
           reassignedToCollaboratorId: reassignedTargetId,
           newProgrammingId,
+          newProgrammingDate,
         },
       )
     }
@@ -1527,6 +1619,7 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
       reasonType,
       reason: finalReason,
       newProgrammingId,
+      newProgrammingDate,
     })
   } catch (error) {
     await client.query('ROLLBACK')

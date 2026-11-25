@@ -1,9 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowRightLeft,
   Building2,
+  CalendarClock,
+  CalendarDays,
   Check,
   Clock3,
   Loader2,
@@ -11,9 +13,15 @@ import {
   X,
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
+import {
+  programmingDateString,
+  programmingDateTimeToIso,
+  programmingMinutes,
+  programmingTimeString,
+} from './programming-time'
 import './ProgrammingCancellationModal.css'
 
-export type CancellationReasonType = 'cliente' | 'remanejamento' | 'ac_engenharia'
+export type CancellationReasonType = 'cliente' | 'reagendamento' | 'remanejamento' | 'ac_engenharia'
 
 export interface ProgrammingTargetForCancellation {
   id: string
@@ -41,16 +49,51 @@ interface CollaboratorOption {
   is_on_leave?: boolean
 }
 
+interface WorkingHoursSettings {
+  monday_thursday: { start: string; end: string }
+  friday: { start: string; end: string }
+  work_saturday: { start: string; end: string }
+}
+
+interface CalendarEntry {
+  id: string
+  date: string
+  description: string
+  type: 'holiday' | 'work_saturday'
+}
+
+interface AvailabilityEntry {
+  id: string
+  ticket_id: string | null
+  legal_process_id: string | null
+  starts_at: string
+  ends_at: string
+}
+
+interface AbsenceEntry {
+  id: string
+  type: 'atestado' | 'falta_injustificada'
+  startDate: string
+  endDate: string
+  startTime?: string | null
+  endTime?: string | null
+  cid: string | null
+}
+
+interface FreeSlot {
+  startsAt: string
+  endsAt: string
+}
+
 interface Props {
   appointment: ProgrammingTargetForCancellation
   onClose: () => void
-  onCancelled: () => void
+  onCancelled: (rescheduledDate?: string) => void
 }
 
 function formatTime(iso: string) {
   try {
-    const d = new Date(iso)
-    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    return programmingTimeString(new Date(iso))
   } catch {
     return ''
   }
@@ -58,11 +101,89 @@ function formatTime(iso: string) {
 
 function formatDate(iso: string) {
   try {
-    const d = new Date(iso)
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const d = programmingDateString(new Date(iso))
+    return d.split('-').reverse().join('/')
   } catch {
     return ''
   }
+}
+
+function parseMin(str?: string, defaultMin = 0): number {
+  if (!str) return defaultMin
+  const [h, m] = str.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function formatMinutes(value: number) {
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
+}
+
+function getDayWindow(
+  date: string,
+  workingHours?: WorkingHoursSettings,
+): { windowStart: number; windowEnd: number; label: string } {
+  const dt = new Date(`${date}T12:00:00Z`)
+  const day = dt.getUTCDay()
+  if (day === 5) {
+    const start = parseMin(workingHours?.friday?.start, 8 * 60)
+    const end = parseMin(workingHours?.friday?.end, 17 * 60)
+    return {
+      windowStart: start,
+      windowEnd: end,
+      label: `${workingHours?.friday?.start || '08:00'}–${workingHours?.friday?.end || '17:00'}`,
+    }
+  }
+  if (day === 6) {
+    const start = parseMin(workingHours?.work_saturday?.start, 8 * 60)
+    const end = parseMin(workingHours?.work_saturday?.end, 18 * 60)
+    return {
+      windowStart: start,
+      windowEnd: end,
+      label: `${workingHours?.work_saturday?.start || '08:00'}–${workingHours?.work_saturday?.end || '18:00'}`,
+    }
+  }
+  const start = parseMin(workingHours?.monday_thursday?.start, 8 * 60)
+  const end = parseMin(workingHours?.monday_thursday?.end, 18 * 60)
+  return {
+    windowStart: start,
+    windowEnd: end,
+    label: `${workingHours?.monday_thursday?.start || '08:00'}–${workingHours?.monday_thursday?.end || '18:00'}`,
+  }
+}
+
+function computeFreeSlots(
+  date: string,
+  appointments: AvailabilityEntry[],
+  workingHours?: WorkingHoursSettings,
+): FreeSlot[] {
+  const { windowStart, windowEnd } = getDayWindow(date, workingHours)
+  const booked = appointments
+    .map((item) => ({ start: new Date(item.starts_at), end: new Date(item.ends_at) }))
+    .filter(
+      ({ start, end }) =>
+        programmingDateString(start) === date &&
+        programmingDateString(end) === date &&
+        programmingMinutes(start) < windowEnd &&
+        programmingMinutes(end) > windowStart,
+    )
+    .map(({ start, end }) => ({
+      start: Math.max(windowStart, programmingMinutes(start)),
+      end: Math.min(windowEnd, programmingMinutes(end)),
+    }))
+    .sort((a, b) => a.start - b.start)
+
+  const slots: FreeSlot[] = []
+  let cursor = windowStart
+  for (const item of booked) {
+    if (item.start > cursor) {
+      slots.push({ startsAt: formatMinutes(cursor), endsAt: formatMinutes(item.start) })
+    }
+    cursor = Math.max(cursor, item.end)
+  }
+  if (cursor < windowEnd) {
+    slots.push({ startsAt: formatMinutes(cursor), endsAt: formatMinutes(windowEnd) })
+  }
+  return slots
 }
 
 export default function ProgrammingCancellationModal({
@@ -70,13 +191,59 @@ export default function ProgrammingCancellationModal({
   onClose,
   onCancelled,
 }: Props) {
+  const originalDate = useMemo(
+    () => programmingDateString(new Date(appointment.starts_at)),
+    [appointment.starts_at],
+  )
+  const originalStartTime = useMemo(
+    () => programmingTimeString(new Date(appointment.starts_at)),
+    [appointment.starts_at],
+  )
+  const originalEndTime = useMemo(
+    () => programmingTimeString(new Date(appointment.ends_at)),
+    [appointment.ends_at],
+  )
+
   const [reasonType, setReasonType] = useState<CancellationReasonType | ''>('')
   const [reassignedToCollaboratorId, setReassignedToCollaboratorId] = useState<string>('')
   const [reasonNotes, setReasonNotes] = useState('')
+
+  // Controles de reagendamento
+  const [enableReschedule, setEnableReschedule] = useState(false)
+  const [rescheduleDate, setRescheduleDate] = useState(originalDate)
+  const [rescheduleStartTime, setRescheduleStartTime] = useState(originalStartTime)
+  const [rescheduleEndTime, setRescheduleEndTime] = useState(originalEndTime)
+  const [rescheduleCollaboratorId, setRescheduleCollaboratorId] = useState<string>(
+    String(appointment.collaborator_id),
+  )
+
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([])
   const [loadingCollabs, setLoadingCollabs] = useState(false)
+  const [calendarData, setCalendarData] = useState<{
+    holidays: CalendarEntry[]
+    workSaturdays: CalendarEntry[]
+    workingHours: WorkingHoursSettings
+  } | null>(null)
+  const [availability, setAvailability] = useState<{
+    loading: boolean
+    appointments: AvailabilityEntry[]
+    absences: AbsenceEntry[]
+  }>({ loading: false, appointments: [], absences: [] })
+
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const isReschedulingActive = reasonType === 'reagendamento' || enableReschedule
+
+  const activeTargetCollaboratorId = useMemo(() => {
+    if (reasonType === 'remanejamento') {
+      return reassignedToCollaboratorId
+    }
+    if (isReschedulingActive) {
+      return rescheduleCollaboratorId || String(appointment.collaborator_id)
+    }
+    return String(appointment.collaborator_id)
+  }, [reasonType, reassignedToCollaboratorId, isReschedulingActive, rescheduleCollaboratorId, appointment.collaborator_id])
 
   // Bloqueia rolagem do body enquanto o modal estiver aberto
   useEffect(() => {
@@ -87,19 +254,27 @@ export default function ProgrammingCancellationModal({
     }
   }, [])
 
-  // Carrega lista de colaboradores para a opção de remanejamento
+  // Carrega lista de colaboradores e calendário de expediente/feriados/sábados
   useEffect(() => {
     let cancelled = false
     setLoadingCollabs(true)
-    apiRequest<{ collaborators: CollaboratorOption[] }>('/api/programming/collaborators')
-      .then((data) => {
+    Promise.all([
+      apiRequest<{ collaborators: CollaboratorOption[] }>('/api/programming/collaborators'),
+      apiRequest<{
+        holidays: CalendarEntry[]
+        workSaturdays: CalendarEntry[]
+        workingHours: WorkingHoursSettings
+      }>('/api/calendar').catch(() => null),
+    ])
+      .then(([collabData, calData]) => {
         if (!cancelled) {
-          setCollaborators(data.collaborators ?? [])
+          setCollaborators(collabData.collaborators ?? [])
+          if (calData) setCalendarData(calData)
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error('Erro ao carregar colaboradores para remanejamento:', err)
+          console.error('Erro ao carregar dados para cancelamento/reagendamento:', err)
         }
       })
       .finally(() => {
@@ -110,6 +285,45 @@ export default function ProgrammingCancellationModal({
     }
   }, [])
 
+  // Consulta disponibilidade do colaborador alvo na data de reagendamento (excluindo o próprio agendamento que será cancelado)
+  useEffect(() => {
+    if (!isReschedulingActive && reasonType !== 'remanejamento') return
+    if (!activeTargetCollaboratorId || !rescheduleDate) return
+
+    let cancelled = false
+    setAvailability((prev) => ({ ...prev, loading: true }))
+
+    const params = new URLSearchParams({
+      collaboratorId: activeTargetCollaboratorId,
+      startDate: rescheduleDate,
+      endDate: rescheduleDate,
+      excludeId: String(appointment.id),
+    })
+
+    apiRequest<{
+      appointments: AvailabilityEntry[]
+      absences?: AbsenceEntry[]
+    }>(`/api/programming/availability?${params}`)
+      .then((res) => {
+        if (!cancelled) {
+          setAvailability({
+            loading: false,
+            appointments: res.appointments ?? [],
+            absences: res.absences ?? [],
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailability({ loading: false, appointments: [], absences: [] })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isReschedulingActive, reasonType, activeTargetCollaboratorId, rescheduleDate, appointment.id])
+
   // Tecla Escape para fechar
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -119,15 +333,141 @@ export default function ProgrammingCancellationModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  // Filtra colaboradores ativos disponíveis para remanejamento (excluindo o atual)
-  const availableCollaborators = collaborators.filter(
-    (c) => String(c.id) !== String(appointment.collaborator_id) && !c.is_on_leave,
+  const holidayMap = useMemo(
+    () => new Map(calendarData?.holidays.map((h) => [h.date, h]) ?? []),
+    [calendarData],
+  )
+  const workSaturdayMap = useMemo(
+    () => new Map(calendarData?.workSaturdays.map((s) => [s.date, s]) ?? []),
+    [calendarData],
   )
 
-  const isFormValid =
+  // Validação do dia escolhido no calendário
+  const calendarDayWarning = useMemo(() => {
+    if (!rescheduleDate) return 'Selecione uma data válida.'
+    const dt = new Date(`${rescheduleDate}T12:00:00Z`)
+    if (Number.isNaN(dt.valueOf())) return 'Data inválida.'
+    const dayOfWeek = dt.getUTCDay()
+    const holiday = holidayMap.get(rescheduleDate)
+    if (holiday) {
+      return `A data ${rescheduleDate.split('-').reverse().join('/')} é feriado (${holiday.description}).`
+    }
+    if (dayOfWeek === 0) {
+      return 'Domingos não possuem expediente da assistência técnica.'
+    }
+    if (dayOfWeek === 6 && !workSaturdayMap.has(rescheduleDate)) {
+      return 'Sábado sem compensação cadastrada. Selecione um dia útil ou sábado de compensação.'
+    }
+    return null
+  }, [rescheduleDate, holidayMap, workSaturdayMap])
+
+  const workSaturdayInfo = useMemo(() => {
+    if (!rescheduleDate) return null
+    const dt = new Date(`${rescheduleDate}T12:00:00Z`)
+    if (dt.getUTCDay() === 6 && workSaturdayMap.has(rescheduleDate)) {
+      return workSaturdayMap.get(rescheduleDate) ?? null
+    }
+    return null
+  }, [rescheduleDate, workSaturdayMap])
+
+  // Horários ocupados no dia escolhido (outros agendamentos ativos do colaborador)
+  const bookedIntervalsOnDate = useMemo(() => {
+    return availability.appointments
+      .filter((item) => !String(item.id).startsWith('absence-'))
+      .map((item) => {
+        const s = new Date(item.starts_at)
+        const e = new Date(item.ends_at)
+        return {
+          id: item.id,
+          startStr: programmingTimeString(s),
+          endStr: programmingTimeString(e),
+          startMin: programmingMinutes(s),
+          endMin: programmingMinutes(e),
+        }
+      })
+      .sort((a, b) => a.startMin - b.startMin)
+  }, [availability.appointments])
+
+  // Janelas livres sugeridas no dia escolhido
+  const freeSlots = useMemo(() => {
+    if (!rescheduleDate || calendarDayWarning) return []
+    return computeFreeSlots(rescheduleDate, availability.appointments, calendarData?.workingHours)
+  }, [rescheduleDate, calendarDayWarning, availability.appointments, calendarData?.workingHours])
+
+  // Verifica se o novo horário escolhido conflita com agendamentos preexistentes ou expediente
+  const rescheduleTimeConflict = useMemo(() => {
+    if (!isReschedulingActive) return null
+    if (calendarDayWarning) return calendarDayWarning
+    if (!rescheduleStartTime || !rescheduleEndTime) return 'Informe o horário inicial e final.'
+    const sMin = parseMin(rescheduleStartTime)
+    const eMin = parseMin(rescheduleEndTime)
+    if (eMin <= sMin) return 'O horário final deve ser posterior ao horário inicial.'
+
+    const { windowStart, windowEnd, label } = getDayWindow(rescheduleDate, calendarData?.workingHours)
+    if (sMin < windowStart || eMin > windowEnd) {
+      return `Horário fora do expediente deste dia (${label}).`
+    }
+
+    if (
+      String(activeTargetCollaboratorId) === String(appointment.collaborator_id) &&
+      rescheduleDate === originalDate &&
+      rescheduleStartTime === originalStartTime &&
+      rescheduleEndTime === originalEndTime
+    ) {
+      return 'Escolha um novo horário ou uma nova data diferente do agendamento original.'
+    }
+
+    for (const booked of bookedIntervalsOnDate) {
+      if (sMin < booked.endMin && eMin > booked.startMin) {
+        return `Conflito com agendamento preexistente das ${booked.startStr} às ${booked.endStr}.`
+      }
+    }
+
+    for (const abs of availability.absences) {
+      if (abs.startTime && abs.endTime) {
+        const absStart = parseMin(abs.startTime)
+        const absEnd = parseMin(abs.endTime)
+        if (sMin < absEnd && eMin > absStart) {
+          return `Colaborador possui ${abs.type === 'atestado' ? 'atestado' : 'ausência'} das ${abs.startTime} às ${abs.endTime}.`
+        }
+      } else {
+        return `Colaborador possui ${abs.type === 'atestado' ? 'atestado médico' : 'falta registrada'} neste dia.`
+      }
+    }
+
+    return null
+  }, [
+    isReschedulingActive,
+    calendarDayWarning,
+    rescheduleStartTime,
+    rescheduleEndTime,
+    rescheduleDate,
+    calendarData?.workingHours,
+    activeTargetCollaboratorId,
+    appointment.collaborator_id,
+    originalDate,
+    originalStartTime,
+    originalEndTime,
+    bookedIntervalsOnDate,
+    availability.absences,
+  ])
+
+  // Colaboradores ativos (para remanejamento exclui o atual; para reagendamento permite manter o atual ou trocar)
+  const availableCollaboratorsForReassign = collaborators.filter(
+    (c) => String(c.id) !== String(appointment.collaborator_id) && !c.is_on_leave,
+  )
+  const allActiveCollaborators = collaborators.filter(
+    (c) => !c.is_on_leave || String(c.id) === String(appointment.collaborator_id),
+  )
+
+  const baseReasonValid =
     reasonType === 'cliente' ||
+    reasonType === 'reagendamento' ||
     (reasonType === 'remanejamento' && Boolean(reassignedToCollaboratorId)) ||
     (reasonType === 'ac_engenharia' && reasonNotes.trim().length >= 2)
+
+  const isFormValid =
+    baseReasonValid && (!isReschedulingActive || !rescheduleTimeConflict)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -137,6 +477,18 @@ export default function ProgrammingCancellationModal({
     setError('')
 
     try {
+      const reschedulePayload = isReschedulingActive
+        ? {
+            date: rescheduleDate,
+            startsAt: programmingDateTimeToIso(rescheduleDate, rescheduleStartTime),
+            endsAt: programmingDateTimeToIso(rescheduleDate, rescheduleEndTime),
+            collaboratorId:
+              reasonType === 'remanejamento'
+                ? Number(reassignedToCollaboratorId)
+                : Number(rescheduleCollaboratorId || appointment.collaborator_id),
+          }
+        : undefined
+
       await apiRequest(`/api/programming/${appointment.id}/cancel`, {
         method: 'POST',
         body: JSON.stringify({
@@ -144,16 +496,181 @@ export default function ProgrammingCancellationModal({
           reassignedToCollaboratorId:
             reasonType === 'remanejamento' ? Number(reassignedToCollaboratorId) : undefined,
           reasonNotes: reasonNotes.trim() || undefined,
+          reschedule: reschedulePayload,
         }),
       })
 
-      onCancelled()
+      onCancelled(isReschedulingActive ? rescheduleDate : undefined)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao cancelar a atividade.')
+      setError(err instanceof Error ? err.message : 'Falha ao processar o cancelamento/reagendamento.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  function renderRescheduleFields(allowCollaboratorChange: boolean) {
+    const targetCollabName =
+      collaborators.find((c) => String(c.id) === String(activeTargetCollaboratorId))?.name ||
+      appointment.collaborator_name
+
+    return (
+      <div className="drilldown-reschedule-box" onClick={(e) => e.stopPropagation()}>
+        <div className="drilldown-reschedule-header">
+          <CalendarClock size={15} />
+          <strong>Dados da Nova Programação (Reagendamento)</strong>
+        </div>
+        <p className="drilldown-reschedule-hint">
+          A programação original ({formatDate(appointment.starts_at)} · {originalStartTime}–{originalEndTime})
+          ficará registrada como <strong>Cancelada</strong> no histórico, liberando a vaga, e uma nova
+          programação com todas as especificações (descrição, local, kits e vínculos) será criada no
+          novo horário.
+        </p>
+
+        {allowCollaboratorChange && (
+          <label className="drilldown-field">
+            <span>Profissional para o novo agendamento:</span>
+            <select
+              value={rescheduleCollaboratorId}
+              onChange={(e) => setRescheduleCollaboratorId(e.target.value)}
+              className="drilldown-select"
+            >
+              {allActiveCollaborators.map((collab) => (
+                <option key={collab.id} value={collab.id}>
+                  {collab.name} ({collab.role_label || collab.role})
+                  {String(collab.id) === String(appointment.collaborator_id) ? ' — Profissional atual' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <div className="drilldown-reschedule-grid">
+          <label className="drilldown-field">
+            <span>
+              <CalendarDays size={12} /> Nova data <strong className="text-danger">*</strong>
+            </span>
+            <input
+              type="date"
+              value={rescheduleDate}
+              onChange={(e) => setRescheduleDate(e.target.value)}
+              required
+            />
+          </label>
+
+          <label className="drilldown-field">
+            <span>
+              <Clock3 size={12} /> Novo início <strong className="text-danger">*</strong>
+            </span>
+            <input
+              type="time"
+              value={rescheduleStartTime}
+              onChange={(e) => setRescheduleStartTime(e.target.value)}
+              required
+            />
+          </label>
+
+          <label className="drilldown-field">
+            <span>
+              <Clock3 size={12} /> Novo término <strong className="text-danger">*</strong>
+            </span>
+            <input
+              type="time"
+              value={rescheduleEndTime}
+              onChange={(e) => setRescheduleEndTime(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+
+        {workSaturdayInfo && (
+          <div className="drilldown-availability-banner is-success">
+            <Check size={13} />
+            <span>
+              Sábado de compensação liberado: <strong>{workSaturdayInfo.description}</strong>
+            </span>
+          </div>
+        )}
+
+        {/* Painel de disponibilidade e prevenção de conflitos */}
+        <div className="drilldown-availability-panel">
+          <div className="drilldown-availability-top">
+            <span>
+              Disponibilidade de <strong>{targetCollabName}</strong> em{' '}
+              <strong>{rescheduleDate ? rescheduleDate.split('-').reverse().join('/') : '—'}</strong>:
+            </span>
+            {availability.loading && (
+              <span className="drilldown-avail-loading">
+                <Loader2 size={12} className="animate-spin" /> Consultando agenda...
+              </span>
+            )}
+          </div>
+
+          {bookedIntervalsOnDate.length > 0 && (
+            <div className="drilldown-booked-list">
+              <span className="drilldown-booked-label">Horários já ocupados neste dia:</span>
+              <div className="drilldown-booked-chips">
+                {bookedIntervalsOnDate.map((b) => (
+                  <span key={b.id} className="drilldown-booked-chip">
+                    Ocupado: {b.startStr}–{b.endStr}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!availability.loading && !calendarDayWarning && (
+            <div className="drilldown-free-slots-wrap">
+              <span className="drilldown-free-label">
+                Janelas livres (clique para preencher o horário):
+              </span>
+              {freeSlots.length > 0 ? (
+                <div className="drilldown-free-slots">
+                  {freeSlots.map((slot) => {
+                    const isActiveSlot =
+                      rescheduleStartTime === slot.startsAt && rescheduleEndTime === slot.endsAt
+                    return (
+                      <button
+                        key={`${slot.startsAt}-${slot.endsAt}`}
+                        type="button"
+                        className={`drilldown-slot-btn ${isActiveSlot ? 'is-active' : ''}`}
+                        onClick={() => {
+                          setRescheduleStartTime(slot.startsAt)
+                          setRescheduleEndTime(slot.endsAt)
+                        }}
+                      >
+                        {slot.startsAt}–{slot.endsAt}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <span className="drilldown-no-slots">
+                  Nenhum horário livre disponível nesta data para este colaborador.
+                </span>
+              )}
+            </div>
+          )}
+
+          {rescheduleTimeConflict ? (
+            <div className="drilldown-conflict-alert" role="alert">
+              <AlertTriangle size={14} />
+              <span>{rescheduleTimeConflict}</span>
+            </div>
+          ) : (
+            !availability.loading && (
+              <div className="drilldown-conflict-ok">
+                <Check size={14} />
+                <span>
+                  Horário {rescheduleStartTime}–{rescheduleEndTime} disponível e sem conflitos de
+                  agenda.
+                </span>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    )
   }
 
   const titleContext = appointment.protocol
@@ -177,8 +694,8 @@ export default function ProgrammingCancellationModal({
       >
         <header className="programming-cancel-header">
           <div className="programming-cancel-title-wrap">
-            <span className="programming-cancel-eyebrow">CANCELAMENTO DE ATIVIDADE</span>
-            <h2 id="cancel-modal-title">Cancelar Programação</h2>
+            <span className="programming-cancel-eyebrow">CANCELAMENTO & REAGENDAMENTO</span>
+            <h2 id="cancel-modal-title">Cancelar ou Reagendar Atividade</h2>
             <div className="programming-cancel-meta-info">
               <span className="cancel-meta-pill is-time">
                 <Clock3 size={12} />
@@ -204,16 +721,63 @@ export default function ProgrammingCancellationModal({
 
         <form onSubmit={handleSubmit} className="programming-cancel-body">
           <p className="programming-cancel-instruction">
-            Selecione o motivo do cancelamento da atividade:
+            Selecione a ação ou motivo do cancelamento:
           </p>
 
           <div className="programming-drilldown-options">
-            {/* Opção 1: Cancelamento por parte do cliente */}
+            {/* Opção 1: Reagendamento de dia ou horário */}
+            <div
+              className={`programming-drilldown-card ${reasonType === 'reagendamento' ? 'is-selected is-reschedule-card' : ''}`}
+              onClick={() => {
+                setReasonType('reagendamento')
+                setEnableReschedule(true)
+                setError('')
+              }}
+            >
+              <div className="drilldown-radio-header">
+                <div className="drilldown-radio-indicator">
+                  {reasonType === 'reagendamento' && <Check size={12} />}
+                </div>
+                <div className="drilldown-radio-info">
+                  <div className="drilldown-radio-title">
+                    <CalendarClock size={16} className="drilldown-icon is-reschedule" />
+                    <strong>Reagendar para outro dia ou outro horário do mesmo dia</strong>
+                  </div>
+                  <p className="drilldown-radio-desc">
+                    Mantém a programação atual como cancelada para histórico (liberando o horário antigo)
+                    e cria automaticamente a nova programação no dia e horário escolhidos com todas as
+                    especificações da atividade.
+                  </p>
+                </div>
+              </div>
+
+              {reasonType === 'reagendamento' && (
+                <div className="drilldown-expanded-content" onClick={(e) => e.stopPropagation()}>
+                  {renderRescheduleFields(true)}
+
+                  <label className="drilldown-field">
+                    <span>Motivo ou observações do reagendamento (opcional):</span>
+                    <textarea
+                      value={reasonNotes}
+                      onChange={(e) => setReasonNotes(e.target.value)}
+                      placeholder="Ex: Reagendado para o turno da tarde a pedido do morador / ajuste de cronograma..."
+                      rows={2}
+                      maxLength={500}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {/* Opção 2: Cancelamento por parte do cliente */}
             <div
               className={`programming-drilldown-card ${reasonType === 'cliente' ? 'is-selected' : ''}`}
               onClick={() => {
-                setReasonType('cliente')
-                setError('')
+                if (reasonType !== 'cliente') {
+                  setReasonType('cliente')
+                  setEnableReschedule(false)
+                  setError('')
+                }
               }}
             >
               <div className="drilldown-radio-header">
@@ -238,21 +802,35 @@ export default function ProgrammingCancellationModal({
                     <textarea
                       value={reasonNotes}
                       onChange={(e) => setReasonNotes(e.target.value)}
-                      placeholder="Ex: Cliente informou que precisará viajar nesta data; reagendamento a ser alinhado..."
-                      rows={3}
+                      placeholder="Ex: Cliente informou que precisará viajar nesta data..."
+                      rows={2}
                       maxLength={500}
                     />
                   </label>
+
+                  <label className="drilldown-reschedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={enableReschedule}
+                      onChange={(e) => setEnableReschedule(e.target.checked)}
+                    />
+                    <span>Já reagendar esta atividade para um novo dia ou horário</span>
+                  </label>
+
+                  {enableReschedule && renderRescheduleFields(true)}
                 </div>
               )}
             </div>
 
-            {/* Opção 2: Remanejamento para outro profissional */}
+            {/* Opção 3: Remanejamento para outro profissional */}
             <div
               className={`programming-drilldown-card ${reasonType === 'remanejamento' ? 'is-selected' : ''}`}
               onClick={() => {
-                setReasonType('remanejamento')
-                setError('')
+                if (reasonType !== 'remanejamento') {
+                  setReasonType('remanejamento')
+                  setEnableReschedule(false)
+                  setError('')
+                }
               }}
             >
               <div className="drilldown-radio-header">
@@ -291,7 +869,7 @@ export default function ProgrammingCancellationModal({
                         className="drilldown-select"
                       >
                         <option value="">-- Selecione o novo profissional --</option>
-                        {availableCollaborators.map((collab) => (
+                        {availableCollaboratorsForReassign.map((collab) => (
                           <option key={collab.id} value={collab.id}>
                             {collab.name} ({collab.role_label || collab.role})
                           </option>
@@ -311,23 +889,39 @@ export default function ProgrammingCancellationModal({
                     />
                   </label>
 
-                  <div className="drilldown-notice">
-                    <AlertTriangle size={14} />
-                    <span>
-                      O sistema verificará se o novo profissional possui disponibilidade neste mesmo
-                      horário. Caso haja conflito de agenda, o sistema notificará para ajuste.
-                    </span>
-                  </div>
+                  <label className="drilldown-reschedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={enableReschedule}
+                      onChange={(e) => setEnableReschedule(e.target.checked)}
+                    />
+                    <span>Alterar também o dia ou horário para o novo profissional</span>
+                  </label>
+
+                  {enableReschedule ? (
+                    renderRescheduleFields(false)
+                  ) : (
+                    <div className="drilldown-notice">
+                      <AlertTriangle size={14} />
+                      <span>
+                        O sistema verificará se o novo profissional possui disponibilidade neste mesmo
+                        horário ({formatDate(appointment.starts_at)} · {originalStartTime}–{originalEndTime}).
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Opção 3: Cancelamento da AC Engenharia */}
+            {/* Opção 4: Cancelamento da AC Engenharia */}
             <div
               className={`programming-drilldown-card ${reasonType === 'ac_engenharia' ? 'is-selected' : ''}`}
               onClick={() => {
-                setReasonType('ac_engenharia')
-                setError('')
+                if (reasonType !== 'ac_engenharia') {
+                  setReasonType('ac_engenharia')
+                  setEnableReschedule(false)
+                  setError('')
+                }
               }}
             >
               <div className="drilldown-radio-header">
@@ -356,11 +950,22 @@ export default function ProgrammingCancellationModal({
                       value={reasonNotes}
                       onChange={(e) => setReasonNotes(e.target.value)}
                       placeholder="Descreva obrigatoriamente o motivo (ex: Chuva forte impedindo serviço na fachada, falta de insumo na obra, atraso no fornecedor...)"
-                      rows={3}
+                      rows={2}
                       maxLength={600}
                       required
                     />
                   </label>
+
+                  <label className="drilldown-reschedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={enableReschedule}
+                      onChange={(e) => setEnableReschedule(e.target.checked)}
+                    />
+                    <span>Já reagendar esta atividade para um novo dia ou horário</span>
+                  </label>
+
+                  {enableReschedule && renderRescheduleFields(true)}
                 </div>
               )}
             </div>
@@ -384,13 +989,18 @@ export default function ProgrammingCancellationModal({
             </button>
             <button
               type="submit"
-              className="danger-button programming-cancel-confirm-btn"
+              className={`danger-button programming-cancel-confirm-btn ${isReschedulingActive ? 'is-reschedule-submit' : ''}`}
               disabled={!isFormValid || submitting}
             >
               {submitting ? (
                 <>
                   <Loader2 size={15} className="animate-spin" />
                   <span>Processando...</span>
+                </>
+              ) : isReschedulingActive ? (
+                <>
+                  <CalendarClock size={15} />
+                  <span>Confirmar Cancelamento e Reagendar</span>
                 </>
               ) : (
                 <>

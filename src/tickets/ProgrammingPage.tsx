@@ -103,7 +103,7 @@ interface Appointment {
   is_finalization?: boolean
   completion_term_delivered?: boolean
   cancelled?: boolean
-  cancellation_reason_type?: 'cliente' | 'remanejamento' | 'ac_engenharia' | string | null
+  cancellation_reason_type?: 'cliente' | 'reagendamento' | 'remanejamento' | 'ac_engenharia' | string | null
   cancellation_reason?: string | null
   cancellation_reassigned_to?: string | null
   cancellation_reassigned_name?: string | null
@@ -1040,9 +1040,11 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                                 <span className="cancellation-reason-tag">
                                   {appointment.cancellation_reason_type === 'cliente'
                                     ? 'Pelo Cliente'
-                                    : appointment.cancellation_reason_type === 'remanejamento'
-                                      ? 'Remanejamento'
-                                      : 'AC Engenharia'}
+                                    : appointment.cancellation_reason_type === 'reagendamento'
+                                      ? 'Reagendamento'
+                                      : appointment.cancellation_reason_type === 'remanejamento'
+                                        ? 'Remanejamento'
+                                        : 'AC Engenharia'}
                                 </span>
                               </div>
                               {appointment.cancellation_reason && (
@@ -1422,9 +1424,11 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                                 <span className="cancellation-reason-tag">
                                   {apt.cancellation_reason_type === 'cliente'
                                     ? 'Cliente'
-                                    : apt.cancellation_reason_type === 'remanejamento'
-                                      ? 'Remanejamento'
-                                      : 'AC Engenharia'}
+                                    : apt.cancellation_reason_type === 'reagendamento'
+                                      ? 'Reagendamento'
+                                      : apt.cancellation_reason_type === 'remanejamento'
+                                        ? 'Remanejamento'
+                                        : 'AC Engenharia'}
                                 </span>
                               </div>
                               {apt.cancellation_reason && (

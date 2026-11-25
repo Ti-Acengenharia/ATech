@@ -2408,9 +2408,11 @@ async function optimizeImageForAttachment(file: File): Promise<{
                             <span className="cancellation-reason-tag">
                               {entry.cancellation_reason_type === 'cliente'
                                 ? 'Pelo Cliente'
-                                : entry.cancellation_reason_type === 'remanejamento'
-                                  ? 'Remanejamento'
-                                  : 'AC Engenharia'}
+                                : entry.cancellation_reason_type === 'reagendamento'
+                                  ? 'Reagendamento'
+                                  : entry.cancellation_reason_type === 'remanejamento'
+                                    ? 'Remanejamento'
+                                    : 'AC Engenharia'}
                             </span>
                           </div>
                           {entry.cancellation_reason && (
