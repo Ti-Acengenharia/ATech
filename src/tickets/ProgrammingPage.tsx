@@ -331,8 +331,32 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
     y += 14
   }
 
+  // Remove atividades canceladas do PDF e monta mapa de equipe por chamado
+  const activeGroups = groups.map((g) => ({
+    ...g,
+    people: g.people.map((p) => ({
+      ...p,
+      appointments: p.appointments.filter((app) => !app.cancelled),
+    })),
+  }))
+
+  const ticketTeamMap = new Map<string, Array<{ id: string; name: string; roleLabel: string }>>()
+  for (const g of activeGroups) {
+    for (const p of g.people) {
+      for (const app of p.appointments) {
+        const key = app.ticket_id ? String(app.ticket_id) : app.protocol ? `proto:${app.protocol}` : null
+        if (!key) continue
+        const list = ticketTeamMap.get(key) || []
+        if (!list.some((m) => m.id === String(p.id))) {
+          list.push({ id: String(p.id), name: p.name, roleLabel: roleName(p.role, p.role_label) })
+          ticketTeamMap.set(key, list)
+        }
+      }
+    }
+  }
+
   drawPageHeader(true)
-  for (const group of groups) {
+  for (const group of activeGroups) {
     const scheduledPeople = group.people.filter((person) => person.appointments.length > 0)
     if (!scheduledPeople.length) continue
     if (y + 14 > bottom) {
@@ -362,6 +386,16 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
           },
           { label: 'SERVIÇO', value: appointment.activity_description },
         ]
+        const teamKey = appointment.ticket_id ? String(appointment.ticket_id) : appointment.protocol ? `proto:${appointment.protocol}` : null
+        if (teamKey) {
+          const teammates = (ticketTeamMap.get(teamKey) || []).filter((m) => m.id !== String(person.id))
+          if (teammates.length > 0) {
+            lines.push({
+              label: 'EQUIPE',
+              value: teammates.map((m) => `${m.name} (${m.roleLabel})`).join(', '),
+            })
+          }
+        }
         if (appointment.materials.length) lines.push({ label: 'MATERIAIS', value: appointment.materials.join(', ') })
         if (appointment.equipment.length) lines.push({ label: 'EQUIPAMENTOS', value: appointment.equipment.join(', ') })
         if (appointment.tools.length) lines.push({ label: 'FERRAMENTAS', value: appointment.tools.join(', ') })

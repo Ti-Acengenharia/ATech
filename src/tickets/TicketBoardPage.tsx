@@ -46,6 +46,9 @@ import { programmingDateTimeString, programmingTimeString } from './programming-
 const TicketProgrammingForm = lazy(() => import('./TicketProgrammingForm'))
 const ProgrammingCancellationModal = lazy(() => import('./ProgrammingCancellationModal'))
 const TicketDashboardPage = lazy(() => import('./TicketDashboardPage'))
+const TicketVisitFormPage = lazy(() => import('./TicketVisitFormPage'))
+import type { TicketVisitRecord } from './TicketVisitFormPage'
+import { generateVisitDeclarationPdf } from './visit-pdf'
 import SearchableMultiSelect, { type SearchableMultiSelectOption } from '../SearchableMultiSelect'
 import { ATechLoading } from '../ATechLoading'
 import type { MediaViewerItem } from '../MediaViewerModal'
@@ -1852,6 +1855,9 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
   const [cancellingSchedule, setCancellingSchedule] = useState<TicketProgramming | null>(null)
   const [showSubtaskForm, setShowSubtaskForm] = useState(false)
   const [detailTab, setDetailTab] = useState<'data' | 'schedule' | 'comments' | 'terms'>('data')
+  const [visitFormOpen, setVisitFormOpen] = useState(false)
+  const [visits, setVisits] = useState<TicketVisitRecord[]>([])
+  const [retryingVisitId, setRetryingVisitId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [updatingProgramming, setUpdatingProgramming] = useState<Set<string>>(() => new Set())
@@ -1952,7 +1958,8 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
       apiRequest<{ attachments: TicketAttachment[] }>(`/api/tickets/${ticket.id}/attachments`),
       apiRequest<{ messages: CvTicketMessage[]; attachments: CvTicketAttachment[] }>(`/api/tickets/${ticket.id}/cv-conversation`),
       apiRequest<{ tags: TicketTag[] }>('/api/tickets/tags'),
-    ]).then(([commentsResult, subtasksResult, programmingResult, peopleResult, historyResult, attachmentResult, conversation, tags]) => {
+      apiRequest<{ visits: TicketVisitRecord[] }>(`/api/tickets/${ticket.id}/visits`).catch(() => ({ visits: [] })),
+    ]).then(([commentsResult, subtasksResult, programmingResult, peopleResult, historyResult, attachmentResult, conversation, tags, visitsRes]) => {
       if (cancelled) return
       setComments(commentsResult.comments)
       setSubtasks(subtasksResult.subtasks)
@@ -1965,6 +1972,7 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
       setTicketTags(ticket.tags ?? [])
       setTagOptions(tags.tags)
       setSelectedTagIds((ticket.tags ?? []).filter((tag) => !tag.id.startsWith('system-')).map((tag) => tag.id))
+      setVisits(visitsRes.visits)
     }).catch((requestError: unknown) => {
       if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar os detalhes do chamado.')
     }).finally(() => { if (!cancelled) setLoading(false) })
@@ -2345,6 +2353,78 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar prazo e custos.')
     } finally { setBusy(false) }
+  }
+
+  async function handleEmitBlankDeclarationTemplate() {
+    try {
+      const openedDateBr = ticket.openedAt
+        ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(ticket.openedAt))
+        : '____/____/________'
+      const bytes = await generateVisitDeclarationPdf({
+        isTemplate: true,
+        ticket,
+        openedDateBr,
+      })
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.target = '_blank'
+      anchor.download = `Modelo_Declaracao_Visita_Tecnica_AT001_Proto_${ticket.protocol}.pdf`
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (err) {
+      onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Erro ao gerar modelo em branco.' })
+    }
+  }
+
+  async function handleRetryVisitCvcrm(visitId: string, force = false) {
+    setRetryingVisitId(visitId)
+    try {
+      const res = await apiRequest<{ visit: TicketVisitRecord }>(
+        `/api/tickets/${encodeURIComponent(ticket.id)}/visits/${encodeURIComponent(visitId)}/retry-cvcrm`,
+        { method: 'POST', body: JSON.stringify({ force }) },
+      )
+      setVisits((prev) => prev.map((v) => (v.id === visitId ? res.visit : v)))
+      const hasFail = res.visit.cvcrmDeclarationStatus === 'failed' || res.visit.cvcrmReportStatus === 'failed'
+      onNotice({
+        kind: hasFail ? 'error' : 'success',
+        text: hasFail
+          ? 'Ainda houve erro ao enviar um dos documentos ao CVCRM. Verifique os detalhes na aba.'
+          : 'Documentos da visita enviados ao CVCRM com sucesso.',
+      })
+    } catch (err) {
+      onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Erro ao reenviar ao CVCRM.' })
+    } finally {
+      setRetryingVisitId(null)
+    }
+  }
+
+  if (visitFormOpen) {
+    return (
+      <Suspense fallback={<ATechLoading compact message="Carregando formulário de visita..." />}>
+        <TicketVisitFormPage
+          ticket={ticket}
+          currentUserName={currentUser.displayName}
+          onBack={() => {
+            setVisitFormOpen(false)
+            setRefresh((v) => v + 1)
+          }}
+          onFinalized={(finalized) => {
+            setVisitFormOpen(false)
+            setRefresh((v) => v + 1)
+            const hasFail = finalized.cvcrmDeclarationStatus === 'failed' || finalized.cvcrmReportStatus === 'failed'
+            onNotice({
+              kind: hasFail ? 'error' : 'success',
+              text: hasFail
+                ? 'Visita finalizada e PDFs salvos no ATech, mas houve falha no envio ao CVCRM. Você pode reenviar na aba Documentos & Termos.'
+                : 'Visita finalizada! Declaração (AT001) e Relatório de Vistoria (AT002) salvos com sucesso.',
+            })
+          }}
+          onNotice={onNotice}
+        />
+      </Suspense>
+    )
   }
 
   return (
@@ -3053,6 +3133,132 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
         {/* ABA 4: DOCUMENTOS & TERMOS */}
         {detailTab === 'terms' && (
           <div className="ticket-tab-pane">
+            <section className="ticket-info-section">
+              <div className="ticket-section-heading">
+                <div>
+                  <h2>Cadastro de Visita Técnica</h2>
+                  <p>Preencha o relatório de vistoria (AT002) e colete a Declaração de Visita Técnica (AT001), ou emita um modelo em branco.</p>
+                </div>
+              </div>
+              <div className="ticket-detail-terms">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                  <button type="button" className="primary-button" onClick={() => setVisitFormOpen(true)}>
+                    <FileSignature size={15} /> {visits.some((v) => v.status === 'draft') ? 'Continuar Cadastro de Visita' : 'Cadastro de Visita'}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => void handleEmitBlankDeclarationTemplate()}>
+                    <Download size={15} /> Emitir Modelo em Branco (AT001)
+                  </button>
+                </div>
+
+                {visits.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', marginTop: '8px' }}>
+                    {visits.map((v) => {
+                      const hasCvcrmError = v.status === 'finalized' && (v.cvcrmDeclarationStatus === 'failed' || v.cvcrmReportStatus === 'failed')
+                      return (
+                        <div className="ticket-card-saved-term" key={v.id} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <strong>
+                              {v.status === 'draft' ? 'Rascunho de Visita Técnica' : `Visita Técnica · Cliente: ${v.clientName || '-'}`}
+                            </strong>
+                            <small>
+                              {v.status === 'draft'
+                                ? `Salvo em ${formatDate(v.updatedAt)}`
+                                : `Finalizada em ${formatDate(v.finalizedAt || v.updatedAt)} por ${v.finalizedByName || '-'}`}
+                            </small>
+                          </div>
+
+                          {v.status === 'draft' ? (
+                            <div>
+                              <button type="button" className="secondary-button" onClick={() => setVisitFormOpen(true)}>
+                                Continuar preenchimento
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                                {v.declarationAttachmentId && (
+                                  <a
+                                    href={`/api/tickets/${ticket.id}/attachments/${v.declarationAttachmentId}?download=1`}
+                                    className="secondary-button"
+                                    style={{ fontSize: '11.5px', minHeight: '30px' }}
+                                  >
+                                    <Download size={13} /> Declaração AT001 (PDF)
+                                  </a>
+                                )}
+                                {v.reportAttachmentId && (
+                                  <a
+                                    href={`/api/tickets/${ticket.id}/attachments/${v.reportAttachmentId}?download=1`}
+                                    className="secondary-button"
+                                    style={{ fontSize: '11.5px', minHeight: '30px' }}
+                                  >
+                                    <Download size={13} /> Relatório de Vistoria AT002 (PDF)
+                                  </a>
+                                )}
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  style={{ fontSize: '11.5px', minHeight: '30px' }}
+                                  disabled={retryingVisitId === v.id}
+                                  onClick={() => void handleRetryVisitCvcrm(v.id, true)}
+                                >
+                                  {retryingVisitId === v.id ? 'Reenviando...' : 'Reenviar ao CVCRM'}
+                                </button>
+                              </div>
+
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px', color: '#475569' }}>
+                                <span>
+                                  CVCRM AT001:{' '}
+                                  <strong>
+                                    {v.cvcrmDeclarationStatus === 'sent'
+                                      ? 'Enviado'
+                                      : v.cvcrmDeclarationStatus === 'failed'
+                                        ? 'Falhou'
+                                        : v.cvcrmDeclarationStatus === 'disabled'
+                                          ? 'Envio desativado'
+                                          : 'Pendente'}
+                                  </strong>
+                                </span>
+                                <span>
+                                  CVCRM AT002:{' '}
+                                  <strong>
+                                    {v.cvcrmReportStatus === 'sent'
+                                      ? 'Enviado'
+                                      : v.cvcrmReportStatus === 'failed'
+                                        ? 'Falhou'
+                                        : v.cvcrmReportStatus === 'disabled'
+                                          ? 'Envio desativado'
+                                          : 'Pendente'}
+                                  </strong>
+                                </span>
+                              </div>
+
+                              {hasCvcrmError && (
+                                <div className="notice notice-error" style={{ padding: '8px 10px', fontSize: '11.5px' }}>
+                                  <span>
+                                    Erro no CVCRM: {v.cvcrmDeclarationError || v.cvcrmReportError}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    disabled={retryingVisitId === v.id}
+                                    onClick={() => void handleRetryVisitCvcrm(v.id)}
+                                  >
+                                    {retryingVisitId === v.id ? 'Reenviando...' : 'Reenviar ao CVCRM'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="ticket-empty-inline">Nenhuma visita técnica cadastrada neste protocolo.</p>
+                )}
+              </div>
+            </section>
+
             <section className="ticket-info-section">
               <div className="ticket-section-heading">
                 <div>

@@ -12,6 +12,10 @@ import {
   runCvcrmProgrammingCommentSync,
   saveCvcrmProgrammingSyncSettings,
 } from '../services/cvcrm-programming-sync.js'
+import {
+  getCvcrmVisitSyncSettings,
+  saveCvcrmVisitSyncSettings,
+} from '../services/cvcrm-visit-sync.js'
 import { recordAuditLog } from '../services/audit-log.js'
 import { getSessionTimeoutMinutes, setSessionTimeoutMinutes } from '../services/session-settings.js'
 import {
@@ -354,6 +358,53 @@ router.post('/cvcrm-programming-sync/run-now', requireAdmin, async (req, res, ne
       res.status(409).json({ error: error.message })
       return
     }
+    next(error)
+  }
+})
+
+router.get('/cvcrm-visit-sync', requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await getCvcrmVisitSyncSettings()
+    res.json(settings)
+  } catch (error) {
+    next(error)
+  }
+})
+
+const cvcrmVisitSyncSettingsSchema = z.object({
+  enabled: z.boolean(),
+  declarationVisibility: z.enum(['private', 'public']),
+  reportVisibility: z.enum(['private', 'public']),
+})
+
+router.put('/cvcrm-visit-sync', requireAdmin, async (req, res, next) => {
+  const parsed = cvcrmVisitSyncSettingsSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({
+      error: parsed.error.issues[0]?.message ?? 'Parâmetros inválidos para o envio de visitas ao CVCRM.',
+    })
+    return
+  }
+
+  try {
+    const user = req.session.user!
+    const updated = await saveCvcrmVisitSyncSettings(parsed.data, user.id)
+
+    await recordAuditLog({
+      actorUserId: user.id,
+      actorName: user.displayName,
+      action: 'settings_update',
+      resourceType: 'system_settings',
+      resourceId: 'cvcrm_visit_sync_settings',
+      summary: `Atualizou envio automático de visitas ao CVCRM (${updated.enabled ? 'Ativado' : 'Desativado'} | Declaração: ${updated.declarationVisibility === 'public' ? 'Pública' : 'Privada'} | Relatório: ${updated.reportVisibility === 'public' ? 'Público' : 'Privado'}).`,
+      metadata: parsed.data,
+    })
+
+    res.json({
+      success: true,
+      ...updated,
+    })
+  } catch (error) {
     next(error)
   }
 })

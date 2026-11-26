@@ -86,6 +86,8 @@ try {
     '064_enterprise_documents_repository.sql',
     '065_programming_cancellation.sql',
     '066_cvcrm_programming_comment_sync.sql',
+    '067_ticket_visits.sql',
+    '068_ticket_visits_unique_draft.sql',
   ]
 
   let newlyAppliedCount = 0

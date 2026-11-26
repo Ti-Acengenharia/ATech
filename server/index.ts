@@ -11,6 +11,7 @@ import collaboratorRoutes from './routes/collaborators.js'
 import programmingRoutes from './routes/programming.js'
 import teamRoutes from './routes/team.js'
 import ticketRoutes from './routes/tickets.js'
+import ticketVisitRoutes from './routes/ticket-visits.js'
 import userRoutes from './routes/users.js'
 import profileRoutes from './routes/profile.js'
 import enterpriseInformationRoutes from './routes/enterprise-information.js'
@@ -239,6 +240,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/profile', profileRoutes)
 app.use('/api/collaborators', collaboratorRoutes)
+app.use('/api/tickets', ticketVisitRoutes)
 app.use('/api/tickets', ticketRoutes)
 app.use('/api/programming', programmingRoutes)
 app.use('/api/team', teamRoutes)

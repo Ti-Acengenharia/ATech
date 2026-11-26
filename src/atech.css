@@ -767,7 +767,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .workspace-main:has(.legal-page.legal-board-page) {
     overflow-y: hidden;
   }
-  .workspace-main:has(.ticket-detail-page) .page-content {
+  .workspace-main:has(.ticket-detail-page) .page-content,
+  .workspace-main:has(.visit-form-page) .page-content {
     height: calc(100dvh - 56px);
     min-height: 0;
     overflow-y: auto;

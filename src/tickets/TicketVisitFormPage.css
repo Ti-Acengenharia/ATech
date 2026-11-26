@@ -1,0 +1,237 @@
+.visit-form-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px clamp(12px, 2vw, 24px) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.visit-form-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.visit-autosave-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.visit-autosave-pill.is-saving {
+  background: #fefce8;
+  color: #a16207;
+  border-color: #fde68a;
+}
+
+.visit-autosave-pill.is-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.visit-form-header-card {
+  background: #ffffff;
+  border: 1px solid #dbe5ef;
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.visit-form-header-card h1 {
+  margin: 0;
+  font-size: 21px;
+  color: #0f2742;
+}
+
+.visit-form-ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 12.5px;
+  color: #475569;
+}
+
+.visit-question-card {
+  background: #ffffff;
+  border: 1px solid #dbe5ef;
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.visit-question-label {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.visit-required-star {
+  color: #dc2626;
+}
+
+.visit-question-card textarea,
+.visit-question-card input[type="number"],
+.visit-question-card input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.visit-question-card textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.visit-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.visit-radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.visit-radio-option.is-selected {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1d4ed8;
+}
+
+.visit-photo-zone {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.visit-photo-trigger {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 6px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.visit-photo-trigger:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.visit-photo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.visit-photo-thumb {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  background: #f1f5f9;
+}
+
+.visit-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.visit-photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(15, 23, 42, 0.78);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.visit-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.visit-signature-pad-wrap {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.visit-signature-canvas {
+  width: 100%;
+  height: 170px;
+  display: block;
+  cursor: crosshair;
+}
+
+@media (max-width: 768px) {
+  .visit-form-page {
+    padding: 12px 10px calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .visit-form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}

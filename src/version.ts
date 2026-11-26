@@ -9,9 +9,44 @@ export interface VersionRelease {
   }[]
 }
 
-export const APP_CURRENT_VERSION = 'v2.5'
+export const APP_CURRENT_VERSION = 'v2.5.1'
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
+  {
+    version: 'v2.5.1',
+    date: '26/11/2026',
+    title: 'Cadastro de Visita Técnica (AT001/AT002), Integração CVCRM, PDFs da Programação, Performance e Responsividade Mobile',
+    tagline: 'Novo fluxo completo de Cadastro de Visita Técnica com geração automática de Declaração (AT001) e Relatório de Vistoria (AT002) integrados ao CVCRM, aprimoramentos nos PDFs da programação (sem atividades canceladas e com campo Equipe), otimizações de desempenho no frontend/backend e correção da responsividade mobile.',
+    changes: [
+      {
+        category: 'Funcionalidade',
+        items: [
+          'Novo fluxo de Cadastro de Visita Técnica na aba Documentos & Termos dos chamados: formulário dedicado com 9 campos obrigatórios, fotos opcionais por campo com compressão automática no navegador, salvamento automático de rascunho único no banco de dados e coleta de nome, documento e assinatura digital do cliente na tela.',
+          'Geração automática de 2 PDFs padronizados com controle de versão (Revisão 03, Data 26/11/2026): Declaração de Visita Técnica (AT001) com assinatura centralizada do cliente e Relatório de Vistoria (AT002) com registro fotográfico e assinatura digital do responsável interno (consultada do Perfil).',
+          'Botão "Emitir Modelo em Branco (AT001)" para impressão da Declaração de Visita Técnica sem dados de cliente quando houver necessidade de coleta de assinatura física.',
+          'Envio automático dos 2 PDFs da visita em comentários separados para o Construtor de Vendas (CVCRM) via API de mensagens com anexos em Base64, validação de retorno lógico da API e botão "Reenviar ao CVCRM" no histórico da visita.',
+          'Novo card na tela de Administração para ativar/desativar o envio automático de visitas ao CVCRM e definir individualmente a visibilidade (Privado ou Público) da Declaração (AT001) e do Relatório (AT002).',
+          'PDFs da Programação de Colaboradores e Encarregados (WhatsApp e Download): atividades canceladas não são mais exibidas no PDF enviado à equipe de campo (mantendo o histórico apenas no ATech) e chamados compartilhados passam a exibir automaticamente a linha "EQUIPE" listando os colegas no formato Nome (Função).',
+        ],
+      },
+      {
+        category: 'Design & UX',
+        items: [
+          'Aumento confortável da tipografia nos cartões do Kanban e em todas as seções internas da tela de detalhes dos chamados.',
+          'Altura fixa do Kanban na versão web (desktop) calibrada para exibir ~3 chamados por coluna com rolagem interna independente, isolada exclusivamente para telas desktop.',
+          'Correção completa do Kanban na versão mobile (<= 768px), restaurando o fluxo vertical natural das colunas, eliminando o corte de cartões e compactando a sub-barra de visualização.',
+        ],
+      },
+      {
+        category: 'Infraestrutura & VPS',
+        items: [
+          'Ativação de compressão HTTP (gzip) no servidor Express com exclusão explícita do stream SSE (/api/sync/events) para respostas de API mais rápidas sem afetar o sincronismo em tempo real.',
+          'Otimizações de desempenho no frontend: carregamento sob demanda (React.lazy + Suspense) para modais e subpáginas pesadas dos Chamados, memoização de TicketCard (React.memo), content-visibility: auto nos cartões do Kanban e redução de custos de composição/transição CSS.',
+          'Migrações 067 e 068 aplicadas: tabela ticket_visits para rascunhos, finalização e rastreabilidade de envio ao CVCRM (067) e índice único parcial garantindo no máximo 1 rascunho ativo por chamado (068).',
+        ],
+      },
+    ],
+  },
   {
     version: 'v2.5',
     date: '23/11/2026',

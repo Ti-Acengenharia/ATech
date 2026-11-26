@@ -52,6 +52,7 @@ export interface DailyCollaborator {
 export interface DailyProgrammingData {
   date: string
   collaborators: DailyCollaborator[]
+  ticketTeams?: Record<string, Array<{ collaborator_id: string; name: string; role_label: string }>>
 }
 
 let cachedLogoDataUrl: string | null = null
@@ -209,6 +210,7 @@ export async function fetchDailyProgrammingData(
        WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${APP_TIMEZONE}')
          AND p.ends_at > ($1::date AT TIME ZONE '${APP_TIMEZONE}')
          AND p.programming_type = $2
+         AND COALESCE(p.cancelled, FALSE) = FALSE
          AND (($2 = 'foreman' AND c.role = 'encarregado')
            OR ($2 = 'general' AND c.role <> 'encarregado'))
          AND ($3::bigint IS NULL OR c.id = $3::bigint)
@@ -216,6 +218,40 @@ export async function fetchDailyProgrammingData(
       [date, programmingType, colId],
     ),
   ])
+
+  const teamRes = await pool.query<{
+    ticket_id: string
+    collaborator_id: string
+    collaborator_name: string
+    collaborator_role_label: string
+  }>(
+    `SELECT DISTINCT p.ticket_id::text AS ticket_id,
+            c.id::text AS collaborator_id,
+            c.name AS collaborator_name,
+            r.label AS collaborator_role_label
+     FROM ticket_programming p
+     JOIN collaborators c ON c.id = p.collaborator_id
+     JOIN collaborator_roles r ON r.role_key = c.role
+     WHERE p.starts_at < (($1::date + interval '1 day') AT TIME ZONE '${APP_TIMEZONE}')
+       AND p.ends_at > ($1::date AT TIME ZONE '${APP_TIMEZONE}')
+       AND COALESCE(p.cancelled, FALSE) = FALSE
+       AND p.ticket_id IS NOT NULL
+     ORDER BY c.name`,
+    [date],
+  )
+
+  const ticketTeams: Record<string, Array<{ collaborator_id: string; name: string; role_label: string }>> = {}
+  for (const row of teamRes.rows) {
+    const key = String(row.ticket_id)
+    if (!ticketTeams[key]) ticketTeams[key] = []
+    if (!ticketTeams[key].some((m) => m.collaborator_id === String(row.collaborator_id))) {
+      ticketTeams[key].push({
+        collaborator_id: String(row.collaborator_id),
+        name: row.collaborator_name,
+        role_label: row.collaborator_role_label,
+      })
+    }
+  }
 
   const appointments = appointmentsRes.rows
   const collaborators = collaboratorsRes.rows.map((c) => {
@@ -250,6 +286,7 @@ export async function fetchDailyProgrammingData(
   return {
     date,
     collaborators,
+    ticketTeams,
   }
 }
 
@@ -278,9 +315,38 @@ export async function generateSchedulePdf({
   const scheduleData = data || (await fetchDailyProgrammingData(date, programmingType, collaboratorId))
   const logoDataUrl = getBackendCompanyLogoDataUrl()
 
+  const activeCollaborators = scheduleData.collaborators.map((person) => ({
+    ...person,
+    appointments: person.appointments.filter((app) => !app.cancelled),
+  }))
+
+  // Mapa de equipe por chamado (ticket_id)
+  const ticketTeamsMap = new Map<string, Array<{ collaborator_id: string; name: string; role_label: string }>>()
+  if (scheduleData.ticketTeams) {
+    for (const [k, members] of Object.entries(scheduleData.ticketTeams)) {
+      ticketTeamsMap.set(k, members)
+    }
+  } else {
+    for (const person of activeCollaborators) {
+      for (const app of person.appointments) {
+        if (!app.ticket_id) continue
+        const key = String(app.ticket_id)
+        const list = ticketTeamsMap.get(key) || []
+        if (!list.some((m) => m.collaborator_id === String(person.id))) {
+          list.push({
+            collaborator_id: String(person.id),
+            name: person.name,
+            role_label: person.role_label,
+          })
+          ticketTeamsMap.set(key, list)
+        }
+      }
+    }
+  }
+
   // Agrupa colaboradores por cargo
   const roleGroupsMap = new Map<string, DailyCollaborator[]>()
-  for (const person of scheduleData.collaborators) {
+  for (const person of activeCollaborators) {
     const list = roleGroupsMap.get(person.role_label) || []
     list.push(person)
     roleGroupsMap.set(person.role_label, list)
@@ -291,7 +357,7 @@ export async function generateSchedulePdf({
     people,
   }))
 
-  const totalEvents = scheduleData.collaborators.reduce((sum, p) => sum + p.appointments.length, 0)
+  const totalEvents = activeCollaborators.reduce((sum, p) => sum + p.appointments.length, 0)
   const scheduledStaffCount = groups.reduce(
     (total, g) => total + g.people.filter((p) => p.appointments.length > 0).length,
     0,
@@ -468,6 +534,18 @@ export async function generateSchedulePdf({
             },
             { label: 'SERVIÇO', value: appointment.activity_description },
           ]
+
+          if (appointment.ticket_id) {
+            const teammates = (ticketTeamsMap.get(String(appointment.ticket_id)) || []).filter(
+              (m) => m.collaborator_id !== String(person.id),
+            )
+            if (teammates.length > 0) {
+              lines.push({
+                label: 'EQUIPE',
+                value: teammates.map((m) => `${m.name} (${m.role_label})`).join(', '),
+              })
+            }
+          }
 
           if (appointment.materials && appointment.materials.length) {
             lines.push({ label: 'MATERIAIS', value: appointment.materials.join(', ') })
