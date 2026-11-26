@@ -141,6 +141,12 @@
   gap: 8px;
 }
 
+.visit-photo-triggers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .visit-photo-trigger {
   position: relative;
   overflow: hidden;
@@ -210,10 +216,63 @@
   padding-top: 8px;
 }
 
-.visit-signature-pad-wrap {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
+.visit-finalize-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  background: rgba(15, 23, 42, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+.visit-finalize-modal {
+  width: 100%;
+  max-width: 500px;
+  max-height: 92dvh;
+  overflow-y: auto;
   background: #ffffff;
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.visit-finalize-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f2742;
+}
+
+.visit-finalize-header p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.visit-finalize-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.visit-sig-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.visit-signature-pad-wrap {
+  position: relative;
+  border: 1.5px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
   overflow: hidden;
   touch-action: none;
 }
@@ -225,12 +284,48 @@
   cursor: crosshair;
 }
 
+.visit-signature-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 12.5px;
+  color: #94a3b8;
+}
+
+.visit-finalize-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid #e2e8f0;
+}
+
 @media (max-width: 768px) {
   .visit-form-page {
     padding: 12px 10px calc(84px + env(safe-area-inset-bottom, 0px));
   }
 
   .visit-form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .visit-finalize-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .visit-finalize-modal {
+    max-width: 100%;
+    border-radius: 18px 18px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .visit-finalize-footer {
     flex-direction: column-reverse;
     align-items: stretch;
   }

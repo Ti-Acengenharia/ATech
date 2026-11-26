@@ -145,6 +145,8 @@ export default function TicketVisitFormPage({
   const isDrawingRef = useRef(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const isInitialLoadRef = useRef(true)
+  const onNoticeRef = useRef(onNotice)
+  onNoticeRef.current = onNotice
 
   useEffect(() => {
     let active = true
@@ -174,7 +176,7 @@ export default function TicketVisitFormPage({
         setLastSavedTime(new Date(v.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
       } catch (err) {
         if (!active) return
-        onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Erro ao abrir rascunho da visita.' })
+        onNoticeRef.current({ kind: 'error', text: err instanceof Error ? err.message : 'Erro ao abrir rascunho da visita.' })
       } finally {
         if (active) {
           setLoading(false)
@@ -189,7 +191,7 @@ export default function TicketVisitFormPage({
       active = false
       if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current)
     }
-  }, [ticket.id, onNotice])
+  }, [ticket.id])
 
   const persistDraft = useCallback(
     async (nextForm: VisitFormData, targetVisitId: string) => {
@@ -259,21 +261,38 @@ export default function TicketVisitFormPage({
     const items = form.photos[fieldKey] || []
     return (
       <div className="visit-photo-zone">
-        <label className="visit-photo-trigger">
-          <Camera size={14} />
-          <span>{compressingField === fieldKey ? 'Comprimindo foto...' : 'Adicionar foto (opcional)'}</span>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            className="sr-only"
-            disabled={compressingField === fieldKey}
-            onChange={(e) => {
-              void handlePhotoUpload(fieldKey, e.target.files)
-              e.currentTarget.value = ''
-            }}
-          />
-        </label>
+        <div className="visit-photo-triggers">
+          <label className="visit-photo-trigger">
+            <Camera size={14} />
+            <span>{compressingField === fieldKey ? 'Comprimindo...' : 'Tirar foto'}</span>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="sr-only"
+              disabled={compressingField === fieldKey}
+              onChange={(e) => {
+                void handlePhotoUpload(fieldKey, e.target.files)
+                e.currentTarget.value = ''
+              }}
+            />
+          </label>
+          <label className="visit-photo-trigger">
+            <Camera size={14} />
+            <span>{compressingField === fieldKey ? 'Comprimindo...' : 'Anexar da galeria'}</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              disabled={compressingField === fieldKey}
+              onChange={(e) => {
+                void handlePhotoUpload(fieldKey, e.target.files)
+                e.currentTarget.value = ''
+              }}
+            />
+          </label>
+        </div>
         {items.length > 0 && (
           <div className="visit-photo-grid">
             {items.map((p) => (
@@ -686,15 +705,13 @@ export default function TicketVisitFormPage({
       </div>
 
       {finalizeModalOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Finalizar Visita Técnica">
-          <div className="modal" style={{ maxWidth: '520px', width: '100%' }}>
-            <header className="dialog-header">
-              <div>
-                <h2>Finalizar Visita Técnica</h2>
-                <p>Informe os dados do cliente que acompanhou a visita para gerar a Declaração (AT001) e o Relatório de Vistoria (AT002).</p>
-              </div>
+        <div className="visit-finalize-backdrop" role="dialog" aria-modal="true" aria-label="Finalizar Visita Técnica">
+          <div className="visit-finalize-modal">
+            <header className="visit-finalize-header">
+              <h2>Finalizar Visita Técnica</h2>
+              <p>Informe os dados e colete a assinatura do cliente que acompanhou a visita para gerar a Declaração (AT001) e o Relatório de Vistoria (AT002).</p>
             </header>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+            <div className="visit-finalize-body">
               <label className="ticket-form-field">
                 <span>Nome do cliente que acompanhou a visita *</span>
                 <input
@@ -714,7 +731,7 @@ export default function TicketVisitFormPage({
                 />
               </label>
               <div className="ticket-form-field">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="visit-sig-label-row">
                   <span>Assinatura digital do cliente *</span>
                   <button type="button" className="text-action-btn" onClick={clearSignature}>
                     Limpar assinatura
@@ -731,15 +748,18 @@ export default function TicketVisitFormPage({
                     onPointerUp={handleSigPointerUp}
                     onPointerCancel={handleSigPointerUp}
                   />
+                  {!hasClientSignature && (
+                    <span className="visit-signature-placeholder">Assine aqui com o dedo ou mouse</span>
+                  )}
                 </div>
               </div>
             </div>
-            <footer className="dialog-footer" style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <footer className="visit-finalize-footer">
               <button type="button" className="secondary-button" disabled={submitting} onClick={() => setFinalizeModalOpen(false)}>
                 Cancelar
               </button>
               <button type="button" className="primary-button" disabled={submitting} onClick={() => void handleConfirmFinalize()}>
-                {submitting ? 'Gerando PDFs e salvando...' : 'Confirmar e Finalizar Visita'}
+                {submitting ? 'Gerando PDFs e salvando...' : 'Confirmar e Finalizar'}
               </button>
             </footer>
           </div>
