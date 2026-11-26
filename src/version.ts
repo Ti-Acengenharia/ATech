@@ -21,6 +21,8 @@ export const APP_VERSION_HISTORY: VersionRelease[] = [
       {
         category: 'Funcionalidade',
         items: [
+          'Filtro por Protocolo, Palavras-chave e Colaborador na Programação (Visão Diária e Semanal): busca unificada por número de protocolo, descrição de serviço, empreendimento, unidade, área comum ou colaborador tanto na agenda diária quanto na programação semanal por colaborador, com painel integrado de histórico que lista todas as programações já registradas para aquele chamado em qualquer data e permite saltar diretamente para o dia ou semana correspondente.',
+          'Integração Automática e Manual de Comentários Internos da Programação com o CVCRM: consolidação diária no fechamento do expediente (padrão às 17h40, configurável pelos administradores com botão de ativar/desativar e disparo manual na tela de Programação) que publica em cada chamado do CVCRM uma nota estritamente interna (invisível ao cliente) agrupando todas as novas programações do atendimento (mesmo em dias não seguidos), colaboradores escalados no mesmo dia/horário, ajustes realizados em programações existentes e cancelamentos/reagendamentos.',
           'Cancelamento Inteligente, Reagendamento e Remanejamento de Atividades da Programação: fluxo com seletor drilldown para reagendamento direto (para outro dia ou outro horário do mesmo dia, copiando todas as especificações da atividade antiga e exibindo janelas livres ao vivo com prevenção de conflitos), cancelamento por parte do cliente, cancelamento pela AC Engenharia (com justificativa obrigatória) e remanejamento para outro profissional, mantendo o registro original na programação e no chamado com destaque em vermelho, sinalização "[CANCELADA]" no título e liberação imediata do horário antigo para novos agendamentos.',
           'Novo Visualizador e Galeria Integrada de Mídia em Tela Cheia (MediaViewerModal) para Chamados e Empreendimentos: abertura direta no navegador de fotos, vídeos e documentos PDF sem a necessidade de baixar previamente, com renderização em tela cheia real via React Portal, foco automático, navegação sequencial ("passear pelos arquivos" com setas na tela, teclado ou gestos de swipe no celular), zoom interativo (incluindo toque duplo no mobile), rotação e botão dedicado para download.',
           'Proxy de Mídia e Visualização Segura de Anexos do CVCRM: suporte a carregamento e exibição contínua de anexos de conversas e arquivos sincronizados do CVCRM, contornando bloqueios de iframe/CORS e garantindo exibição inline sem forçar downloads indesejados.',
@@ -42,6 +44,8 @@ export const APP_VERSION_HISTORY: VersionRelease[] = [
       {
         category: 'Design & UX',
         items: [
+          'Redesign Compacto do Quadro Kanban de Chamados e Modal Animado de Filtros: transformação do painel de filtros em botão dedicado ao lado de "Novo chamado por protocolo", cartões enxutos com destaque para Empreendimento/Bloco/Unidade e nome do cliente visível sem desfoque (mantendo apenas o telefone protegido), cabeçalhos de coluna fixos (sticky) com identidade de cor da etapa ao rolar a página, nivelamento uniforme da altura das colunas, barra de rolagem horizontal fixa no rodapé e rolagem direta dentro da coluna ao clicar em "Carregar mais".',
+          'Otimização Multi-Abas do LiveSync (Web Locks API + BroadcastChannel): compartilhamento de uma única conexão SSE entre todas as guias abertas do navegador, eliminando o bloqueio de carregamento ao abrir múltiplos chamados em novas abas.',
           'Destaque visual padronizado em vermelho para atividades canceladas na Programação (Visão Diária e Visão Semanal), dentro dos Chamados e na exportação de relatórios PDF, exibindo badge "[CANCELADA]", categoria e justificativa do cancelamento.',
           'Experiência de visualização de mídia responsiva e adaptada para smartphones e tablets: enquadramento maximizado automático ao tamanho da tela, travamento de scroll de fundo, navegação por arraste horizontal (swipe) e zoom por duplo toque.',
           'Alternador de modo de visualização na barra superior da Programação (Visão Diária vs. Visão Semanal por Colaborador) com barra de chips dos colaboradores selecionados e layout responsivo adaptado para desktop e dispositivos móveis.',
@@ -63,7 +67,7 @@ export const APP_VERSION_HISTORY: VersionRelease[] = [
       {
         category: 'Infraestrutura & VPS',
         items: [
-          'Migrações 056 a 065 aplicadas: horários parciais em ausências (057), controle de uso diário e snapshots/movimentações Sienge (058–062), arquitetura relacional de tarefas unificadas (063), repositório de documentos de empreendimentos (064) e rastreabilidade de cancelamento/remanejamento de programações (065).',
+          'Migrações 056 a 066 aplicadas: horários parciais em ausências (057), controle de uso diário e snapshots/movimentações Sienge (058–062), arquitetura relacional de tarefas unificadas (063), repositório de documentos de empreendimentos (064), rastreabilidade de cancelamento/remanejamento de programações (065) e controle de snapshots/hashes para sincronização de comentários internos de programação com o CVCRM (066).',
           'Sincronização bidirecional instantânea via Server-Sent Events (LiveSync) ao concluir, editar ou excluir tarefas em qualquer um dos módulos integrados.',
         ],
       },

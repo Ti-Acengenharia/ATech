@@ -5,6 +5,10 @@ import { APP_TIMEZONE } from '../config.js'
 import { pool } from '../db.js'
 import { recordAuditLog } from '../services/audit-log.js'
 import { getWhatsAppSettings, sendWhatsAppPdfDocument } from '../services/evolution-api.js'
+import {
+  getCvcrmProgrammingSyncSettings,
+  runCvcrmProgrammingCommentSync,
+} from '../services/cvcrm-programming-sync.js'
 import { decryptPersonalData } from '../services/personal-data.js'
 import { fetchDailyProgrammingData, generateSchedulePdf } from '../services/schedule-pdf.js'
 import { broadcastSyncEvent } from '../services/sync-events.js'
@@ -182,7 +186,7 @@ router.use((req, res, next) => {
       return
     }
     const legalReadPath = req.method === 'GET' &&
-      ['/legal-processes', '/collaborators', '/availability', '/week'].includes(req.path)
+      ['/legal-processes', '/collaborators', '/availability', '/week', '/search'].includes(req.path)
     const legalCreate = req.method === 'POST' && req.path === '/' && req.body?.activityType === 'legal_process'
     if (hasLegalAccess && (legalReadPath || legalCreate)) {
       next()
@@ -777,6 +781,102 @@ router.get('/availability', async (req, res, next) => {
         cid: row.cid,
       })),
     })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/search', async (req, res, next) => {
+  const rawQuery = typeof req.query.q === 'string' ? req.query.q.trim().replace(/^#+/, '').trim() : ''
+  if (rawQuery.length < 2) {
+    res.json({ appointments: [] })
+    return
+  }
+
+  const tokens = rawQuery
+    .split(/\s+/)
+    .map((t) => t.replace(/^#+/, '').trim())
+    .filter((t) => t.length > 0)
+    .slice(0, 6)
+
+  if (tokens.length === 0) {
+    res.json({ appointments: [] })
+    return
+  }
+
+  try {
+    const params: string[] = []
+    const tokenClauses: string[] = []
+
+    for (const token of tokens) {
+      params.push(`%${token}%`)
+      const idx = params.length
+      tokenClauses.push(`(
+        COALESCE(t.protocol, '') ILIKE $${idx}
+        OR COALESCE(p.ticket_id::text, '') ILIKE $${idx}
+        OR COALESCE(t.subject, '') ILIKE $${idx}
+        OR COALESCE(p.activity_description, '') ILIKE $${idx}
+        OR COALESCE(NULLIF(TRIM(p.enterprise), ''), t.enterprise, '') ILIKE $${idx}
+        OR COALESCE(NULLIF(TRIM(p.block), ''), t.block, '') ILIKE $${idx}
+        OR COALESCE(NULLIF(TRIM(p.unit), ''), t.unit, '') ILIKE $${idx}
+        OR COALESCE(p.common_area_location, '') ILIKE $${idx}
+        OR COALESCE(p.standalone_location, '') ILIKE $${idx}
+        OR COALESCE(lp.title, '') ILIKE $${idx}
+        OR COALESCE(lp.claimant, '') ILIKE $${idx}
+        OR COALESCE(p.cancellation_reason, '') ILIKE $${idx}
+        OR COALESCE(c.name, '') ILIKE $${idx}
+        OR COALESCE(c.nickname, '') ILIKE $${idx}
+      )`)
+    }
+
+    const result = await pool.query(
+      `SELECT p.id::text AS id,
+              p.ticket_id::text AS ticket_id,
+              p.legal_process_id::text AS legal_process_id,
+              p.collaborator_id::text AS collaborator_id,
+              p.activity_description,
+              p.starts_at,
+              p.ends_at,
+              t.protocol,
+              t.subject,
+              lp.title AS legal_process_number,
+              lp.claimant AS legal_process_claimant,
+              p.standalone_location,
+              COALESCE(NULLIF(TRIM(p.enterprise), ''), t.enterprise, '') AS enterprise,
+              COALESCE(NULLIF(TRIM(p.block), ''), t.block, '') AS block,
+              COALESCE(NULLIF(TRIM(p.unit), ''), t.unit, '') AS unit,
+              p.common_area_location,
+              p.materials,
+              p.equipment,
+              p.tools,
+              p.completed,
+              COALESCE(p.is_finalization, FALSE) AS is_finalization,
+              COALESCE(p.completion_term_delivered, FALSE) AS completion_term_delivered,
+              COALESCE(p.cancelled, FALSE) AS cancelled,
+              p.cancellation_reason_type,
+              p.cancellation_reason,
+              p.cancellation_reassigned_to::text AS cancellation_reassigned_to,
+              c2.name AS cancellation_reassigned_name,
+              p.cancelled_at,
+              p.programming_type,
+              c.name AS collaborator_name,
+              c.nickname AS collaborator_nickname,
+              c.role AS collaborator_role,
+              r.label AS collaborator_role_label,
+              CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS collaborator_photo_url
+       FROM ticket_programming p
+       LEFT JOIN tickets t ON t.source_id = p.ticket_id
+       LEFT JOIN legal_processes lp ON lp.id = p.legal_process_id
+       JOIN collaborators c ON c.id = p.collaborator_id
+       JOIN collaborator_roles r ON r.role_key = c.role
+       LEFT JOIN collaborators c2 ON c2.id = p.cancellation_reassigned_to
+       WHERE ${tokenClauses.join(' AND ')}
+       ORDER BY p.starts_at DESC, c.name ASC
+       LIMIT 60`,
+      params,
+    )
+
+    res.json({ appointments: result.rows })
   } catch (error) {
     next(error)
   }
@@ -1942,6 +2042,29 @@ router.post('/whatsapp/send', requireAuth, async (req, res, next) => {
       target,
     })
   } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/cvcrm-sync/status', requireAuth, async (_req, res, next) => {
+  try {
+    const status = await getCvcrmProgrammingSyncSettings()
+    res.json(status)
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/cvcrm-sync/run', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.session.user!
+    const result = await runCvcrmProgrammingCommentSync('manual', user.id)
+    res.json(result)
+  } catch (error) {
+    if (error instanceof Error && /em andamento|CVCRM não configurado/.test(error.message)) {
+      res.status(409).json({ error: error.message })
+      return
+    }
     next(error)
   }
 })

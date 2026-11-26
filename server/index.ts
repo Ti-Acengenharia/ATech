@@ -23,6 +23,10 @@ import settingsRoutes from './routes/settings.js'
 import calendarRoutes from './routes/calendar.js'
 import stockUnitsRoutes from './routes/stock-units.js'
 import { cvcrmAutoSyncIsEnabled, cvcrmIsConfigured, syncCvcrmTickets } from './services/cvcrm.js'
+import {
+  getCvcrmProgrammingSyncSettings,
+  runCvcrmProgrammingCommentSync,
+} from './services/cvcrm-programming-sync.js'
 import { getWhatsAppSettings, sendWhatsAppPdfDocument } from './services/evolution-api.js'
 import { fetchDailyProgrammingData, generateSchedulePdf } from './services/schedule-pdf.js'
 import { syncStockUnitsFromCvcrm } from './services/stock-units.js'
@@ -514,6 +518,7 @@ if (cvcrmIsConfigured()) {
   let lastSyncSlot = ''
   let lastStockWeeklySyncDay = ''
   let lastWhatsappProgrammingDay = ''
+  let lastCvcrmProgrammingSyncSlot = ''
 
   const checkAndRunSync = async () => {
     const parts = Object.fromEntries(
@@ -606,6 +611,32 @@ if (cvcrmIsConfigured()) {
         lastWhatsappProgrammingDay = ''
         console.error('[WhatsApp] Erro no envio automático das 17h:', err instanceof Error ? err.message : err)
       }
+    }
+
+    // Sincronização diária consolidada de comentários internos da programação para os chamados do CVCRM (horário configurável, padrão 17:40)
+    try {
+      const cvProgSettings = await getCvcrmProgrammingSyncSettings()
+      if (cvProgSettings.enabled && cvProgSettings.cvcrmConfigured) {
+        const [targetHourStr, targetMinStr] = (cvProgSettings.dispatchTime || '17:40').split(':')
+        const targetMinuteOfDay = Number(targetHourStr) * 60 + Number(targetMinStr)
+        const syncSlotKey = `${todayKey}_${cvProgSettings.dispatchTime}`
+
+        if (
+          !Number.isNaN(targetMinuteOfDay) &&
+          minuteOfDay >= targetMinuteOfDay &&
+          minuteOfDay < targetMinuteOfDay + 5 &&
+          lastCvcrmProgrammingSyncSlot !== syncSlotKey &&
+          cvProgSettings.lastRunDate !== todayKey
+        ) {
+          lastCvcrmProgrammingSyncSlot = syncSlotKey
+          console.log(`[CVCRM Programação] Iniciando sincronização automática de comentários internos às ${cvProgSettings.dispatchTime}...`)
+          const result = await runCvcrmProgrammingCommentSync('auto', null)
+          console.log(`[CVCRM Programação] ${result.message}`)
+        }
+      }
+    } catch (err: unknown) {
+      lastCvcrmProgrammingSyncSlot = ''
+      console.error('[CVCRM Programação] Erro na sincronização automática de comentários:', err instanceof Error ? err.message : err)
     }
 
     // Sincronização semanal automática das unidades em estoque: toda segunda-feira às 07:00

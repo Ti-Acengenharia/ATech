@@ -10,7 +10,6 @@ import {
   CalendarDays,
   Check,
   CheckSquare,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -31,6 +30,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Tag,
   Trash2,
   UserRound,
@@ -360,7 +360,7 @@ export default function TicketBoardPage({
   onTicketOpened?: () => void
 }) {
   const [savedFilters] = useState(() => readTicketFilters(currentUser.id))
-  const [filtersExpanded, setFiltersExpanded] = useState(true)
+  const [filtersExpanded, setFiltersExpanded] = useState(false)
   const [tickets, setTickets] = useState<TicketSummary[]>([])
   const [ticketPagination, setTicketPagination] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
   const [completionTerms, setCompletionTerms] = useState<CompletionTermFile[]>([])
@@ -853,6 +853,25 @@ export default function TicketBoardPage({
       key: ticketPaginationKey,
       counts: { ...(current.key === ticketPaginationKey ? current.counts : {}), [columnKey]: visibleCount + kanbanPageSize },
     }))
+
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        const board = kanbanBoardRef.current
+        if (!board) return
+        const colBody = board.querySelector<HTMLElement>(
+          `.kanban-column[data-stage-key="${CSS.escape(columnKey)}"] .kanban-column-body`,
+        )
+        if (!colBody) return
+        const cards = colBody.querySelectorAll<HTMLElement>('.ticket-card')
+        const firstNewCard = cards[visibleCount]
+        if (firstNewCard) {
+          const targetTop = Math.max(0, firstNewCard.offsetTop - colBody.offsetTop - 10)
+          colBody.scrollTo({ top: targetTop, behavior: 'smooth' })
+        } else {
+          colBody.scrollTo({ top: colBody.scrollHeight, behavior: 'smooth' })
+        }
+      }, 45)
+    })
   }
   const filteredStatusIds = new Set(filtered.map((ticket) => ticket.statusId).filter((statusId): statusId is number => statusId !== null))
   const visibleStages = orderedStages.filter((stage) => filteredStatusIds.has(stage.id))
@@ -942,11 +961,15 @@ export default function TicketBoardPage({
       const openDetails = document.querySelectorAll<HTMLDetailsElement>('.ticket-tag-manager[open], .ticket-card-fields[open]')
       if (openDetails.length > 0) {
         openDetails.forEach((detail) => { detail.open = false })
+        return
+      }
+      if (filtersExpanded) {
+        setFiltersExpanded(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showProtocolModal])
+  }, [showProtocolModal, filtersExpanded])
 
   if (selected) {
     return <>
@@ -975,10 +998,40 @@ export default function TicketBoardPage({
     )
   }
 
+  const activeFiltersCount = [
+    search,
+    ...ticketTypes,
+    ...enterpriseFilters,
+    ...blockFilter,
+    ...unitFilter,
+    customerNameFilter,
+    ...subjectFilter,
+    ...subsubjectFilter,
+    ...stageFilter,
+    includeInactive && 'inativos',
+  ].filter(Boolean).length
+
+  function clearAllFilters() {
+    setSearch('')
+    setTicketTypes([])
+    setEnterpriseFilters([])
+    setBlockFilter([])
+    setUnitFilter([])
+    setCustomerNameFilter('')
+    setSubjectFilter([])
+    setSubsubjectFilter([])
+    setStageFilter([])
+    setIncludeInactive(false)
+  }
+
   return (
     <section className={`ticket-board-page${!selected && viewMode === 'kanban' ? ' ticket-board-kanban' : ''}`}>
       <div className="ticket-board-heading">
-        <div><span className="eyebrow">ATENDIMENTOS CVCRM</span><h1>Chamados</h1><p>Quadro por situação do workflow do Construtor de Vendas.</p></div>
+        <div>
+          <span className="eyebrow">ATENDIMENTOS CVCRM</span>
+          <h1>Chamados</h1>
+          <p>Quadro por situação do workflow do Construtor de Vendas.</p>
+        </div>
         <div className="ticket-board-actions">
           <button
             type="button"
@@ -987,6 +1040,29 @@ export default function TicketBoardPage({
           >
             <Plus size={15} /> <span>Novo chamado</span><span className="desktop-only-text"> por protocolo</span>
           </button>
+          <button
+            type="button"
+            className={`secondary-button ticket-header-filter-btn ${filtersExpanded ? 'is-open' : ''} ${activeFiltersCount > 0 ? 'has-active-filters' : ''}`}
+            aria-expanded={filtersExpanded}
+            onClick={() => setFiltersExpanded((prev) => !prev)}
+            title="Abrir filtros e opções dos chamados"
+          >
+            <SlidersHorizontal size={15} />
+            <span>Filtros</span>
+            {activeFiltersCount > 0 && (
+              <span className="ticket-header-filter-badge">{activeFiltersCount}</span>
+            )}
+          </button>
+          {activeFiltersCount > 0 && (
+            <button
+              type="button"
+              className="filter-clear-button ticket-header-clear-btn"
+              onClick={clearAllFilters}
+              title="Limpar todos os filtros ativos"
+            >
+              <X size={13} /> <span className="desktop-only-text">Limpar</span>
+            </button>
+          )}
           {canManageIntegration && onOpenValidation && (
             <button
               type="button"
@@ -1072,270 +1148,329 @@ export default function TicketBoardPage({
         </div>
       )}
 
-      {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" aria-label="Fechar aviso" onClick={() => setNotice(null)}>×</button></div>}
-      {currentUser.role === 'admin' && !configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
-      {syncState?.last_finished_at && <p className="ticket-sync-meta">Última sincronização: {formatDate(syncState.last_finished_at)} · {syncState.imported_count} ativos{syncState.last_success === false && syncState.error_message ? ` · ${syncState.error_message}` : ''}</p>}
+      {/* Modal Compacto e Animado de Filtros de Chamados */}
+      {filtersExpanded && (
+        <div className="ticket-filters-modal-backdrop" onClick={() => setFiltersExpanded(false)}>
+          <div className="ticket-filters-modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <header className="ticket-filters-modal-header">
+              <div className="ticket-filters-modal-title">
+                <span className="eyebrow">FILTRAGEM E ORDENAÇÃO</span>
+                <h2>Filtros de Chamados</h2>
+                <p>
+                  {filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'} encontrado(s)
+                  {activeFiltersCount > 0 ? ` · ${activeFiltersCount} filtro(s) aplicado(s)` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setFiltersExpanded(false)}
+                aria-label="Fechar filtros"
+              >
+                ×
+              </button>
+            </header>
 
-      {(() => {
-        const activeFiltersCount = [
-          search,
-          ...ticketTypes,
-          ...enterpriseFilters,
-          ...blockFilter,
-          ...unitFilter,
-          customerNameFilter,
-          ...subjectFilter,
-          ...subsubjectFilter,
-          ...stageFilter,
-          includeInactive && 'inativos',
-        ].filter(Boolean).length
+            <div className="ticket-filters-modal-body">
+              <div className="ticket-board-toolbar ticket-board-filters">
+                <label className="ticket-filter-field ticket-filter-search">
+                  <span>Busca geral</span>
+                  <div className="search-box">
+                    <Search size={16} />
+                    <input
+                      type="search"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="ID, protocolo, assunto, empreendimento ou telefone"
+                      aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone"
+                      autoFocus
+                    />
+                  </div>
+                </label>
+                <SearchableMultiSelect label="Situação" options={stageOptions} value={stageFilter} onChange={setStageFilter} />
+                <label className="ticket-filter-field customer-name-filter">
+                  <span>Nome do cliente</span>
+                  <input
+                    type="search"
+                    value={customerNameFilter}
+                    onChange={(event) => setCustomerNameFilter(event.target.value)}
+                    placeholder="Filtrar por nome do cliente"
+                  />
+                </label>
+                <SearchableMultiSelect
+                  label="Empreendimentos"
+                  options={enterpriseOptions}
+                  value={enterpriseFilters}
+                  onChange={(value) => {
+                    setEnterpriseFilters(value)
+                    setBlockFilter([])
+                    setUnitFilter([])
+                  }}
+                />
+                <SearchableMultiSelect
+                  label="Bloco"
+                  options={blockOptions}
+                  value={activeBlockFilter}
+                  disabled={!blockOptionsReady}
+                  onChange={(value) => {
+                    setBlockFilter(value)
+                    setUnitFilter([])
+                  }}
+                />
+                <SearchableMultiSelect
+                  label="Unidade"
+                  options={unitOptions}
+                  value={activeUnitFilter}
+                  disabled={!blockOptionsReady}
+                  onChange={setUnitFilter}
+                />
+                <SearchableMultiSelect
+                  label="Assunto"
+                  options={subjectOptions}
+                  value={subjectFilter}
+                  onChange={(value) => {
+                    setSubjectFilter(value)
+                    setSubsubjectFilter([])
+                  }}
+                />
+                <SearchableMultiSelect
+                  label="Subassunto"
+                  options={subsubjectOptions}
+                  value={subsubjectFilter}
+                  onChange={setSubsubjectFilter}
+                />
+                <div className="ticket-filter-field ticket-type-filter" role="group" aria-label="Tipo de chamado">
+                  <span>Tipo de chamado</span>
+                  <div className="ticket-type-options">
+                    {(['client', 'condominium', 'internal'] as const).map((type) => (
+                      <label key={type}>
+                        <input
+                          type="checkbox"
+                          checked={ticketTypes.includes(type)}
+                          onChange={(event) =>
+                            setTicketTypes((current) =>
+                              event.target.checked ? [...current, type] : current.filter((value) => value !== type),
+                            )
+                          }
+                        />
+                        <span>{type === 'client' ? 'Cliente' : type === 'condominium' ? 'Condomínio' : 'Interno'}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
 
-        function clearAllFilters() {
-          setSearch('')
-          setTicketTypes([])
-          setEnterpriseFilters([])
-          setBlockFilter([])
-          setUnitFilter([])
-          setCustomerNameFilter('')
-          setSubjectFilter([])
-          setSubsubjectFilter([])
-          setStageFilter([])
-          setIncludeInactive(false)
-        }
+              <div className="ticket-filters-modal-options">
+                <label className="ticket-include-inactive">
+                  <input
+                    type="checkbox"
+                    checked={includeInactive}
+                    onChange={(event) => setIncludeInactive(event.target.checked)}
+                  />
+                  <span>Mostrar finalizados e cancelados</span>
+                </label>
 
-        return (
-          <>
-            <div className="ticket-view-toggle-bar">
-              <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
-                <button
-                  type="button"
-                  className={!dashboardOpen && viewMode === 'kanban' ? 'is-active' : ''}
-                  onClick={() => applyViewChange('kanban', 'push')}
-                >
-                  <LayoutGrid size={14} /> Quadro
-                </button>
-                <button
-                  type="button"
-                  className={!dashboardOpen && viewMode === 'list' ? 'is-active' : ''}
-                  onClick={() => applyViewChange('list', 'push')}
-                >
-                  <List size={14} /> Lista
-                </button>
-                <button
-                  type="button"
-                  className={dashboardOpen ? 'is-active' : ''}
-                  onClick={() => applyViewChange('dashboard', 'push')}
-                >
-                  <BarChart3 size={14} /> Dashboard
-                </button>
+                <div className="ticket-filters-modal-sort-group">
+                  <label className="ticket-sort-control">
+                    <span>Ordenar por</span>
+                    <select
+                      value={sortField}
+                      onChange={(event) => setSortField(event.target.value as TicketSortField)}
+                    >
+                      {ticketSortFields.map(({ value, label }) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="ticket-sort-direction"
+                    type="button"
+                    onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')}
+                  >
+                    {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                    {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <section className={`ticket-filter-panel ${filtersExpanded ? 'is-expanded' : 'is-collapsed'}`}>
-              <div className="ticket-filter-panel-top">
-                <div className="ticket-filter-panel-left">
-                  <button
-                    className={`ticket-filter-toggle ${activeFiltersCount > 0 ? 'has-active' : ''}`}
-                    type="button"
-                    aria-expanded={filtersExpanded}
-                    onClick={() => setFiltersExpanded((expanded) => !expanded)}
-                  >
-                    <ChevronDown size={15} />
-                    <span className="desktop-text">{filtersExpanded ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
-                    <span className="mobile-only-text">Filtros</span>
-                    {activeFiltersCount > 0 && (
-                      <span className="ticket-filter-badge">
-                        <span className="desktop-text">{activeFiltersCount} filtro(s)</span>
-                        <span className="mobile-only-text">{activeFiltersCount}</span>
-                      </span>
-                    )}
-                  </button>
-
-                  <span className="ticket-filter-count">
-                    <Clock3 size={13} />
-                    <span className="desktop-text">{filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}</span>
-                    <span className="mobile-only-text">{filtered.length} ativos</span>
-                  </span>
-
-                  {activeFiltersCount > 0 && (
-                    <button
-                      className="filter-clear-button ticket-quick-clear-btn"
-                      type="button"
-                      onClick={clearAllFilters}
-                      title="Limpar todos os filtros"
-                    >
-                      <X size={13} /> <span className="desktop-text">Limpar</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="ticket-board-toolbar ticket-board-options">
-              <label className="ticket-include-inactive">
-                <input
-                  type="checkbox"
-                  checked={includeInactive}
-                  onChange={(event) => setIncludeInactive(event.target.checked)}
-                />
-                <span>Mostrar finalizados e cancelados</span>
-              </label>
+            <footer className="ticket-filters-modal-footer">
               <button
-                className="filter-clear-button"
+                className="secondary-button"
                 type="button"
                 disabled={!activeFiltersCount}
                 onClick={clearAllFilters}
               >
                 <X size={14} /> Limpar filtros
               </button>
-              {currentUser.role === 'admin' && (
-                <details className="ticket-tag-manager">
-                  <summary><Tag size={14} /> Gerenciar tags</summary>
-                  <div className="ticket-tag-manager-panel">
-                    <header>
-                      <strong>Gerenciar tags dos chamados</strong>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          const details = event.currentTarget.closest('details');
-                          if (details) details.open = false;
-                        }}
-                        aria-label="Fechar gerenciador de tags"
-                      >
-                        <X size={16} />
-                      </button>
-                    </header>
-                    <form onSubmit={(event) => void createTag(event)}>
-                      <input
-                        value={newTagName}
-                        onChange={(event) => setNewTagName(event.target.value)}
-                        maxLength={60}
-                        placeholder="Nome da tag"
-                        required
-                      />
-                      <input
-                        aria-label="Cor da tag"
-                        type="color"
-                        value={newTagColor}
-                        onChange={(event) => setNewTagColor(event.target.value)}
-                      />
-                      <button className="primary-button" type="submit">Criar</button>
-                    </form>
-                    <div className="ticket-tag-manager-list">
-                      {tagOptions.map((tag) => (
-                        <span className="ticket-tag-manager-item" key={tag.id}>
-                          <i style={{ backgroundColor: tag.color }} />
-                          {tag.name}
-                          <button
-                            type="button"
-                            onClick={() => void deleteTag(tag)}
-                            aria-label={`Excluir tag ${tag.name}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </details>
-              )}
-              {viewMode === 'kanban' && (
-                <details className="ticket-card-fields">
-                  <summary>Campos do cartão</summary>
-                  <div className="ticket-card-fields-panel">
-                    <header>
-                      <strong>Campos exibidos no cartão</strong>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          const details = event.currentTarget.closest('details');
-                          if (details) details.open = false;
-                        }}
-                        aria-label="Fechar campos do cartão"
-                      >
-                        <X size={16} />
-                      </button>
-                    </header>
-                    {([
-                      ['customer', 'Cliente'],
-                      ['description', 'Descrição'],
-                      ['warranty', 'Garantia'],
-                      ['age', 'Tempo aberto'],
-                      ['counts', 'Comentários / tarefas / programações'],
-                      ['tags', 'Tags'],
-                    ] as [TicketCardField, string][]).map(([field, label]) => (
-                      <label key={field}>
-                        <input
-                          type="checkbox"
-                          checked={cardFields.includes(field)}
-                          onChange={() =>
-                            setCardFields((current) =>
-                              current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
-                            )
-                          }
-                        />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </details>
-              )}
-              <label className="ticket-sort-control">
-                <span>Ordenar por</span>
-                <select
-                  value={sortField}
-                  onChange={(event) => setSortField(event.target.value as TicketSortField)}
-                >
-                  {ticketSortFields.map(({ value, label }) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </label>
               <button
-                className="ticket-sort-direction"
+                className="primary-button"
                 type="button"
-                onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')}
-                aria-label={`Ordenação ${sortDirection === 'asc' ? 'crescente' : 'decrescente'}; clique para inverter`}
+                onClick={() => setFiltersExpanded(false)}
               >
-                {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-                {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
+                <Check size={15} /> Ver {filtered.length} chamado(s)
               </button>
-            </div>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'success' ? <Check size={16} /> : <CircleAlert size={16} />}</span>{notice.text}<button type="button" aria-label="Fechar aviso" onClick={() => setNotice(null)}>×</button></div>}
+      {currentUser.role === 'admin' && !configured && <div className="ticket-setup-note"><ShieldCheck size={17} /><div><strong>Integração CVCRM ainda não configurada</strong><span>Defina subdomínio, e-mail e token no `.env` do backend. As instruções estão no README.</span></div></div>}
+
+      <div className="ticket-view-toggle-bar ticket-compact-subbar">
+        <div className="ticket-compact-subbar-left">
+          <div className="ticket-view-toggle" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              className={!dashboardOpen && viewMode === 'kanban' ? 'is-active' : ''}
+              onClick={() => applyViewChange('kanban', 'push')}
+            >
+              <LayoutGrid size={14} /> Quadro
+            </button>
+            <button
+              type="button"
+              className={!dashboardOpen && viewMode === 'list' ? 'is-active' : ''}
+              onClick={() => applyViewChange('list', 'push')}
+            >
+              <List size={14} /> Lista
+            </button>
+            <button
+              type="button"
+              className={dashboardOpen ? 'is-active' : ''}
+              onClick={() => applyViewChange('dashboard', 'push')}
+            >
+              <BarChart3 size={14} /> Dashboard
+            </button>
           </div>
 
-          {filtersExpanded && (
-            <div className="ticket-board-toolbar ticket-board-filters">
-              <label className="ticket-filter-field ticket-filter-search">
-                <span>Busca geral</span>
-                <div className="search-box"><Search size={16} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID, protocolo, assunto, empreendimento ou telefone" aria-label="Pesquisar chamados por ID, protocolo, assunto, empreendimento ou telefone" /></div>
-              </label>
-              <SearchableMultiSelect label="Situação" options={stageOptions} value={stageFilter} onChange={setStageFilter} />
-              <label className="ticket-filter-field customer-name-filter">
-                <span>Nome do cliente</span>
-                <input type="search" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} placeholder="Filtrar por nome do cliente" />
-              </label>
-          <SearchableMultiSelect label="Empreendimentos" options={enterpriseOptions} value={enterpriseFilters} onChange={(value) => {
-            setEnterpriseFilters(value)
-            setBlockFilter([])
-            setUnitFilter([])
-          }} />
-          <SearchableMultiSelect label="Bloco" options={blockOptions} value={activeBlockFilter} disabled={!blockOptionsReady} onChange={(value) => {
-            setBlockFilter(value)
-            setUnitFilter([])
-          }} />
-          <SearchableMultiSelect label="Unidade" options={unitOptions} value={activeUnitFilter} disabled={!blockOptionsReady} onChange={setUnitFilter} />
-          <SearchableMultiSelect label="Assunto" options={subjectOptions} value={subjectFilter} onChange={(value) => { setSubjectFilter(value); setSubsubjectFilter([]) }} />
-          <SearchableMultiSelect label="Subassunto" options={subsubjectOptions} value={subsubjectFilter} onChange={setSubsubjectFilter} />
-                  <div className="ticket-filter-field ticket-type-filter" role="group" aria-label="Tipo de chamado">
-                    <span>Tipo de chamado</span>
-                    <div className="ticket-type-options">
-                      {(['client', 'condominium', 'internal'] as const).map((type) => <label key={type}><input type="checkbox" checked={ticketTypes.includes(type)} onChange={(event) => setTicketTypes((current) => event.target.checked ? [...current, type] : current.filter((value) => value !== type))} /><span>{type === 'client' ? 'Cliente' : type === 'condominium' ? 'Condomínio' : 'Interno'}</span></label>)}
-                    </div>
-                  </div>
+          <span className="ticket-filter-count">
+            <Clock3 size={13} />
+            <span>{filtered.length} chamado(s){includeInactive ? '' : ' ativo(s)'}</span>
+          </span>
+
+          {syncState?.last_finished_at && (
+            <span className="ticket-sync-meta-inline desktop-only-text">
+              · Sincronizado em {formatDate(syncState.last_finished_at)}
+            </span>
+          )}
+        </div>
+
+        <div className="ticket-compact-subbar-right">
+          {currentUser.role === 'admin' && (
+            <details className="ticket-tag-manager">
+              <summary><Tag size={14} /> Gerenciar tags</summary>
+              <div className="ticket-tag-manager-panel">
+                <header>
+                  <strong>Gerenciar tags dos chamados</strong>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      const details = event.currentTarget.closest('details');
+                      if (details) details.open = false;
+                    }}
+                    aria-label="Fechar gerenciador de tags"
+                  >
+                    <X size={16} />
+                  </button>
+                </header>
+                <form onSubmit={(event) => void createTag(event)}>
+                  <input
+                    value={newTagName}
+                    onChange={(event) => setNewTagName(event.target.value)}
+                    maxLength={60}
+                    placeholder="Nome da tag"
+                    required
+                  />
+                  <input
+                    aria-label="Cor da tag"
+                    type="color"
+                    value={newTagColor}
+                    onChange={(event) => setNewTagColor(event.target.value)}
+                  />
+                  <button className="primary-button" type="submit">Criar</button>
+                </form>
+                <div className="ticket-tag-manager-list">
+                  {tagOptions.map((tag) => (
+                    <span className="ticket-tag-manager-item" key={tag.id}>
+                      <i style={{ backgroundColor: tag.color }} />
+                      {tag.name}
+                      <button
+                        type="button"
+                        onClick={() => void deleteTag(tag)}
+                        aria-label={`Excluir tag ${tag.name}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              )}
-            </section>
-        </>
-      )
-      })()}
+              </div>
+            </details>
+          )}
+          {viewMode === 'kanban' && (
+            <details className="ticket-card-fields">
+              <summary>Campos do cartão</summary>
+              <div className="ticket-card-fields-panel">
+                <header>
+                  <strong>Campos exibidos no cartão</strong>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      const details = event.currentTarget.closest('details');
+                      if (details) details.open = false;
+                    }}
+                    aria-label="Fechar campos do cartão"
+                  >
+                    <X size={16} />
+                  </button>
+                </header>
+                {([
+                  ['customer', 'Cliente'],
+                  ['description', 'Descrição'],
+                  ['warranty', 'Garantia'],
+                  ['age', 'Tempo aberto'],
+                  ['counts', 'Comentários / tarefas / programações'],
+                  ['tags', 'Tags'],
+                ] as [TicketCardField, string][]).map(([field, label]) => (
+                  <label key={field}>
+                    <input
+                      type="checkbox"
+                      checked={cardFields.includes(field)}
+                      onChange={() =>
+                        setCardFields((current) =>
+                          current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
+                        )
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+          )}
+          <label className="ticket-sort-control">
+            <span>Ordenar por</span>
+            <select
+              value={sortField}
+              onChange={(event) => setSortField(event.target.value as TicketSortField)}
+            >
+              {ticketSortFields.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="ticket-sort-direction"
+            type="button"
+            onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')}
+            aria-label={`Ordenação ${sortDirection === 'asc' ? 'crescente' : 'decrescente'}; clique para inverter`}
+          >
+            {sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+            {sortDirection === 'asc' ? 'Crescente' : 'Decrescente'}
+          </button>
+        </div>
+      </div>
       {loading ? (
         <ATechLoading message="Carregando chamados..." subtitle="Sincronizando atendimentos e etapas..." />
       ) : viewMode === 'list' ? (
@@ -1431,24 +1566,78 @@ export default function TicketBoardPage({
             }}
           >
             {visibleStages.map((stage) => {
+              const stageKey = String(stage.id)
               const stageTickets = filtered.filter((ticket) => ticket.statusId === stage.id)
-              const visibleCount = visibleTicketCounts[String(stage.id)] ?? kanbanPageSize
+              const visibleCount = visibleTicketCounts[stageKey] ?? kanbanPageSize
               const ticketsToShow = stageTickets.slice(0, visibleCount)
               const isMobileActive = mobileSelectedStageKey === stage.id
-              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={stage.id} data-stage-key={stage.id}>
-                <header className="kanban-column-header" style={{ borderTopColor: safeColor(stage.background_color, '#2877b8') }}><span className="kanban-stage-name" style={{ color: '#18344d' }}>{stage.name}</span><span className="kanban-stage-count">{stageTickets.length}</span></header>
-                <div className="kanban-column-body">
-                  {ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />)}
-                  {ticketsToShow.length < stageTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(String(stage.id), visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, stageTickets.length - visibleCount)})</button>}
-                </div>
-              </section>
+              const stageColor = safeColor(stage.background_color, '#2877b8')
+              return (
+                <section
+                  className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`}
+                  key={stage.id}
+                  data-stage-key={stageKey}
+                  style={{ '--stage-accent': stageColor } as React.CSSProperties}
+                >
+                  <header className="kanban-column-header" style={{ borderTopColor: stageColor }}>
+                    <div className="kanban-stage-heading">
+                      <span className="kanban-stage-dot" style={{ backgroundColor: stageColor }} />
+                      <span className="kanban-stage-name">{stage.name}</span>
+                    </div>
+                    <span className="kanban-stage-count">{stageTickets.length}</span>
+                  </header>
+                  <div className="kanban-column-body">
+                    {ticketsToShow.map((ticket) => (
+                      <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />
+                    ))}
+                    {ticketsToShow.length < stageTickets.length && (
+                      <button
+                        className="kanban-load-more"
+                        type="button"
+                        onClick={() => loadMoreTickets(stageKey, visibleCount)}
+                      >
+                        Carregar mais ({Math.min(kanbanPageSize, stageTickets.length - visibleCount)})
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )
             })}
             {unassignedTickets.length > 0 && (() => {
               const key = 'unassigned'
               const visibleCount = visibleTicketCounts[key] ?? kanbanPageSize
               const ticketsToShow = unassignedTickets.slice(0, visibleCount)
               const isMobileActive = mobileSelectedStageKey === 'unassigned'
-              return <section className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`} key={key} data-stage-key={key}><header className="kanban-column-header"><span className="kanban-stage-name">Sem situação</span><span className="kanban-stage-count">{unassignedTickets.length}</span></header><div className="kanban-column-body">{ticketsToShow.map((ticket) => <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />)}{ticketsToShow.length < unassignedTickets.length && <button className="kanban-load-more" type="button" onClick={() => loadMoreTickets(key, visibleCount)}>Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})</button>}</div></section>
+              return (
+                <section
+                  className={`kanban-column ${isMobileActive ? 'is-mobile-active' : ''}`}
+                  key={key}
+                  data-stage-key={key}
+                  style={{ '--stage-accent': '#64748b' } as React.CSSProperties}
+                >
+                  <header className="kanban-column-header">
+                    <div className="kanban-stage-heading">
+                      <span className="kanban-stage-dot" style={{ backgroundColor: '#64748b' }} />
+                      <span className="kanban-stage-name">Sem situação</span>
+                    </div>
+                    <span className="kanban-stage-count">{unassignedTickets.length}</span>
+                  </header>
+                  <div className="kanban-column-body">
+                    {ticketsToShow.map((ticket) => (
+                      <TicketCard key={ticket.id} ticket={ticket} clock={clock} fields={cardFields} onOpen={() => openTicketDetail(ticket, true)} />
+                    ))}
+                    {ticketsToShow.length < unassignedTickets.length && (
+                      <button
+                        className="kanban-load-more"
+                        type="button"
+                        onClick={() => loadMoreTickets(key, visibleCount)}
+                      >
+                        Carregar mais ({Math.min(kanbanPageSize, unassignedTickets.length - visibleCount)})
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )
             })()}
           </div>
         </div>
@@ -1496,6 +1685,9 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
     ? Math.max(0, Math.floor((clock - new Date(ticket.openedAt).getTime()) / 1000))
     : null
   const ticketHref = `?page=tickets&view=kanban&ticketId=${encodeURIComponent(ticket.id)}`
+  const showAge = fields.includes('age')
+  const showCounts = fields.includes('counts')
+
   return (
     <article className="ticket-card">
       <a
@@ -1509,20 +1701,70 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
         }}
         aria-label={`Abrir chamado ${ticket.id}, protocolo ${ticket.protocol}`}
       >
-        <span className="ticket-card-top"><span><strong className="ticket-card-id-link">ID {ticket.id}</strong><small>Protocolo #{ticket.protocol}</small></span>{!ticket.sourceActive ? <span className="ticket-archived-badge">Inativo</span> : ticket.priority && <span className="ticket-priority">{ticket.priority}</span>}</span>
-        <span className="ticket-card-enterprise">{ticket.enterprise || 'Empreendimento não informado'}{ticket.block ? ` · Bloco ${ticket.block}` : ''}{ticket.unit ? ` · Unidade ${ticket.unit}` : ''}</span>
-        <span className="ticket-card-subject">{ticket.subject || 'Sem assunto'}{ticket.subsubject ? <small>{ticket.subsubject}</small> : null}</span>
+        <span className="ticket-card-top">
+          <span>
+            <strong className="ticket-card-id-link">ID {ticket.id}</strong>
+            <small>Protocolo #{ticket.protocol}</small>
+          </span>
+          {!ticket.sourceActive ? (
+            <span className="ticket-archived-badge">Inativo</span>
+          ) : (
+            ticket.priority && <span className="ticket-priority">{ticket.priority}</span>
+          )}
+        </span>
+        <span className="ticket-card-enterprise">
+          {ticket.enterprise || 'Empreendimento não informado'}
+          {ticket.block ? ` · Bloco ${ticket.block}` : ''}
+          {ticket.unit ? ` · Unidade ${ticket.unit}` : ''}
+        </span>
+        <span className="ticket-card-subject">
+          {ticket.subject || 'Sem assunto'}
+          {ticket.subsubject ? <small>{ticket.subsubject}</small> : null}
+        </span>
         {fields.includes('tags') && <TicketTagPills tags={ticket.tags ?? []} />}
-        {fields.includes('warranty') && ticket.warranty && <span className={`ticket-warranty-badge warranty-${ticket.warranty.status}`} title={ticket.warranty.reason}><ShieldCheck size={12} />{warrantyLabel(ticket.warranty.status)}</span>}
-        {fields.includes('customer') && <span className="ticket-card-customer sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar os dados do cliente"><UserRound size={13} />{ticket.customerName || 'Cliente não informado'}</span>}
-        {fields.includes('customer') && ticket.customerPhone && <span className="ticket-card-phone sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar o telefone">{ticket.customerPhone}</span>}
-        {fields.includes('description') && <span className="ticket-card-description">{ticket.description || 'Sem descrição registrada.'}</span>}
-        {fields.includes('age') && <span className="ticket-card-age"><Clock3 size={13} />{formatAge(openSeconds)}</span>}
-        {fields.includes('counts') && <span className="ticket-card-meta"><span><MessageCircle size={13} /> {ticket.commentCount}</span><span><Check size={13} /> {ticket.completedSubtaskCount}/{ticket.subtaskCount}</span><span><CalendarClock size={13} /> {ticket.programmingCount}</span></span>}
+        {fields.includes('warranty') && ticket.warranty && (
+          <span className={`ticket-warranty-badge warranty-${ticket.warranty.status}`} title={ticket.warranty.reason}>
+            <ShieldCheck size={12} />
+            {warrantyLabel(ticket.warranty.status)}
+          </span>
+        )}
+        {fields.includes('customer') && (
+          <span className="ticket-card-customer">
+            <UserRound size={13} />
+            {ticket.customerName || 'Cliente não informado'}
+          </span>
+        )}
+        {fields.includes('customer') && ticket.customerPhone && (
+          <span className="ticket-card-phone sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar o telefone">
+            {ticket.customerPhone}
+          </span>
+        )}
+        {fields.includes('description') && (
+          <span className="ticket-card-description">{ticket.description || 'Sem descrição registrada.'}</span>
+        )}
+        {(showAge || showCounts) && (
+          <span className="ticket-card-bottom-meta">
+            {showAge && (
+              <span className="ticket-card-age">
+                <Clock3 size={13} />
+                {formatAge(openSeconds)}
+              </span>
+            )}
+            {showCounts && (
+              <span className="ticket-card-meta">
+                <span title="Comentários"><MessageCircle size={13} /> {ticket.commentCount}</span>
+                <span title="Tarefas"><Check size={13} /> {ticket.completedSubtaskCount}/{ticket.subtaskCount}</span>
+                <span title="Programações"><CalendarClock size={13} /> {ticket.programmingCount}</span>
+              </span>
+            )}
+          </span>
+        )}
       </a>
-      <div className="ticket-card-footer">
-        <span>{ticket.localDueAt ? `Prazo ${formatDate(ticket.localDueAt)}` : 'Sem prazo local'}</span>
-      </div>
+      {ticket.localDueAt && (
+        <div className="ticket-card-footer">
+          <span>Prazo {formatDate(ticket.localDueAt)}</span>
+        </div>
+      )}
     </article>
   )
 }
@@ -1911,58 +2153,58 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
     }
   }
 
-async function optimizeImageForAttachment(file: File): Promise<{
-  fileName: string
-  contentType: string
-  contentBase64: string
-}> {
-  return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file)
-    const img = new Image()
-    img.onload = () => {
-      try {
-        const MAX_DIM = 1920
-        let { width, height } = img
-        if (width > MAX_DIM || height > MAX_DIM) {
-          if (width >= height) {
-            height = Math.round((height * MAX_DIM) / width)
-            width = MAX_DIM
-          } else {
-            width = Math.round((width * MAX_DIM) / height)
-            height = MAX_DIM
+  async function optimizeImageForAttachment(file: File): Promise<{
+    fileName: string
+    contentType: string
+    contentBase64: string
+  }> {
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file)
+      const img = new Image()
+      img.onload = () => {
+        try {
+          const MAX_DIM = 1920
+          let { width, height } = img
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width >= height) {
+              height = Math.round((height * MAX_DIM) / width)
+              width = MAX_DIM
+            } else {
+              width = Math.round((width * MAX_DIM) / height)
+              height = MAX_DIM
+            }
           }
-        }
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            URL.revokeObjectURL(objectUrl)
+            reject(new Error('Canvas indisponível para processamento da imagem.'))
+            return
+          }
+          ctx.drawImage(img, 0, 0, width, height)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
           URL.revokeObjectURL(objectUrl)
-          reject(new Error('Canvas indisponível para processamento da imagem.'))
-          return
+          const base64 = dataUrl.split(',')[1] || ''
+          const baseName = file.name.replace(/\.[^.]+$/, '') || 'foto'
+          resolve({
+            fileName: `${baseName}.jpg`,
+            contentType: 'image/jpeg',
+            contentBase64: base64,
+          })
+        } catch (err) {
+          URL.revokeObjectURL(objectUrl)
+          reject(err)
         }
-        ctx.drawImage(img, 0, 0, width, height)
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
-        URL.revokeObjectURL(objectUrl)
-        const base64 = dataUrl.split(',')[1] || ''
-        const baseName = file.name.replace(/\.[^.]+$/, '') || 'foto'
-        resolve({
-          fileName: `${baseName}.jpg`,
-          contentType: 'image/jpeg',
-          contentBase64: base64,
-        })
-      } catch (err) {
-        URL.revokeObjectURL(objectUrl)
-        reject(err)
       }
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl)
-      reject(new Error('Não foi possível ler a imagem selecionada.'))
-    }
-    img.src = objectUrl
-  })
-}
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Não foi possível ler a imagem selecionada.'))
+      }
+      img.src = objectUrl
+    })
+  }
 
   async function uploadAttachment(file: File | undefined) {
     if (!file) return
@@ -2202,7 +2444,7 @@ async function optimizeImageForAttachment(file: File): Promise<{
                   </div>
                 </div>
                 <div className="ticket-facts">
-                  <div><span>Cliente</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerName || 'Não informado'}</strong></div>
+                  <div><span>Cliente</span><strong>{ticket.customerName || 'Não informado'}</strong></div>
                   <div><span>Telefone</span><strong className="sensitive-data" tabIndex={0} title="Passe o cursor ou use o foco para revelar">{ticket.customerPhone || 'Não informado'}</strong></div>
                   <div><span>Assunto</span><strong>{ticket.subject}</strong></div>
                   <div><span>Subassunto</span><strong>{ticket.subsubject || 'Não informado'}</strong></div>

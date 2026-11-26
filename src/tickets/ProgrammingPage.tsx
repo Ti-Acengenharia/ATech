@@ -173,6 +173,52 @@ function normalizeSearch(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim()
 }
 
+function appointmentMatchesSearch(
+  apt: Appointment,
+  rawQuery: string,
+  personExtra?: { name?: string; nickname?: string; role_label?: string },
+  includeCollaboratorInMatch = true,
+): boolean {
+  const cleaned = normalizeSearch(rawQuery).replace(/^#+/, '').trim()
+  if (!cleaned) return true
+  const tokens = cleaned
+    .split(/\s+/)
+    .map((t) => t.replace(/^#+/, '').trim())
+    .filter(Boolean)
+  if (tokens.length === 0) return true
+
+  const parts: Array<string | null | undefined> = [
+    apt.protocol,
+    apt.ticket_id,
+    apt.subject,
+    apt.activity_description,
+    apt.enterprise,
+    apt.block,
+    apt.unit,
+    apt.common_area_location,
+    apt.standalone_location,
+    apt.legal_process_number,
+    apt.legal_process_claimant,
+    apt.cancellation_reason,
+    ...(apt.materials ?? []),
+    ...(apt.equipment ?? []),
+    ...(apt.tools ?? []),
+  ]
+
+  if (includeCollaboratorInMatch) {
+    parts.push(
+      apt.collaborator_name,
+      apt.collaborator_role_label,
+      personExtra?.name,
+      personExtra?.nickname,
+      personExtra?.role_label,
+    )
+  }
+
+  const haystack = normalizeSearch(parts.filter(Boolean).join(' '))
+  return tokens.every((token) => haystack.includes(token))
+}
+
 async function createSchedulePdf(date: string, programmingType: 'general' | 'foreman', groups: { title: string; people: CollaboratorDay[] }[], dayEvents: number) {
   const [{ jsPDF }, logoDataUrl] = await Promise.all([
     import('jspdf'),
@@ -468,6 +514,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const [weekAppointments, setWeekAppointments] = useState<Appointment[]>([])
   const [weekAbsences, setWeekAbsences] = useState<WeeklyAbsence[]>([])
   const [collaboratorSearch, setCollaboratorSearch] = useState('')
+  const [globalSearchResults, setGlobalSearchResults] = useState<Appointment[]>([])
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false)
+  const [globalSearchExpanded, setGlobalSearchExpanded] = useState(true)
   const [staff, setStaff] = useState<CollaboratorDay[]>([])
   const [tickets, setTickets] = useState<TicketSummary[]>([])
   const [ticketsLoaded, setTicketsLoaded] = useState(false)
@@ -481,6 +530,14 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const [refresh, setRefresh] = useState(0)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [sendingWhatsapp, setSendingWhatsapp] = useState(false)
+  const [syncingCvcrm, setSyncingCvcrm] = useState(false)
+  const [cvcrmSyncStatus, setCvcrmSyncStatus] = useState<{
+    enabled: boolean
+    dispatchTime: string
+    pendingTicketsCount: number
+    pendingItemsCount: number
+    cvcrmConfigured: boolean
+  } | null>(null)
   const [whatsappNotice, setWhatsappNotice] = useState<{ kind: 'success'; text: string } | null>(null)
   const [hiddenRoleKeys, setHiddenRoleKeys] = useState<Set<string>>(() => new Set())
   const [roleVisibilityLoaded, setRoleVisibilityLoaded] = useState(false)
@@ -502,12 +559,29 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
       .catch(() => {})
   }, [])
 
+  const loadCvcrmSyncStatus = useCallback(() => {
+    apiRequest<{
+      enabled: boolean
+      dispatchTime: string
+      pendingTicketsCount: number
+      pendingItemsCount: number
+      cvcrmConfigured: boolean
+    }>('/api/programming/cvcrm-sync/status')
+      .then((status) => setCvcrmSyncStatus(status))
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     loadCalendar()
   }, [loadCalendar])
 
-  useLiveSync(['settings'], () => {
+  useEffect(() => {
+    loadCvcrmSyncStatus()
+  }, [loadCvcrmSyncStatus, refresh])
+
+  useLiveSync(['settings', 'programming'], () => {
     loadCalendar()
+    loadCvcrmSyncStatus()
   })
 
   const holidayMap = useMemo(() => new Map(calendarData?.holidays.map((h) => [h.date, h]) ?? []), [calendarData])
@@ -586,7 +660,8 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   }, [refresh])
 
   useEffect(() => {
-    if (viewMode !== 'collaborator' || selectedCollaboratorIds.length === 0) {
+    const hasSearchQuery = collaboratorSearch.trim().length > 0
+    if (viewMode !== 'collaborator' || (selectedCollaboratorIds.length === 0 && !hasSearchQuery)) {
       setWeekAppointments([])
       setWeekAbsences([])
       return
@@ -598,8 +673,10 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     const params = new URLSearchParams({
       startDate,
       endDate,
-      collaboratorIds: selectedCollaboratorIds.join(','),
     })
+    if (selectedCollaboratorIds.length > 0) {
+      params.set('collaboratorIds', selectedCollaboratorIds.join(','))
+    }
     apiRequest<{
       appointments: Appointment[]
       absences: WeeklyAbsence[]
@@ -619,7 +696,36 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
         if (!cancelled) setWeekLoading(false)
       })
     return () => { cancelled = true }
-  }, [viewMode, selectedCollaboratorIds, week[0].date, week[6].date, refresh])
+  }, [viewMode, selectedCollaboratorIds, collaboratorSearch, week[0].date, week[6].date, refresh])
+
+  useEffect(() => {
+    const cleaned = collaboratorSearch.trim().replace(/^#+/, '').trim()
+    if (cleaned.length < 2) {
+      setGlobalSearchResults([])
+      setGlobalSearchLoading(false)
+      return
+    }
+    let cancelled = false
+    setGlobalSearchLoading(true)
+    const timer = window.setTimeout(() => {
+      apiRequest<{ appointments: Appointment[] }>(`/api/programming/search?q=${encodeURIComponent(cleaned)}`)
+        .then((res) => {
+          if (!cancelled) {
+            setGlobalSearchResults(res.appointments)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setGlobalSearchResults([])
+        })
+        .finally(() => {
+          if (!cancelled) setGlobalSearchLoading(false)
+        })
+    }, 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [collaboratorSearch, refresh])
 
   function shiftWeek(amount: number) {
     const next = new Date(`${date}T12:00:00Z`)
@@ -765,6 +871,40 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     }
   }
 
+  async function handleSyncCvcrmNow() {
+    setSyncingCvcrm(true)
+    setError('')
+    setWhatsappNotice(null)
+    try {
+      const res = await apiRequest<{
+        ran: boolean
+        ticketsSynced: number
+        itemsSynced: number
+        ticketsFailed: number
+        message: string
+      }>('/api/programming/cvcrm-sync/run', {
+        method: 'POST',
+      })
+      loadCvcrmSyncStatus()
+      if (res.ticketsFailed > 0) {
+        setError(res.message)
+      } else {
+        setWhatsappNotice({
+          kind: 'success',
+          text: res.message,
+        })
+      }
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? `Não foi possível sincronizar comentários com o CVCRM: ${requestError.message}`
+          : 'Não foi possível sincronizar comentários com o CVCRM.',
+      )
+    } finally {
+      setSyncingCvcrm(false)
+    }
+  }
+
   const collaboratorSelectOptions: SearchableMultiSelectOption[] = useMemo(() => {
     return allCollaborators.map((c) => ({
       value: c.id,
@@ -821,6 +961,16 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     : staff.filter((person) => !hiddenRoleKeys.has(person.role))
   const visibleDayEvents = visibleStaff.reduce((total, collaborator) => total + collaborator.appointments.length, 0)
   const collaboratorSearchTerm = normalizeSearch(collaboratorSearch)
+  const searchTokens = useMemo(
+    () =>
+      collaboratorSearchTerm
+        .replace(/^#+/, '')
+        .split(/\s+/)
+        .map((t) => t.replace(/^#+/, '').trim())
+        .filter(Boolean),
+    [collaboratorSearchTerm],
+  )
+
   const roleGroups = roles.filter((role) => programmingType === 'foreman' || !hiddenRoleKeys.has(role.key)).map((group) => ({
     ...group,
     people: visibleStaff.filter((person) => person.role === group.key)
@@ -829,11 +979,33 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     ...group,
     hasProgrammedPeople: group.people.some((person) => person.appointments.length > 0),
   }))
+
   const filteredRoleGroups = roleGroups.map((group) => ({
     ...group,
     people: collaboratorSearchTerm
-      ? group.people.filter((person) =>
-        normalizeSearch(`${person.name} ${person.nickname}`).includes(collaboratorSearchTerm))
+      ? group.people
+          .map((person) => {
+            const personHaystack = normalizeSearch(`${person.name} ${person.nickname} ${person.role_label}`)
+            const personMatchesAllTokens = searchTokens.length > 0 && searchTokens.every((t) => personHaystack.includes(t))
+            const contentMatchingAppointments = person.appointments.filter((apt) =>
+              appointmentMatchesSearch(apt, collaboratorSearchTerm, person, false),
+            )
+            const fullMatchingAppointments = person.appointments.filter((apt) =>
+              appointmentMatchesSearch(apt, collaboratorSearchTerm, person, true),
+            )
+
+            if (contentMatchingAppointments.length > 0) {
+              return { ...person, appointments: contentMatchingAppointments }
+            }
+            if (personMatchesAllTokens) {
+              return person
+            }
+            if (fullMatchingAppointments.length > 0) {
+              return { ...person, appointments: fullMatchingAppointments }
+            }
+            return null
+          })
+          .filter((person): person is CollaboratorDay => person !== null)
       : group.people,
   })).map((group) => ({
     ...group,
@@ -843,6 +1015,135 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
   const filteredDayEvents = filteredRoleGroups.reduce((total, group) =>
     total + group.people.reduce((groupTotal, person) => groupTotal + person.appointments.length, 0), 0)
 
+  const filteredWeekAppointments = useMemo(() => {
+    if (!collaboratorSearchTerm) return weekAppointments
+    return weekAppointments.filter((apt) => appointmentMatchesSearch(apt, collaboratorSearchTerm))
+  }, [weekAppointments, collaboratorSearchTerm])
+
+  const weeklyDisplayedCollaborators = useMemo(() => {
+    const baseList = selectedCollaboratorIds.length > 0 ? selectedCollaboratorsList : allCollaborators
+    if (!collaboratorSearchTerm) return selectedCollaboratorsList
+    const collabIdsWithMatch = new Set(filteredWeekAppointments.map((apt) => apt.collaborator_id))
+    return baseList.filter((collab) => {
+      if (collabIdsWithMatch.has(collab.id)) return true
+      const personHaystack = normalizeSearch(`${collab.name} ${collab.nickname} ${collab.role_label}`)
+      return searchTokens.length > 0 && searchTokens.every((t) => personHaystack.includes(t))
+    })
+  }, [selectedCollaboratorIds, selectedCollaboratorsList, allCollaborators, collaboratorSearchTerm, filteredWeekAppointments, searchTokens])
+
+  function jumpToProgrammingAppointment(apt: Appointment) {
+    const targetDate = programmingDateString(new Date(apt.starts_at))
+    setDate(targetDate)
+    if (viewMode === 'collaborator' && selectedCollaboratorIds.length > 0 && !selectedCollaboratorIds.includes(apt.collaborator_id)) {
+      setSelectedCollaboratorIds((current) => [...current, apt.collaborator_id])
+    }
+  }
+
+  function renderGlobalSearchHistoryBanner() {
+    const cleaned = collaboratorSearch.trim()
+    if (cleaned.replace(/^#+/, '').trim().length < 2) return null
+
+    return (
+      <div className="programming-global-search-panel no-print">
+        <div className="programming-global-search-header">
+          <div className="programming-global-search-title">
+            <Search size={14} />
+            <strong>
+              {globalSearchLoading
+                ? `Buscando programações para “${cleaned}”...`
+                : `${globalSearchResults.length} programação(ões) encontrada(s) no histórico para “${cleaned}”`}
+            </strong>
+          </div>
+          <div className="programming-global-search-actions">
+            {globalSearchResults.length > 0 && (
+              <button
+                type="button"
+                className="text-action-btn"
+                onClick={() => setGlobalSearchExpanded((prev) => !prev)}
+              >
+                {globalSearchExpanded ? 'Recolher lista' : `Ver todas (${globalSearchResults.length})`}
+              </button>
+            )}
+            <button
+              type="button"
+              className="text-action-btn"
+              onClick={() => setCollaboratorSearch('')}
+            >
+              Limpar filtro
+            </button>
+          </div>
+        </div>
+
+        {globalSearchExpanded && globalSearchResults.length > 0 && (
+          <div className="programming-global-search-list">
+            {globalSearchResults.map((apt) => {
+              const aptDateIso = programmingDateString(new Date(apt.starts_at))
+              const isCurrentDay = viewMode === 'daily' && aptDateIso === date
+              const isInCurrentWeek = viewMode === 'collaborator' && aptDateIso >= week[0].date && aptDateIso <= week[6].date
+              return (
+                <div
+                  key={apt.id}
+                  className={`programming-global-search-item ${apt.cancelled ? 'is-cancelled' : apt.completed ? 'is-completed' : ''} ${isCurrentDay || isInCurrentWeek ? 'is-active-date' : ''}`}
+                >
+                  <div className="programming-global-search-item-main">
+                    <div className="programming-global-search-item-top">
+                      <span className="programming-global-search-date">
+                        <CalendarDays size={12} />
+                        {formatDatePt(aptDateIso)} · {displayTime(apt.starts_at)} às {displayTime(apt.ends_at)}
+                      </span>
+                      {apt.protocol && (
+                        <span className="programming-global-search-protocol">
+                          Protocolo #{apt.protocol}
+                        </span>
+                      )}
+                      <span className="programming-global-search-collab">
+                        <UsersRound size={12} />
+                        {apt.collaborator_name}
+                      </span>
+                      {apt.cancelled ? (
+                        <span className="programming-global-search-status is-cancelled">Cancelada</span>
+                      ) : apt.completed ? (
+                        <span className="programming-global-search-status is-completed">Realizada</span>
+                      ) : (
+                        <span className="programming-global-search-status is-scheduled">Agendada</span>
+                      )}
+                    </div>
+                    <div className="programming-global-search-item-sub">
+                      {apt.enterprise && <strong>{apt.enterprise}</strong>}
+                      {(apt.common_area_location || apt.block || apt.unit || apt.standalone_location) && (
+                        <span>
+                          {apt.standalone_location ||
+                            (apt.common_area_location
+                              ? `Área comum: ${apt.common_area_location}`
+                              : `Bl. ${apt.block || '—'} · Un. ${apt.unit || '—'}`)}
+                        </span>
+                      )}
+                      <span className="programming-global-search-desc">{apt.activity_description}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button programming-global-jump-btn"
+                    onClick={() => jumpToProgrammingAppointment(apt)}
+                    title={viewMode === 'daily' ? `Ir para o dia ${formatDatePt(aptDateIso)}` : `Ir para a semana de ${formatDatePt(aptDateIso)}`}
+                  >
+                    {isCurrentDay
+                      ? 'Neste dia'
+                      : isInCurrentWeek
+                        ? 'Nesta semana'
+                        : viewMode === 'daily'
+                          ? `Ver dia ${formatShortDatePt(aptDateIso)}`
+                          : `Ver semana (${formatShortDatePt(aptDateIso)})`}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <section className="programming-page">
       <div className="programming-heading">
@@ -851,7 +1152,27 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
           <h1>{viewMode === 'collaborator' ? 'Programação por Colaborador' : (programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados')}</h1>
           <p>{viewMode === 'collaborator' ? 'Visualização semanal das atividades agendadas por colaborador.' : 'Atividades por colaborador, com reserva de horário sem sobreposição.'}</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => { setEditingAppointment(null); setShowForm((value) => !value) }}><Plus size={16} /> Nova programação</button>
+        <div className="programming-heading-actions no-print" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={syncingCvcrm || (cvcrmSyncStatus !== null && !cvcrmSyncStatus.cvcrmConfigured)}
+            onClick={() => void handleSyncCvcrmNow()}
+            title={
+              cvcrmSyncStatus
+                ? `Envia comentários internos consolidados de novas programações, ajustes e cancelamentos para os chamados do CVCRM (Disparo automático: ${cvcrmSyncStatus.enabled ? `Ativo às ${cvcrmSyncStatus.dispatchTime}` : 'Pausado'})`
+                : 'Enviar atualizações de programação para os chamados do CVCRM agora'
+            }
+          >
+            {syncingCvcrm ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+            {syncingCvcrm
+              ? 'Sincronizando CVCRM...'
+              : cvcrmSyncStatus && cvcrmSyncStatus.pendingTicketsCount > 0
+                ? `Enviar atualizações ao CVCRM agora (${cvcrmSyncStatus.pendingTicketsCount})`
+                : 'Enviar atualizações ao CVCRM agora'}
+          </button>
+          <button className="primary-button" type="button" onClick={() => { setEditingAppointment(null); setShowForm((value) => !value) }}><Plus size={16} /> Nova programação</button>
+        </div>
       </div>
 
       <div className="programming-top-nav no-print">
@@ -934,10 +1255,11 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
               type="search"
               value={collaboratorSearch}
               onChange={(event) => setCollaboratorSearch(event.target.value)}
-              placeholder="Buscar colaborador por nome ou apelido"
-              aria-label="Buscar programação por nome ou apelido do colaborador"
+              placeholder="Filtrar por colaborador, protocolo (#) ou palavras-chave da atividade/local..."
+              aria-label="Filtrar programação por colaborador, protocolo ou palavras-chave"
             />
           </label>
+          {renderGlobalSearchHistoryBanner()}
           {holidayMap.has(date) && (
             <div className="calendar-day-notice holiday-notice no-print" role="alert">
               <CalendarDays size={16} />
@@ -975,7 +1297,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
           </div>}
           <p className="programming-print-date">{displayDate(date)} · {programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}</p>
           <div className="schedule-day-content">
-            {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : collaboratorSearchTerm && filteredRoleGroups.length === 0 ? <p className="programming-empty">Nenhum colaborador encontrado para “{collaboratorSearch}”.</p> : filteredRoleGroups.map((group) => (
+            {programmingType === 'general' && !roleVisibilityLoaded ? <p className="programming-empty">Carregando configuração compartilhada...</p> : loading ? <p className="programming-empty">Carregando programação...</p> : staff.length === 0 ? <p className="programming-empty">{programmingType === 'foreman' ? 'Nenhum colaborador ativo com cargo de encarregado cadastrado.' : 'Nenhum colaborador ativo cadastrado.'}</p> : roleGroups.length === 0 ? <p className="programming-empty">Todas as funções estão ocultas. Selecione as que deseja ver na programação.</p> : collaboratorSearchTerm && filteredRoleGroups.length === 0 ? <p className="programming-empty">Nenhuma programação ou colaborador encontrado neste dia para “{collaboratorSearch}”.</p> : filteredRoleGroups.map((group) => (
               <section className={`schedule-role-group ${group.hasProgrammedPeople ? '' : 'schedule-role-group-empty'}`} key={group.key}>
                 <h3>{group.title}</h3>
                 <div className="schedule-staff-cards">
@@ -1173,9 +1495,11 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
               </div>
               <p>
                 <UsersRound size={14} />
-                {selectedCollaboratorsList.length === 0
+                {selectedCollaboratorsList.length === 0 && !collaboratorSearchTerm
                   ? 'Nenhum colaborador selecionado'
-                  : `${selectedCollaboratorsList.length} colaborador(es) selecionado(s) · ${weekAppointments.length} atividade(s) na semana`}
+                  : selectedCollaboratorsList.length === 0 && collaboratorSearchTerm
+                    ? `Filtro ativo: “${collaboratorSearch.trim()}” · ${filteredWeekAppointments.length} atividade(s) nesta semana`
+                    : `${selectedCollaboratorsList.length} colaborador(es) selecionado(s) · ${filteredWeekAppointments.length} atividade(s) na semana`}
               </p>
             </div>
 
@@ -1260,6 +1584,20 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
               />
             </div>
 
+            <label className="weekly-keyword-search-field">
+              <span className="weekly-keyword-search-label">Protocolo / Palavras-chave</span>
+              <div className="weekly-keyword-search-box">
+                <Search size={14} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={collaboratorSearch}
+                  onChange={(event) => setCollaboratorSearch(event.target.value)}
+                  placeholder="Protocolo (#), serviço, local ou colaborador..."
+                  aria-label="Filtrar programação semanal por protocolo, palavras-chave ou colaborador"
+                />
+              </div>
+            </label>
+
             <div className="collaborator-selection-actions">
               <button
                 type="button"
@@ -1268,13 +1606,16 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
               >
                 Selecionar todos ({allCollaborators.length})
               </button>
-              {selectedCollaboratorIds.length > 0 && (
+              {(selectedCollaboratorIds.length > 0 || collaboratorSearch.trim().length > 0) && (
                 <button
                   type="button"
                   className="collaborator-action-btn is-clear"
-                  onClick={() => setSelectedCollaboratorIds([])}
+                  onClick={() => {
+                    setSelectedCollaboratorIds([])
+                    setCollaboratorSearch('')
+                  }}
                 >
-                  Limpar seleção
+                  Limpar filtros
                 </button>
               )}
             </div>
@@ -1305,6 +1646,8 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
             )}
           </div>
 
+          {renderGlobalSearchHistoryBanner()}
+
           {selectedCollaboratorsList.length > 0 && (
             <div className="collaborator-chips-strip no-print">
               <span className="collaborator-chips-title">Selecionados ({selectedCollaboratorsList.length}):</span>
@@ -1333,13 +1676,13 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
             </div>
           )}
 
-          {selectedCollaboratorIds.length === 0 ? (
+          {selectedCollaboratorIds.length === 0 && !collaboratorSearchTerm ? (
             <div className="collaborator-empty-hero">
               <div className="collaborator-empty-hero-icon">
                 <UsersRound size={42} />
               </div>
-              <h3>Selecione um ou mais colaboradores</h3>
-              <p>Escolha os colaboradores acima ou utilize os atalhos por função para visualizar o cronograma semanal completo.</p>
+              <h3>Selecione um ou mais colaboradores ou pesquise por protocolo</h3>
+              <p>Escolha os colaboradores acima, utilize os atalhos por função ou digite um protocolo/palavra-chave para visualizar o cronograma semanal.</p>
               <div className="collaborator-empty-hero-actions">
                 <button
                   type="button"
@@ -1355,6 +1698,10 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
               <Loader2 className="animate-spin" size={24} />
               <span>Carregando programação da semana...</span>
             </div>
+          ) : collaboratorSearchTerm && filteredWeekAppointments.length === 0 && weeklyDisplayedCollaborators.length === 0 ? (
+            <div className="programming-empty">
+              <span>Nenhuma programação encontrada nesta semana para “{collaboratorSearch}”. Verifique o histórico completo acima se a atividade ocorreu em outra data.</span>
+            </div>
           ) : weeklyLayout === 'by-day' ? (
             /* Layout 1: Grade por Dia da Semana (7 colunas) */
             <div className="weekly-grid-container">
@@ -1365,12 +1712,14 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                 const workSat = workSaturdayMap.get(day.date)
                 const isToday = day.date === programmingDateString(new Date())
 
-                const dayAppointments = weekAppointments.filter(
+                const dayAppointments = filteredWeekAppointments.filter(
                   (apt) => programmingDateString(new Date(apt.starts_at)) === day.date,
                 )
-                const dayAbsences = weekAbsences.filter(
-                  (abs) => abs.startDate <= day.date && abs.endDate >= day.date,
-                )
+                const dayAbsences = collaboratorSearchTerm
+                  ? []
+                  : weekAbsences.filter(
+                      (abs) => abs.startDate <= day.date && abs.endDate >= day.date,
+                    )
 
                 return (
                   <div
@@ -1439,7 +1788,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
                             </div>
                           )}
 
-                          {selectedCollaboratorIds.length > 1 && (
+                          {(selectedCollaboratorIds.length > 1 || selectedCollaboratorIds.length === 0) && (
                             <div className="weekly-card-collab-row">
                               {apt.collaborator_photo_url ? (
                                 <img className="weekly-collab-mini-avatar" src={apt.collaborator_photo_url} alt="" />
@@ -1615,8 +1964,8 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
           ) : (
             /* Layout 2: Separado por Colaborador */
             <div className="weekly-by-collaborator-list">
-              {selectedCollaboratorsList.map((collab) => {
-                const collabAppointments = weekAppointments.filter((apt) => apt.collaborator_id === collab.id)
+              {weeklyDisplayedCollaborators.map((collab) => {
+                const collabAppointments = filteredWeekAppointments.filter((apt) => apt.collaborator_id === collab.id)
                 const collabAbsences = weekAbsences.filter((abs) => abs.collaboratorId === collab.id)
 
                 return (

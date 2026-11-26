@@ -1,0 +1,336 @@
+.cvcrm-prog-sync-settings-card {
+  background: #ffffff;
+  border: 1px solid #dce5ee;
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
+}
+
+.cvcrm-prog-sync-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cvcrm-prog-sync-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.cvcrm-prog-sync-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cvcrm-prog-sync-title-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cvcrm-prog-sync-title-badges h3 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.cvcrm-prog-sync-title-row p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.cvcrm-prog-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.cvcrm-prog-sync-badge.is-ready {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.cvcrm-prog-sync-badge.is-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.cvcrm-prog-sync-badge.is-auto-on {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.cvcrm-prog-sync-badge.is-auto-off {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.cvcrm-prog-sync-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cvcrm-prog-sync-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cvcrm-prog-sync-notice.is-success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.cvcrm-prog-sync-notice.is-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.cvcrm-prog-sync-notice.is-info {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+}
+
+.cvcrm-prog-sync-notice button {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cvcrm-prog-sync-controls-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 12px;
+}
+
+.cvcrm-prog-sync-toggle-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  flex-wrap: wrap;
+}
+
+.cvcrm-prog-sync-toggle-box.is-enabled {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.cvcrm-prog-sync-toggle-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.cvcrm-prog-sync-toggle-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #334155;
+  flex-shrink: 0;
+}
+
+.cvcrm-prog-sync-toggle-box.is-enabled .cvcrm-prog-sync-toggle-icon {
+  color: #16a34a;
+  border-color: #86efac;
+}
+
+.cvcrm-prog-sync-toggle-info strong {
+  display: block;
+  font-size: 12.5px;
+  color: #0f172a;
+}
+
+.cvcrm-prog-sync-toggle-info p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.cvcrm-prog-sync-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 13px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.cvcrm-prog-sync-switch-btn.is-on {
+  background: #ffffff;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.cvcrm-prog-sync-switch-btn.is-on:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.cvcrm-prog-sync-switch-btn.is-off {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.cvcrm-prog-sync-switch-btn.is-off:hover:not(:disabled) {
+  background: #15803d;
+}
+
+.cvcrm-prog-sync-time-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.cvcrm-prog-sync-time-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #1e3a8a;
+}
+
+.cvcrm-prog-sync-time-label strong {
+  display: block;
+  font-size: 12.5px;
+  color: #0f172a;
+}
+
+.cvcrm-prog-sync-time-label small {
+  display: block;
+  font-size: 10.5px;
+  color: #64748b;
+  margin-top: 1px;
+}
+
+.cvcrm-prog-sync-time-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cvcrm-prog-sync-time-input {
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.cvcrm-prog-sync-status-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+  border-radius: 7px;
+}
+
+.cvcrm-prog-sync-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cvcrm-prog-sync-stat .stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64748b;
+}
+
+.cvcrm-prog-sync-stat strong {
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.cvcrm-prog-sync-stat strong.has-pending {
+  color: #d97706;
+}
+
+.cvcrm-prog-sync-stat small {
+  font-size: 10.5px;
+  color: #64748b;
+}
+
+.cvcrm-prog-sync-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.cvcrm-prog-sync-hint svg {
+  flex-shrink: 0;
+  color: #2563eb;
+  margin-top: 1px;
+}
+
+@media (max-width: 820px) {
+  .cvcrm-prog-sync-controls-grid,
+  .cvcrm-prog-sync-status-bar {
+    grid-template-columns: 1fr;
+  }
+}

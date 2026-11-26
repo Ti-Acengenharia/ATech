@@ -7,6 +7,11 @@ import {
   sendWhatsAppTextMessage,
   testEvolutionConnection,
 } from '../services/evolution-api.js'
+import {
+  getCvcrmProgrammingSyncSettings,
+  runCvcrmProgrammingCommentSync,
+  saveCvcrmProgrammingSyncSettings,
+} from '../services/cvcrm-programming-sync.js'
 import { recordAuditLog } from '../services/audit-log.js'
 import { getSessionTimeoutMinutes, setSessionTimeoutMinutes } from '../services/session-settings.js'
 import {
@@ -289,6 +294,67 @@ router.post('/whatsapp/test-send', requireAdmin, async (req, res, next) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Falha ao enviar mensagem de teste.',
     })
+  }
+})
+
+// Configurações de Sincronização de Comentários Internos da Programação com o CVCRM
+router.get('/cvcrm-programming-sync', requireAuth, async (_req, res, next) => {
+  try {
+    const data = await getCvcrmProgrammingSyncSettings()
+    res.json(data)
+  } catch (error) {
+    next(error)
+  }
+})
+
+const cvcrmProgrammingSyncSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  dispatchTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Informe um horário válido no formato HH:MM.').optional(),
+})
+
+router.put('/cvcrm-programming-sync', requireAdmin, async (req, res, next) => {
+  const parsed = cvcrmProgrammingSyncSettingsSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({
+      error: parsed.error.issues[0]?.message ?? 'Parâmetros inválidos para a sincronização CVCRM.',
+    })
+    return
+  }
+
+  try {
+    const user = req.session.user!
+    const updated = await saveCvcrmProgrammingSyncSettings(parsed.data, user.id)
+
+    await recordAuditLog({
+      actorUserId: user.id,
+      actorName: user.displayName,
+      action: 'settings_update',
+      resourceType: 'system_settings',
+      resourceId: 'cvcrm_programming_comment_sync',
+      summary: `Atualizou configurações de sincronização de comentários de programação com o CVCRM (${updated.enabled ? 'Ativada' : 'Desativada'} às ${updated.dispatchTime}).`,
+      metadata: parsed.data,
+    })
+
+    res.json({
+      success: true,
+      ...updated,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/cvcrm-programming-sync/run-now', requireAdmin, async (req, res, next) => {
+  try {
+    const user = req.session.user!
+    const result = await runCvcrmProgrammingCommentSync('manual', user.id)
+    res.json(result)
+  } catch (error) {
+    if (error instanceof Error && /em andamento|CVCRM não configurado/.test(error.message)) {
+      res.status(409).json({ error: error.message })
+      return
+    }
+    next(error)
   }
 })
 

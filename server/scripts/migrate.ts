@@ -85,6 +85,7 @@ try {
     '063_unified_tasks_personal_activities.sql',
     '064_enterprise_documents_repository.sql',
     '065_programming_cancellation.sql',
+    '066_cvcrm_programming_comment_sync.sql',
   ]
 
   let newlyAppliedCount = 0

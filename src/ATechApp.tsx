@@ -126,6 +126,7 @@ const PersonalActivitiesPage = lazy(() => import('./PersonalActivitiesPage'))
 const HomepageTicketsFilterSettings = lazy(() => import('./HomepageTicketsFilterSettings'))
 const SessionTimeoutSettings = lazy(() => import('./SessionTimeoutSettings'))
 const WhatsAppSettings = lazy(() => import('./WhatsAppSettings'))
+const CvcrmProgrammingSyncSettings = lazy(() => import('./CvcrmProgrammingSyncSettings'))
 const SiengeSettings = lazy(() => import('./SiengeSettings'))
 const AuditLogsPage = lazy(() => import('./AuditLogsPage'))
 const CalendarManagementPage = lazy(() => import('./CalendarManagementPage'))
@@ -1674,6 +1675,10 @@ function AdminScreen({ user, domain, pageAccess, canViewOtherPersonalActivities,
 
           <Suspense fallback={null}>
             <WhatsAppSettings />
+          </Suspense>
+
+          <Suspense fallback={null}>
+            <CvcrmProgrammingSyncSettings />
           </Suspense>
 
           <Suspense fallback={null}>
