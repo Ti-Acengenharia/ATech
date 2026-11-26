@@ -1,4 +1,5 @@
 import express from 'express'
+import compression from 'compression'
 import session from 'express-session'
 import connectPgSimple from 'connect-pg-simple'
 import helmet from 'helmet'
@@ -69,6 +70,16 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }))
+app.use(
+  compression({
+    filter: (req, res) => {
+      if (req.path === '/api/sync/events' || req.headers.accept === 'text/event-stream') {
+        return false
+      }
+      return compression.filter(req, res)
+    },
+  }),
+)
 app.use(express.json({ limit: '35mb' }))
 app.use(
   session({

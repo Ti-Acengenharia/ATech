@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowDown,
@@ -41,14 +41,15 @@ import {
 } from 'lucide-react'
 import { apiRequest } from '../api/client'
 import { useLiveSync } from '../api/liveSync'
-import CompletionTermModal from './CompletionTermModal'
+const CompletionTermModal = lazy(() => import('./CompletionTermModal'))
 import { programmingDateTimeString, programmingTimeString } from './programming-time'
-import TicketProgrammingForm from './TicketProgrammingForm'
-import ProgrammingCancellationModal from './ProgrammingCancellationModal'
-import TicketDashboardPage from './TicketDashboardPage'
+const TicketProgrammingForm = lazy(() => import('./TicketProgrammingForm'))
+const ProgrammingCancellationModal = lazy(() => import('./ProgrammingCancellationModal'))
+const TicketDashboardPage = lazy(() => import('./TicketDashboardPage'))
 import SearchableMultiSelect, { type SearchableMultiSelectOption } from '../SearchableMultiSelect'
 import { ATechLoading } from '../ATechLoading'
-import MediaViewerModal, { type MediaViewerItem } from '../MediaViewerModal'
+import type { MediaViewerItem } from '../MediaViewerModal'
+const MediaViewerModal = lazy(() => import('../MediaViewerModal'))
 import PersonalActivityDetailModal, { PRIORITY_CONFIG, type ActivityPriority } from '../PersonalActivityDetailModal'
 import type { CvTicketAttachment, CvTicketMessage, TeamMentionTarget, TicketProgramming, TicketSummary, TicketTag, TicketWorkflowStage } from './types'
 
@@ -985,16 +986,22 @@ export default function TicketBoardPage({
         onBack={returnToTicketBoard}
         onNotice={(value) => setNotice(value)}
       />
-      {termTicket && <CompletionTermModal ticket={termTicket} currentUserName={currentUser.displayName} onClose={() => setTermTicket(null)} onSaveSignedPdf={(bytes) => saveSignedTerm(termTicket, bytes)} />}
+      {termTicket && (
+        <Suspense fallback={null}>
+          <CompletionTermModal ticket={termTicket} currentUserName={currentUser.displayName} onClose={() => setTermTicket(null)} onSaveSignedPdf={(bytes) => saveSignedTerm(termTicket, bytes)} />
+        </Suspense>
+      )}
     </>
   }
 
   if (dashboardOpen) {
     return (
-      <TicketDashboardPage
-        onBack={() => applyViewChange(viewMode, 'push')}
-        onSelectView={(view) => applyViewChange(view, 'push')}
-      />
+      <Suspense fallback={<ATechLoading compact message="Carregando dashboard..." />}>
+        <TicketDashboardPage
+          onBack={() => applyViewChange(viewMode, 'push')}
+          onSelectView={(view) => applyViewChange(view, 'push')}
+        />
+      </Suspense>
     )
   }
 
@@ -1675,7 +1682,7 @@ function TicketTagPills({ tags }: { tags: TicketTag[] }) {
   return <span className="ticket-tag-pills">{tags.map((tag) => <span key={tag.id} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span>)}</span>
 }
 
-function TicketCard({ ticket, clock, fields, onOpen }: {
+const TicketCard = memo(function TicketCard({ ticket, clock, fields, onOpen }: {
   ticket: TicketSummary
   clock: number
   fields: TicketCardField[]
@@ -1767,7 +1774,7 @@ function TicketCard({ ticket, clock, fields, onOpen }: {
       )}
     </article>
   )
-}
+})
 
 function TicketList({ tickets, stages, onOpen }: {
   tickets: TicketSummary[]
@@ -2622,20 +2629,22 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
                 </button>
               </div>
               {(showScheduleForm || editingSchedule) && (
-                <TicketProgrammingForm
-                  key={editingSchedule ? `${editingSchedule.id}-${editingSchedule.programming_type}` : 'new-ticket-programming'}
-                  tickets={tickets}
-                  initialTicketId={ticket.id}
-                  allowMixedCollaborators
-                  editingAppointment={editingSchedule ?? undefined}
-                  onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }}
-                  onSaved={() => {
-                    setShowScheduleForm(false)
-                    setEditingSchedule(null)
-                    setRefresh((value) => value + 1)
-                    onNotice({ kind: 'success', text: 'Programação salva.' })
-                  }}
-                />
+                <Suspense fallback={<ATechLoading compact message="Carregando formulário..." />}>
+                  <TicketProgrammingForm
+                    key={editingSchedule ? `${editingSchedule.id}-${editingSchedule.programming_type}` : 'new-ticket-programming'}
+                    tickets={tickets}
+                    initialTicketId={ticket.id}
+                    allowMixedCollaborators
+                    editingAppointment={editingSchedule ?? undefined}
+                    onCancel={() => { setShowScheduleForm(false); setEditingSchedule(null) }}
+                    onSaved={() => {
+                      setShowScheduleForm(false)
+                      setEditingSchedule(null)
+                      setRefresh((value) => value + 1)
+                      onNotice({ kind: 'success', text: 'Programação salva.' })
+                    }}
+                  />
+                </Suspense>
               )}
               {programming.length ? (
                 <div className="ticket-programming-list">
@@ -3155,35 +3164,39 @@ function TicketDetailPage({ ticket, tickets, currentUser, completionTerms, onGen
       )}
 
       {viewerOpen && (
-        <MediaViewerModal
-          items={allTicketMediaItems}
-          initialIndex={viewerInitialIndex}
-          onClose={() => setViewerOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <MediaViewerModal
+            items={allTicketMediaItems}
+            initialIndex={viewerInitialIndex}
+            onClose={() => setViewerOpen(false)}
+          />
+        </Suspense>
       )}
 
       {cancellingSchedule && (
-        <ProgrammingCancellationModal
-          appointment={{
-            id: cancellingSchedule.id,
-            ticket_id: ticket.id,
-            protocol: ticket.protocol,
-            subject: ticket.subject,
-            collaborator_id: cancellingSchedule.collaborator_id,
-            collaborator_name: cancellingSchedule.collaborator_name,
-            activity_description: cancellingSchedule.activity_description,
-            starts_at: cancellingSchedule.starts_at,
-            ends_at: cancellingSchedule.ends_at,
-            enterprise: cancellingSchedule.enterprise,
-            block: cancellingSchedule.block,
-            unit: cancellingSchedule.unit,
-          }}
-          onClose={() => setCancellingSchedule(null)}
-          onCancelled={() => {
-            setCancellingSchedule(null)
-            setRefresh((value) => value + 1)
-          }}
-        />
+        <Suspense fallback={null}>
+          <ProgrammingCancellationModal
+            appointment={{
+              id: cancellingSchedule.id,
+              ticket_id: ticket.id,
+              protocol: ticket.protocol,
+              subject: ticket.subject,
+              collaborator_id: cancellingSchedule.collaborator_id,
+              collaborator_name: cancellingSchedule.collaborator_name,
+              activity_description: cancellingSchedule.activity_description,
+              starts_at: cancellingSchedule.starts_at,
+              ends_at: cancellingSchedule.ends_at,
+              enterprise: cancellingSchedule.enterprise,
+              block: cancellingSchedule.block,
+              unit: cancellingSchedule.unit,
+            }}
+            onClose={() => setCancellingSchedule(null)}
+            onCancelled={() => {
+              setCancellingSchedule(null)
+              setRefresh((value) => value + 1)
+            }}
+          />
+        </Suspense>
       )}
     </section>
   )
