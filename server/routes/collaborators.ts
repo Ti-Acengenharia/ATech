@@ -95,6 +95,7 @@ const collaboratorSchema = z.object({
   nickname: z.string().trim().max(80).default(''),
   registrationNumber: z.string().trim().max(80).default('').transform((value) => value || null),
   role: roleKeySchema,
+  costCenter: z.enum(['assistencia_tecnica', 'pos_obra']).default('assistencia_tecnica'),
   cpf: z.string().transform((value) => value.replace(/\D/g, '') || null)
     .refine((value) => value === null || isValidCpf(value), 'Informe um CPF válido ou deixe o campo vazio.'),
   phone: z.string().trim().max(40).transform((value) => value || null)
@@ -960,6 +961,7 @@ router.get('/', async (req, res, next) => {
       registration_number: string | null
       role: string
       role_label: string
+      cost_center: 'assistencia_tecnica' | 'pos_obra'
       has_photo: boolean
       birth_date_ciphertext: string
       is_active: boolean
@@ -975,6 +977,7 @@ router.get('/', async (req, res, next) => {
       elapsed_days: number
     }>(
       `SELECT c.id, c.name, c.nickname, c.registration_number, c.role, r.label AS role_label,
+              COALESCE(c.cost_center, 'assistencia_tecnica') AS cost_center,
               (c.photo_content IS NOT NULL) AS has_photo, c.birth_date_ciphertext,
               shirt_size.name AS shirt_size, c.shirt_short_sleeve_qty, c.shirt_long_sleeve_qty,
               c.pants_size, c.boot_size,
@@ -1013,6 +1016,7 @@ router.get('/', async (req, res, next) => {
           registration_number: collaborator.registration_number,
           role: collaborator.role,
           role_label: collaborator.role_label,
+          cost_center: collaborator.cost_center,
           photo_url: collaborator.has_photo ? `/api/collaborators/${collaborator.id}/photo` : null,
           age_years: age.years,
           age_months: age.months,
@@ -1056,17 +1060,18 @@ router.post('/', async (req, res, next) => {
     }
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO collaborators (
-        name, nickname, registration_number, role, cpf_ciphertext, cpf_fingerprint, phone_ciphertext,
+        name, nickname, registration_number, role, cost_center, cpf_ciphertext, cpf_fingerprint, phone_ciphertext,
         gender, birth_date_ciphertext, admission_date, termination_date, has_children,
         is_on_leave, leave_start_date_ciphertext, expected_return_date_ciphertext,
         leave_reason_ciphertext, created_by, updated_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
        RETURNING id`,
       [
         data.name,
         data.nickname,
         data.registrationNumber,
         data.role,
+        data.costCenter,
         data.cpf ? encryptPersonalData(data.cpf, 'cpf') : null,
         data.cpf ? fingerprintCpf(data.cpf) : null,
         data.phone ? encryptPersonalData(data.phone, 'phone') : null,
@@ -1168,18 +1173,19 @@ router.put('/:id', async (req, res, next) => {
     }
     const updated = await client.query(
       `UPDATE collaborators SET
-        name = $1, nickname = $2, registration_number = $3, role = $4,
-        cpf_ciphertext = $5, cpf_fingerprint = $6, phone_ciphertext = $7,
-        gender = $8, birth_date_ciphertext = $9, admission_date = $10,
-        termination_date = $11, has_children = $12, is_on_leave = $13,
-        leave_start_date_ciphertext = $14, expected_return_date_ciphertext = $15,
-        leave_reason_ciphertext = $16, updated_by = $17, updated_at = now()
-             WHERE id = $18 RETURNING id`,
+        name = $1, nickname = $2, registration_number = $3, role = $4, cost_center = $5,
+        cpf_ciphertext = $6, cpf_fingerprint = $7, phone_ciphertext = $8,
+        gender = $9, birth_date_ciphertext = $10, admission_date = $11,
+        termination_date = $12, has_children = $13, is_on_leave = $14,
+        leave_start_date_ciphertext = $15, expected_return_date_ciphertext = $16,
+        leave_reason_ciphertext = $17, updated_by = $18, updated_at = now()
+             WHERE id = $19 RETURNING id`,
       [
         data.name,
         data.nickname,
         data.registrationNumber,
         data.role,
+        data.costCenter,
         data.cpf ? encryptPersonalData(data.cpf, 'cpf') : null,
         data.cpf ? fingerprintCpf(data.cpf) : null,
         data.phone ? encryptPersonalData(data.phone, 'phone') : null,
@@ -1367,6 +1373,7 @@ router.get('/:id/report', async (req, res, next) => {
       name: string
       nickname: string
       role: string
+      cost_center: 'assistencia_tecnica' | 'pos_obra'
       registration_number: string | null
       cpf_ciphertext: string | null
       phone_ciphertext: string | null
@@ -1388,6 +1395,7 @@ router.get('/:id/report', async (req, res, next) => {
       boot_size: number | null
     }>(
       `SELECT collaborator.id, collaborator.name, collaborator.nickname, collaborator.role,
+              COALESCE(collaborator.cost_center, 'assistencia_tecnica') AS cost_center,
               collaborator.registration_number, collaborator.cpf_ciphertext, collaborator.phone_ciphertext,
               collaborator.gender, collaborator.birth_date_ciphertext, collaborator.admission_date,
               collaborator.termination_date, collaborator.has_children, collaborator.is_on_leave,
@@ -1589,6 +1597,7 @@ router.get('/:id/report', async (req, res, next) => {
         name: collaborator.name,
         nickname: collaborator.nickname,
         role: collaborator.role,
+        costCenter: collaborator.cost_center,
         registrationNumber: collaborator.registration_number ?? '',
         cpf: collaborator.cpf_ciphertext ? decryptPersonalData(collaborator.cpf_ciphertext, 'cpf') : '',
         phone: collaborator.phone_ciphertext ? decryptPersonalData(collaborator.phone_ciphertext, 'phone') : '',

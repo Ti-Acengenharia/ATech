@@ -219,7 +219,7 @@ function appointmentMatchesSearch(
   return tokens.every((token) => haystack.includes(token))
 }
 
-async function createSchedulePdf(date: string, programmingType: 'general' | 'foreman', groups: { title: string; people: CollaboratorDay[] }[], dayEvents: number) {
+async function createSchedulePdf(date: string, programmingType: 'general' | 'foreman' | 'post_work', groups: { title: string; people: CollaboratorDay[] }[], dayEvents: number) {
   const [{ jsPDF }, logoDataUrl] = await Promise.all([
     import('jspdf'),
     getCompanyLogoDataUrl(),
@@ -278,7 +278,7 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
       document.setTextColor(255, 255, 255)
       document.setFont('helvetica', 'bold')
       document.setFontSize(16)
-      document.text(`AC Engenharia · ATech | ${programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}`, textX, 16)
+      document.text(`AC Engenharia · ATech | ${programmingType === 'general' ? 'Programação Assistência Técnica' : programmingType === 'post_work' ? 'Programação Pós-Obra' : 'Programação de Encarregados'}`, textX, 16)
       document.setFont('helvetica', 'normal')
       document.setFontSize(10)
       document.text(dateLabel, textX, 24)
@@ -291,7 +291,7 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
       document.setFont('helvetica', 'bold')
       document.setFontSize(8)
       document.setTextColor(49, 87, 119)
-      document.text(`ATECH  /  ${programmingType === 'general' ? 'PROGRAMAÇÃO GERAL' : 'PROGRAMAÇÃO DE ENCARREGADOS'}  /  ${dateLabel.toLocaleUpperCase('pt-BR')}`, margin, y)
+      document.text(`ATECH  /  ${programmingType === 'general' ? 'PROGRAMAÇÃO ASSISTÊNCIA TÉCNICA' : programmingType === 'post_work' ? 'PROGRAMAÇÃO PÓS-OBRA' : 'PROGRAMAÇÃO DE ENCARREGADOS'}  /  ${dateLabel.toLocaleUpperCase('pt-BR')}`, margin, y)
       document.setDrawColor(218, 228, 237)
       document.line(margin, y + 4, pageWidth - margin, y + 4)
       y += 12
@@ -488,7 +488,7 @@ async function createSchedulePdf(date: string, programmingType: 'general' | 'for
     document.text('ATech · Documento de apoio à equipe de campo', margin, pageHeight - 8)
     document.text(`${page} / ${pages}`, pageWidth - margin, pageHeight - 8, { align: 'right' })
   }
-  document.save(`programacao-${programmingType === 'general' ? 'geral' : 'encarregados'}-${date}.pdf`)
+  document.save(`programacao-${programmingType === 'general' ? 'assistencia-tecnica' : programmingType === 'post_work' ? 'pos-obra' : 'encarregados'}-${date}.pdf`)
 }
 
 function formatDatePt(value: string) {
@@ -525,7 +525,10 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     window.addEventListener('popstate', checkUrlDate)
     return () => window.removeEventListener('popstate', checkUrlDate)
   }, [date])
-  const [programmingType, setProgrammingType] = useState<'general' | 'foreman'>('general')
+  const [programmingType, setProgrammingType] = useState<'general' | 'foreman' | 'post_work'>('general')
+  const [postWorkPdfModalOpen, setPostWorkPdfModalOpen] = useState(false)
+  const [postWorkPdfMode, setPostWorkPdfMode] = useState<'all' | 'specific'>('all')
+  const [postWorkPdfSelectedIds, setPostWorkPdfSelectedIds] = useState<string[]>([])
   const [viewMode, setViewMode] = useState<'daily' | 'collaborator'>(() => {
     if (typeof window !== 'undefined') {
       const urlParam = new URLSearchParams(window.location.search).get('view')
@@ -863,11 +866,20 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
     }
   }
 
-  async function downloadPdf() {
+  async function downloadPdf(customGroups?: { title: string; people: CollaboratorDay[] }[]) {
+    if (programmingType === 'post_work' && !customGroups) {
+      const scheduledIds = roleGroups.flatMap((g) => g.people.filter((p) => p.appointments.some((a) => !a.cancelled)).map((p) => p.id))
+      setPostWorkPdfSelectedIds(scheduledIds)
+      setPostWorkPdfMode('all')
+      setPostWorkPdfModalOpen(true)
+      return
+    }
+    const targetGroups = customGroups ?? roleGroups
+    const targetEvents = targetGroups.reduce((sum, g) => sum + g.people.reduce((s, p) => s + p.appointments.filter((a) => !a.cancelled).length, 0), 0)
     setGeneratingPdf(true)
     setError('')
     try {
-      await createSchedulePdf(date, programmingType, roleGroups, visibleDayEvents)
+      await createSchedulePdf(date, programmingType, targetGroups, targetEvents)
     } catch (requestError) {
       setError(requestError instanceof Error ? `Não foi possível gerar o relatório PDF: ${requestError.message}` : 'Não foi possível gerar o relatório PDF.')
     } finally {
@@ -1183,7 +1195,7 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
       <div className="programming-heading">
         <div>
           <span className="eyebrow">PROGRAMAÇÃO DA ASSISTÊNCIA TÉCNICA</span>
-          <h1>{viewMode === 'collaborator' ? 'Programação por Colaborador' : (programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados')}</h1>
+          <h1>{viewMode === 'collaborator' ? 'Programação por Colaborador' : (programmingType === 'general' ? 'Programação Assistência Técnica' : programmingType === 'post_work' ? 'Programação Pós-Obra' : 'Programação de Encarregados')}</h1>
           <p>{viewMode === 'collaborator' ? 'Visualização semanal das atividades agendadas por colaborador.' : 'Atividades por colaborador, com reserva de horário sem sobreposição.'}</p>
         </div>
         <div className="programming-heading-actions no-print" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1235,8 +1247,9 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
 
         {viewMode === 'daily' && (
           <nav className="programming-tabs" aria-label="Vertentes da programação">
-            <button type="button" className={programmingType === 'general' ? 'is-active' : ''} aria-pressed={programmingType === 'general'} onClick={() => { setProgrammingType('general'); setShowForm(false); setEditingAppointment(null) }}>Programação Geral</button>
+            <button type="button" className={programmingType === 'general' ? 'is-active' : ''} aria-pressed={programmingType === 'general'} onClick={() => { setProgrammingType('general'); setShowForm(false); setEditingAppointment(null) }}>Assistência Técnica</button>
             <button type="button" className={programmingType === 'foreman' ? 'is-active' : ''} aria-pressed={programmingType === 'foreman'} onClick={() => { setProgrammingType('foreman'); setShowForm(false); setEditingAppointment(null) }}>Encarregados</button>
+            <button type="button" className={programmingType === 'post_work' ? 'is-active' : ''} aria-pressed={programmingType === 'post_work'} onClick={() => { setProgrammingType('post_work'); setShowForm(false); setEditingAppointment(null) }}>Pós-obra</button>
           </nav>
         )}
       </div>
@@ -2227,6 +2240,79 @@ export default function ProgrammingPage({ isAdmin = false }: { isAdmin?: boolean
         </section>
       )}
       <p className="programming-availability-note no-print"><Clock3 size={14} /> A disponibilidade é recalculada ao selecionar colaborador e dia; o servidor bloqueia reservas simultâneas.</p>
+
+      {postWorkPdfModalOpen && (
+        <div className="visit-finalize-backdrop" role="dialog" aria-modal="true" aria-label="Emitir PDF Pós-obra">
+          <div className="visit-finalize-modal" style={{ maxWidth: '480px' }}>
+            <header className="visit-finalize-header">
+              <h2>Emitir PDF — Programação Pós-Obra</h2>
+              <p>Escolha se deseja gerar o PDF com todos os colaboradores escalados ou apenas colaboradores específicos.</p>
+            </header>
+            <div className="visit-finalize-body">
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className={postWorkPdfMode === 'all' ? 'primary-button' : 'secondary-button'}
+                  onClick={() => setPostWorkPdfMode('all')}
+                >
+                  Todos os colaboradores
+                </button>
+                <button
+                  type="button"
+                  className={postWorkPdfMode === 'specific' ? 'primary-button' : 'secondary-button'}
+                  onClick={() => setPostWorkPdfMode('specific')}
+                >
+                  Colaboradores específicos
+                </button>
+              </div>
+
+              {postWorkPdfMode === 'specific' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '240px', overflowY: 'auto', padding: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                  {roleGroups.flatMap((g) => g.people).filter((p) => p.appointments.some((a) => !a.cancelled)).map((person) => {
+                    const checked = postWorkPdfSelectedIds.includes(person.id)
+                    return (
+                      <label key={person.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                            setPostWorkPdfSelectedIds((prev) => next ? [...prev, person.id] : prev.filter((id) => id !== person.id))
+                          }}
+                        />
+                        <span><strong>{person.name}</strong> ({roleName(person.role, person.role_label)})</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <footer className="visit-finalize-footer">
+              <button type="button" className="secondary-button" onClick={() => setPostWorkPdfModalOpen(false)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={postWorkPdfMode === 'specific' && postWorkPdfSelectedIds.length === 0}
+                onClick={() => {
+                  const selectedSet = new Set(postWorkPdfSelectedIds)
+                  const filteredGroups = postWorkPdfMode === 'all'
+                    ? roleGroups
+                    : roleGroups.map((g) => ({
+                        ...g,
+                        people: g.people.filter((p) => selectedSet.has(p.id)),
+                      }))
+                  setPostWorkPdfModalOpen(false)
+                  void downloadPdf(filteredGroups)
+                }}
+              >
+                Gerar PDF
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {cancellingAppointment && (
         <ProgrammingCancellationModal

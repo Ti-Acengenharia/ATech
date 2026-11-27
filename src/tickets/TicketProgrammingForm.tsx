@@ -30,6 +30,7 @@ interface CollaboratorOption {
   nickname: string
   role: string
   role_label: string
+  cost_center?: 'assistencia_tecnica' | 'pos_obra'
   is_active: boolean
   is_on_leave: boolean
 }
@@ -209,7 +210,7 @@ export default function TicketProgrammingForm({
   initialLegalProcessId?: string
   initialLegalProcess?: LegalProcessOption
   initialDate?: string
-  programmingType?: 'general' | 'foreman'
+  programmingType?: 'general' | 'foreman' | 'post_work'
   allowMixedCollaborators?: boolean
   editingAppointment?: EditingAppointment
   onSaved: (savedDate?: string) => void
@@ -254,6 +255,17 @@ export default function TicketProgrammingForm({
   const [tools, setTools] = useState((editingAppointment?.tools ?? []).join('\n'))
   const [standaloneLocation, setStandaloneLocation] = useState(editingAppointment?.standalone_location ?? '')
   const [isFinalization, setIsFinalization] = useState(editingAppointment?.is_finalization ?? false)
+  const [additionalTickets, setAdditionalTickets] = useState<Array<{
+    ticketId: string
+    protocol: string
+    subject: string
+    activityDescription: string
+    isFinalization: boolean
+  }>>([])
+  const selectedTicket = useMemo(
+    () => tickets.find((t) => String(t.id) === String(ticketId)) ?? null,
+    [tickets, ticketId],
+  )
   const [completionTermDelivered, setCompletionTermDelivered] = useState(editingAppointment?.completion_term_delivered ?? false)
   const [searchFilter, setSearchFilter] = useState('')
   const [ticketSearchFilter, setTicketSearchFilter] = useState('')
@@ -523,7 +535,11 @@ export default function TicketProgrammingForm({
   )
 
   const filteredCollaborators = collaborators.filter((person) => {
-    if (!allowMixedCollaborators && selectedProgrammingType === 'foreman' ? person.role !== 'encarregado' : !allowMixedCollaborators && person.role === 'encarregado') return false
+    if (!allowMixedCollaborators) {
+      if (selectedProgrammingType === 'foreman' && person.role !== 'encarregado') return false
+      if (selectedProgrammingType === 'general' && (person.role === 'encarregado' || person.cost_center === 'pos_obra')) return false
+      if (selectedProgrammingType === 'post_work' && (person.role === 'encarregado' || person.cost_center !== 'pos_obra')) return false
+    }
     if (person.role !== 'encarregado' && hiddenRoleKeys.has(person.role)) return false
     const term = searchFilter.toLowerCase()
     return person.name.toLowerCase().includes(term) ||
@@ -632,6 +648,13 @@ export default function TicketProgrammingForm({
             tools: listItems(tools),
             isFinalization: activityType === 'ticket' ? isFinalization : false,
             completionTermDelivered: activityType === 'ticket' ? completionTermDelivered : false,
+            additionalTickets: activityType === 'ticket'
+              ? additionalTickets.map((item) => ({
+                  ticketId: Number(item.ticketId),
+                  activityDescription: item.activityDescription.trim(),
+                  isFinalization: item.isFinalization,
+                }))
+              : [],
           }),
         })
       } else {
@@ -661,6 +684,13 @@ export default function TicketProgrammingForm({
             tools: listItems(tools),
             isFinalization: activityType === 'ticket' ? isFinalization : false,
             completionTermDelivered: activityType === 'ticket' ? completionTermDelivered : false,
+            additionalTickets: activityType === 'ticket'
+              ? additionalTickets.map((item) => ({
+                  ticketId: Number(item.ticketId),
+                  activityDescription: item.activityDescription.trim(),
+                  isFinalization: item.isFinalization,
+                }))
+              : [],
           }),
         })
       }
@@ -961,7 +991,20 @@ export default function TicketProgrammingForm({
       )}
 
       <label className="ticket-form-field" style={{ gridColumn: '1 / -1' }}>
-        <span><Wrench size={14} /> Atividade prevista</span>
+        <span>
+          <Wrench size={14} />{' '}
+          {activityType === 'ticket' && selectedTicket
+            ? `Atividade prevista — Chamado #${selectedTicket.id} (Protocolo #${selectedTicket.protocol})`
+            : 'Atividade prevista'}
+        </span>
+        {activityType === 'ticket' && selectedTicket && (
+          <div style={{ background: '#f4f8fc', borderLeft: '3px solid #3b82f6', borderRadius: '0 6px 6px 0', padding: '8px 10px', fontSize: '12px', color: '#334155', lineHeight: 1.45, maxHeight: '110px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+            <strong style={{ display: 'block', fontSize: '11px', color: '#1e5f96', marginBottom: '2px' }}>
+              Descrição do chamado #{selectedTicket.id}{selectedTicket.subject ? ` · ${selectedTicket.subject}` : ''}
+            </strong>
+            {selectedTicket.description?.trim() || 'Sem descrição registrada na abertura do chamado.'}
+          </div>
+        )}
         <textarea
           rows={3}
           maxLength={3000}
@@ -971,6 +1014,123 @@ export default function TicketProgrammingForm({
           required
         />
       </label>
+
+      {activityType === 'ticket' && !editingAppointment && selectedTicket && (selectedTicket.enterprise || enterprise) && (
+        (() => {
+          const norm = (s?: string | null) => (s || '').trim().toLowerCase()
+          const targetEnt = norm(selectedTicket.enterprise || enterprise)
+          const targetBlk = norm(selectedTicket.block || block)
+          const targetUni = norm(selectedTicket.unit || unit)
+          const usedIds = new Set([String(selectedTicket.id), ...additionalTickets.map((t) => String(t.ticketId))])
+          const sameUnitCandidates = tickets.filter((t) =>
+            !usedIds.has(String(t.id)) &&
+            norm(t.enterprise) === targetEnt &&
+            norm(t.block) === targetBlk &&
+            norm(t.unit) === targetUni &&
+            (targetBlk !== '' || targetUni !== ''),
+          )
+          if (!sameUnitCandidates.length && !additionalTickets.length) return null
+          return (
+            <div className="ticket-form-field" style={{ gridColumn: '1 / -1', background: '#f8fbff', border: '1px solid #dbe7f3', borderRadius: '8px', padding: '12px', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <strong style={{ fontSize: '12.5px', color: '#1e3a5f' }}>
+                  Outros chamados nesta mesma unidade ({additionalTickets.length} adicionado{additionalTickets.length === 1 ? '' : 's'})
+                </strong>
+                {sameUnitCandidates.length > 0 && (
+                  <select
+                    value=""
+                    style={{ maxWidth: '340px' }}
+                    onChange={(e) => {
+                      const picked = sameUnitCandidates.find((t) => String(t.id) === e.target.value)
+                      if (!picked) return
+                      setAdditionalTickets((prev) => [
+                        ...prev,
+                        {
+                          ticketId: String(picked.id),
+                          protocol: picked.protocol,
+                          subject: picked.subject || 'Atendimento',
+                          activityDescription: '',
+                          isFinalization: false,
+                        },
+                      ])
+                    }}
+                  >
+                    <option value="">+ Adicionar chamado da mesma unidade...</option>
+                    {sameUnitCandidates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        Chamado #{t.id} (Proto #{t.protocol}) — {t.subject}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {additionalTickets.map((item, idx) => {
+                const extraTicket = tickets.find((t) => String(t.id) === String(item.ticketId))
+                return (
+                <div key={item.ticketId} style={{ background: '#ffffff', border: '1px solid #d5e2ee', borderRadius: '6px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b' }}>
+                      Atividade prevista — Chamado #{item.ticketId} (Protocolo #{item.protocol})
+                    </span>
+                    <button
+                      type="button"
+                      className="text-action-btn danger-action"
+                      onClick={() => setAdditionalTickets((prev) => prev.filter((t) => t.ticketId !== item.ticketId))}
+                    >
+                      Remover
+                    </button>
+                  </div>
+                  <div style={{ background: '#f4f8fc', borderLeft: '3px solid #3b82f6', borderRadius: '0 6px 6px 0', padding: '8px 10px', fontSize: '12px', color: '#334155', lineHeight: 1.45, maxHeight: '110px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                    <strong style={{ display: 'block', fontSize: '11px', color: '#1e5f96', marginBottom: '2px' }}>
+                      Descrição do chamado #{item.ticketId}{item.subject ? ` · ${item.subject}` : ''}
+                    </strong>
+                    {extraTicket?.description?.trim() || 'Sem descrição registrada na abertura do chamado.'}
+                  </div>
+                  <textarea
+                    rows={2}
+                    maxLength={3000}
+                    required
+                    value={item.activityDescription}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setAdditionalTickets((prev) => prev.map((t, i) => (i === idx ? { ...t, activityDescription: val } : t)))
+                    }}
+                    placeholder={`Descreva a atividade prevista para o chamado #${item.ticketId}...`}
+                  />
+                  <div className={`programming-finalization-card ${item.isFinalization ? 'is-active' : ''}`} style={{ marginTop: '2px' }}>
+                    <div className="programming-finalization-header">
+                      <label className="programming-finalization-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={item.isFinalization}
+                          onChange={(e) => {
+                            const checked = e.target.checked
+                            setAdditionalTickets((prev) => prev.map((t, i) => (i === idx ? { ...t, isFinalization: checked } : t)))
+                          }}
+                        />
+                        <span className="programming-finalization-title">
+                          <FileSignature size={14} className="programming-finalization-icon" />
+                          Programação de finalização do chamado #{item.ticketId}
+                        </span>
+                      </label>
+                      {item.isFinalization && (
+                        <span className="programming-finalization-badge">
+                          Solicitar assinatura do termo ao cliente
+                        </span>
+                      )}
+                    </div>
+                    <p className="programming-finalization-desc">
+                      Identifica esta atividade como a visita final deste chamado, gerando alertas na programação e no relatório PDF para coleta da assinatura do cliente no termo de finalização.
+                    </p>
+                  </div>
+                </div>
+                )
+              })}
+            </div>
+          )
+        })()
+      )}
 
       {activityType === 'standalone' ? (
         <label className="ticket-form-field standalone-location-field" style={{ gridColumn: '1 / -1' }}>

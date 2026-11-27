@@ -88,6 +88,7 @@ try {
     '066_cvcrm_programming_comment_sync.sql',
     '067_ticket_visits.sql',
     '068_ticket_visits_unique_draft.sql',
+    '069_collaborator_cost_center_and_multi_ticket_programming.sql',
   ]
 
   let newlyAppliedCount = 0

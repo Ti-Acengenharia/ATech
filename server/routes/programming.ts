@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin, requireAuth } from '../auth.js'
@@ -21,7 +22,7 @@ const programmingTimeZone = APP_TIMEZONE
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const datetimeSchema = z.string().datetime({ offset: true })
-const programmingTypeSchema = z.enum(['general', 'foreman']).default('general')
+const programmingTypeSchema = z.enum(['general', 'foreman', 'post_work']).default('general')
 const programmingDetailsSchema = z.object({
   enterprise: z.string().trim().max(240),
   block: z.string().trim().max(120),
@@ -106,6 +107,11 @@ const programmingSchema = z.object({
   standaloneLocation: z.string().trim().max(500).default(''),
   isFinalization: z.boolean().default(false),
   completionTermDelivered: z.boolean().default(false),
+  additionalTickets: z.array(z.object({
+    ticketId: z.coerce.number().int().positive(),
+    activityDescription: z.string().trim().min(1).max(3000),
+    isFinalization: z.boolean().default(false),
+  })).max(15).default([]),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
   if (entry.activityType === 'ticket' &&
     (!entry.ticketId || entry.legalProcessId || !entry.enterprise ||
@@ -148,6 +154,11 @@ const singleProgrammingSchema = z.object({
   standaloneLocation: z.string().trim().max(500).default(''),
   isFinalization: z.boolean().default(false),
   completionTermDelivered: z.boolean().default(false),
+  additionalTickets: z.array(z.object({
+    ticketId: z.coerce.number().int().positive(),
+    activityDescription: z.string().trim().min(1).max(3000),
+    isFinalization: z.boolean().default(false),
+  })).max(15).default([]),
 }).merge(programmingDetailsSchema).superRefine((entry, context) => {
   if (!isNotSunday(entry.date) || new Date(entry.endsAt) <= new Date(entry.startsAt)) {
     context.addIssue({ code: 'custom', path: ['endsAt'], message: 'Informe um dia útil e um horário final posterior ao inicial.' })
@@ -213,6 +224,7 @@ router.get('/collaborators', async (_req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT c.id::text AS id, c.name, c.nickname, c.role, r.label AS role_label,
+              COALESCE(c.cost_center, 'assistencia_tecnica') AS cost_center,
               TRUE AS is_active, c.is_on_leave,
               CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS photo_url
        FROM collaborators c
@@ -359,7 +371,7 @@ router.get('/legal-processes', async (_req, res, next) => {
   }
 })
 
-async function getDailyProgramming(date: string, programmingType: 'general' | 'foreman') {
+async function getDailyProgramming(date: string, programmingType: 'general' | 'foreman' | 'post_work') {
   const [collaborators, appointments] = await Promise.all([
     pool.query<{
       id: string
@@ -395,7 +407,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
          AND abs.start_date <= $1::date AND abs.end_date >= $1::date
        WHERE (c.termination_date IS NULL OR c.termination_date > $1::date)
          AND (($2 = 'foreman' AND c.role = 'encarregado')
-           OR ($2 = 'general' AND c.role <> 'encarregado'))
+           OR ($2 = 'general' AND c.role <> 'encarregado' AND COALESCE(c.cost_center, 'assistencia_tecnica') = 'assistencia_tecnica')
+           OR ($2 = 'post_work' AND c.role <> 'encarregado' AND c.cost_center = 'pos_obra'))
        ORDER BY lower(c.name), c.id`,
       [date, programmingType],
     ),
@@ -428,7 +441,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
       cancellation_reassigned_to: string | null
       cancellation_reassigned_name: string | null
       cancelled_at: string | null
-      programming_type: 'general' | 'foreman'
+      programming_type: 'general' | 'foreman' | 'post_work'
+      schedule_group_id: string | null
       collaborator_name: string
       collaborator_role: string
       collaborator_role_label: string
@@ -449,6 +463,7 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
               c2.name AS cancellation_reassigned_name,
               p.cancelled_at,
               p.programming_type,
+              p.schedule_group_id::text AS schedule_group_id,
               c.name AS collaborator_name,
               c.role AS collaborator_role, r.label AS collaborator_role_label,
               CASE WHEN c.photo_content IS NOT NULL THEN '/api/collaborators/' || c.id || '/photo' END AS collaborator_photo_url
@@ -462,7 +477,8 @@ async function getDailyProgramming(date: string, programmingType: 'general' | 'f
          AND p.ends_at > ($1::date AT TIME ZONE '${programmingTimeZone}')
          AND p.programming_type = $2
          AND (($2 = 'foreman' AND c.role = 'encarregado')
-           OR ($2 = 'general' AND c.role <> 'encarregado'))
+           OR ($2 = 'general' AND c.role <> 'encarregado' AND COALESCE(c.cost_center, 'assistencia_tecnica') = 'assistencia_tecnica')
+           OR ($2 = 'post_work' AND c.role <> 'encarregado' AND c.cost_center = 'pos_obra'))
        ORDER BY p.starts_at, c.id`,
       [date, programmingType],
     ),
@@ -702,7 +718,7 @@ router.get('/availability', async (req, res, next) => {
     ? { success: true as const, data: null }
     : z.coerce.number().int().positive().safeParse(req.query.excludeId)
   if (!startDate.success || !endDate.success || !collaboratorId.success || !excludeId.success ||
-      !isRangeWithinLimit(startDate.data, endDate.data)) {
+    !isRangeWithinLimit(startDate.data, endDate.data)) {
     res.status(400).json({ error: 'Informe colaborador e dia válidos.' })
     return
   }
@@ -859,6 +875,7 @@ router.get('/search', async (req, res, next) => {
               c2.name AS cancellation_reassigned_name,
               p.cancelled_at,
               p.programming_type,
+              p.schedule_group_id::text AS schedule_group_id,
               c.name AS collaborator_name,
               c.nickname AS collaborator_nickname,
               c.role AS collaborator_role,
@@ -944,22 +961,27 @@ function formatScheduleConflicts(conflicts: ScheduleConflict[]) {
 async function validateAvailability(
   client: import('pg').PoolClient,
   collaboratorId: number,
-  programmingType: 'general' | 'foreman',
+  programmingType: 'general' | 'foreman' | 'post_work',
   ticketId: number | null,
   startsAt: Date,
   endsAt: Date,
   excludeId?: number,
 ): Promise<ScheduleConflict[]> {
-  const collaborator = await client.query<{ name: string; is_on_leave: boolean; role: string }>(
-    `SELECT name, is_on_leave, role FROM collaborators
+  const collaborator = await client.query<{ name: string; is_on_leave: boolean; role: string; cost_center: string }>(
+    `SELECT name, is_on_leave, role, COALESCE(cost_center, 'assistencia_tecnica') AS cost_center FROM collaborators
      WHERE id = $1 AND (termination_date IS NULL OR termination_date > CURRENT_DATE)
      FOR UPDATE`,
     [collaboratorId],
   )
   if (!collaborator.rows[0]) throw new Error('Colaborador ativo não encontrado.')
   if (collaborator.rows[0].is_on_leave) throw new Error('Este colaborador está afastado e não pode receber programação.')
-  if ((programmingType === 'foreman') !== (collaborator.rows[0].role === 'encarregado')) {
-    throw new Error('A programação selecionada não corresponde ao cargo do colaborador.')
+  const expectedType = collaborator.rows[0].role === 'encarregado'
+    ? 'foreman'
+    : collaborator.rows[0].cost_center === 'pos_obra'
+      ? 'post_work'
+      : 'general'
+  if (programmingType !== expectedType) {
+    throw new Error('A programação selecionada não corresponde ao cargo/centro de custo do colaborador.')
   }
 
   // Validação de calendário (feriados, domingos e sábados compensados)
@@ -1157,17 +1179,21 @@ router.post('/', async (req, res, next) => {
       throw new Error('Inclua exatamente uma programação para cada dia útil do intervalo.')
     }
     await validateLegalProcess(client, data.legalProcessId)
-    const collaboratorNames = await client.query<{ id: string; name: string; role: string }>(
-      'SELECT id, name, role FROM collaborators WHERE id = ANY($1::bigint[])',
+    const collaboratorNames = await client.query<{ id: string; name: string; role: string; cost_center: string }>(
+      `SELECT id, name, role, COALESCE(cost_center, 'assistencia_tecnica') AS cost_center FROM collaborators WHERE id = ANY($1::bigint[])`,
       [collaboratorIds],
     )
     const collaboratorNameById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.name]))
     const collaboratorRoleById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.role]))
+    const collaboratorCostCenterById = new Map(collaboratorNames.rows.map((row) => [Number(row.id), row.cost_center]))
+    const resolveCollabType = (cid: number): 'general' | 'foreman' | 'post_work' => {
+      if (collaboratorRoleById.get(cid) === 'encarregado') return 'foreman'
+      if (collaboratorCostCenterById.get(cid) === 'pos_obra') return 'post_work'
+      return 'general'
+    }
     const conflicts: ScheduleConflict[] = []
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = collaboratorRoleById.get(collaboratorId) === 'encarregado'
-        ? 'foreman'
-        : 'general'
+      const collaboratorProgrammingType = resolveCollabType(collaboratorId)
       for (const occurrence of data.occurrences) {
         conflicts.push(...await validateAvailability(
           client,
@@ -1181,43 +1207,54 @@ router.post('/', async (req, res, next) => {
     }
     if (conflicts.length) throw new Error(formatScheduleConflicts(conflicts))
 
+    const ticketsToInsert: Array<{ ticketId: number | null; activityDescription: string; isFinalization: boolean }> = [
+      {
+        ticketId: data.ticketId ?? null,
+        activityDescription: data.activityDescription,
+        isFinalization: Boolean(data.isFinalization),
+      },
+      ...(data.activityType === 'ticket' ? data.additionalTickets : []),
+    ]
+    const scheduleGroupId = ticketsToInsert.length > 1 ? randomUUID() : null
+
     const ids: string[] = []
     for (const collaboratorId of collaboratorIds) {
-      const collaboratorProgrammingType = collaboratorRoleById.get(collaboratorId) === 'encarregado'
-        ? 'foreman'
-        : 'general'
+      const collaboratorProgrammingType = resolveCollabType(collaboratorId)
       for (const occurrence of data.occurrences) {
-        const result = await client.query<{ id: string }>(
-          `INSERT INTO ticket_programming
-              (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
-               enterprise, block, unit, common_area_location, materials, equipment, tools,
-               standalone_location, programming_type, created_by, is_finalization, completion_term_delivered)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+        for (const item of ticketsToInsert) {
+          const result = await client.query<{ id: string }>(
+            `INSERT INTO ticket_programming
+                (ticket_id, legal_process_id, collaborator_id, activity_description, starts_at, ends_at,
+                 enterprise, block, unit, common_area_location, materials, equipment, tools,
+                 standalone_location, programming_type, created_by, is_finalization, completion_term_delivered, schedule_group_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
             [
-              data.ticketId ?? null, data.legalProcessId ?? null, collaboratorId, data.activityDescription, occurrence.startsAt, occurrence.endsAt,
+              item.ticketId, data.legalProcessId ?? null, collaboratorId, item.activityDescription, occurrence.startsAt, occurrence.endsAt,
               data.enterprise, data.block, data.unit, data.commonAreaLocation, data.materials, data.equipment, data.tools,
               data.standaloneLocation,
               collaboratorProgrammingType,
               req.session.user!.id,
-              Boolean(data.isFinalization),
+              Boolean(item.isFinalization),
               Boolean(data.completionTermDelivered),
+              scheduleGroupId,
             ],
-        )
-        ids.push(result.rows[0].id)
-        if (data.ticketId) await recordTicketActivity(
-          client,
-          data.ticketId,
-          req.session.user!.id,
-          'programming_added',
-          `Adicionou programação para ${collaboratorNameById.get(collaboratorId) ?? `colaborador ${collaboratorId}`}.`,
-          {
-            programmingId: result.rows[0].id,
-            collaboratorId,
-            startsAt: occurrence.startsAt,
-            endsAt: occurrence.endsAt,
-            activityDescription: data.activityDescription,
-          },
-        )
+          )
+          ids.push(result.rows[0].id)
+          if (item.ticketId) await recordTicketActivity(
+            client,
+            item.ticketId,
+            req.session.user!.id,
+            'programming_added',
+            `Adicionou programação para ${collaboratorNameById.get(collaboratorId) ?? `colaborador ${collaboratorId}`}.`,
+            {
+              programmingId: result.rows[0].id,
+              collaboratorId,
+              startsAt: occurrence.startsAt,
+              endsAt: occurrence.endsAt,
+              activityDescription: item.activityDescription,
+            },
+          )
+        }
       }
     }
     await client.query('COMMIT')

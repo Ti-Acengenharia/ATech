@@ -32,6 +32,7 @@ import {
   Plus,
   Receipt,
   Search,
+  SlidersHorizontal,
   Trash2,
   UploadCloud,
   User,
@@ -2297,64 +2298,192 @@ export default function LegalProcessesPage({
             )}
           </div>
 
-          {/* Gerenciador de fases e situações (recolhível) */}
+          {/* Barra compacta do gerenciador de fases e situações */}
           {filtersExpanded && (
-            <details className="legal-status-manager" open={statusManagerOpen} onToggle={(event) => setStatusManagerOpen(event.currentTarget.open)}>
-              <summary>
-                <span>
-                  <strong>Organizar situações e fases do fluxo</strong>
-                  <small>Ajuste a ordem das colunas do Kanban, altere nomes ou remova fases não utilizadas.</small>
-                </span>
-                <i>{statuses.length} fases ativas</i>
-                <ChevronDown size={16} />
-              </summary>
-              <div className="legal-status-toolbar">
-                {statuses.map((status, index) => (
-                  <div className="legal-status-chip" key={status.id}>
-                    <i style={{ background: status.color }} />
-                    {editingStatusId === status.id ? (
-                      <form className="legal-status-edit-form" onSubmit={(event) => void updateStatus(event, status)}>
-                        <input aria-label={`Novo nome para ${status.name}`} value={editingStatusName} onChange={(event) => setEditingStatusName(event.target.value)} maxLength={80} required autoFocus />
-                        <button type="submit" title="Salvar nome" aria-label="Salvar nome"><Check size={13} /></button>
-                        <button type="button" title="Cancelar edição" aria-label="Cancelar edição" onClick={() => { setEditingStatusId(null); setEditingStatusName('') }}><X size={13} /></button>
-                      </form>
-                    ) : (
-                      <>
-                        <span className="legal-status-chip-name">{status.name}</span>
-                        <button type="button" title={`Editar nome de ${status.name}`} aria-label={`Editar nome de ${status.name}`} onClick={() => { setEditingStatusId(status.id); setEditingStatusName(status.name) }}>
-                          <Pencil size={12} />
-                        </button>
-                      </>
-                    )}
-                    <span className="legal-status-order">
-                      <button type="button" title={`Mover ${status.name} para a esquerda`} aria-label={`Mover ${status.name} para a esquerda`} disabled={savingStatusOrder || index === 0} onClick={() => void moveStatus(status.id, -1)}>
-                        <ArrowLeft size={12} />
-                      </button>
-                      <button type="button" title={`Mover ${status.name} para a direita`} aria-label={`Mover ${status.name} para a direita`} disabled={savingStatusOrder || index === statuses.length - 1} onClick={() => void moveStatus(status.id, 1)}>
-                        <ArrowRight size={12} />
-                      </button>
-                    </span>
-                    <button type="button" title={`Excluir status ${status.name}`} aria-label={`Excluir status ${status.name}`} onClick={() => void deleteStatus(status)}>
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="legal-status-add" onClick={() => { setShowStatusForm((value) => !value); setStatusManagerOpen(true) }}>
-                  <Plus size={15} />
-                  <strong>Nova situação</strong>
-                  <small>Adicione uma fase ao quadro</small>
+            <div className="legal-status-manager-bar">
+              <div className="legal-status-manager-bar-info">
+                <strong>Fases do fluxo do Kanban</strong>
+                <span className="legal-status-count-pill">{statuses.length} fases ativas</span>
+              </div>
+              <div className="legal-status-manager-bar-actions">
+                <button type="button" className="secondary-button" onClick={() => setStatusManagerOpen(true)}>
+                  <SlidersHorizontal size={14} /> Organizar fases
+                </button>
+                <button type="button" className="primary-button" onClick={() => setShowStatusForm(true)}>
+                  <Plus size={14} /> Nova etapa
                 </button>
               </div>
-              {showStatusForm && (
-                <form className="legal-status-create" onSubmit={(event) => void createStatus(event)}>
-                  <input value={statusName} onChange={(event) => setStatusName(event.target.value)} placeholder="Nome da situação/fase" maxLength={80} required />
-                  <input type="color" value={statusColor} onChange={(event) => setStatusColor(event.target.value)} aria-label="Cor da situação" />
-                  <button className="secondary-button" type="submit">Criar status</button>
-                  <button className="text-action-btn" type="button" onClick={() => setShowStatusForm(false)}>Cancelar</button>
-                </form>
-              )}
-            </details>
+            </div>
           )}
+
+          {/* Modal moderno do Organizador de Situações e Fases */}
+          {statusManagerOpen && (
+            <div className="legal-status-modal-backdrop" role="dialog" aria-modal="true" aria-label="Organizar situações e fases do fluxo" onClick={() => setStatusManagerOpen(false)}>
+              <div className="legal-status-modal legal-status-organizer-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="legal-status-modal-header">
+                  <div>
+                    <h2>Organizar Situações e Fases</h2>
+                    <p>Reordene as colunas do Kanban, renomeie etapas ou remova fases sem processos.</p>
+                  </div>
+                  <button type="button" className="icon-button" onClick={() => setStatusManagerOpen(false)} aria-label="Fechar">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="legal-status-organizer-list">
+                  {statuses.map((status, index) => {
+                    const count = processes.filter((p) => p.status_id === status.id).length
+                    return (
+                      <div className="legal-status-organizer-row" key={status.id}>
+                        <span className="legal-status-organizer-pos">{index + 1}</span>
+                        <span className="legal-status-organizer-dot" style={{ backgroundColor: status.color }} />
+
+                        {editingStatusId === status.id ? (
+                          <form className="legal-status-organizer-edit" onSubmit={(event) => void updateStatus(event, status)}>
+                            <input
+                              aria-label={`Novo nome para ${status.name}`}
+                              value={editingStatusName}
+                              onChange={(event) => setEditingStatusName(event.target.value)}
+                              maxLength={80}
+                              required
+                              autoFocus
+                            />
+                            <button type="submit" className="icon-button" title="Salvar nome" aria-label="Salvar nome">
+                              <Check size={14} />
+                            </button>
+                            <button type="button" className="icon-button" title="Cancelar edição" aria-label="Cancelar edição" onClick={() => { setEditingStatusId(null); setEditingStatusName('') }}>
+                              <X size={14} />
+                            </button>
+                          </form>
+                        ) : (
+                          <div className="legal-status-organizer-name-wrap">
+                            <span className="legal-status-organizer-name">{status.name}</span>
+                            <span className="legal-status-organizer-count">{count} {count === 1 ? 'processo' : 'processos'}</span>
+                          </div>
+                        )}
+
+                        <div className="legal-status-organizer-actions">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title={`Mover ${status.name} para cima`}
+                            aria-label={`Mover ${status.name} para cima`}
+                            disabled={savingStatusOrder || index === 0}
+                            onClick={() => void moveStatus(status.id, -1)}
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title={`Mover ${status.name} para baixo`}
+                            aria-label={`Mover ${status.name} para baixo`}
+                            disabled={savingStatusOrder || index === statuses.length - 1}
+                            onClick={() => void moveStatus(status.id, 1)}
+                          >
+                            <ArrowDown size={14} />
+                          </button>
+                          {editingStatusId !== status.id && (
+                            <button
+                              type="button"
+                              className="icon-button"
+                              title={`Editar nome de ${status.name}`}
+                              aria-label={`Editar nome de ${status.name}`}
+                              onClick={() => { setEditingStatusId(status.id); setEditingStatusName(status.name) }}
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="icon-button danger-action"
+                            title={`Excluir fase ${status.name}`}
+                            aria-label={`Excluir fase ${status.name}`}
+                            onClick={() => void deleteStatus(status)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="legal-status-modal-footer">
+                  <button type="button" className="secondary-button" onClick={() => setStatusManagerOpen(false)}>
+                    Fechar
+                  </button>
+                  <button type="button" className="primary-button" onClick={() => setShowStatusForm(true)}>
+                    <Plus size={14} /> Nova etapa
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showStatusForm && (
+                <div className="legal-status-modal-backdrop" role="dialog" aria-modal="true" aria-label="Nova etapa do Kanban Jurídico" onClick={() => setShowStatusForm(false)}>
+                  <form className="legal-status-modal" onSubmit={(event) => void createStatus(event)} onClick={(e) => e.stopPropagation()}>
+                    <div className="legal-status-modal-header">
+                      <div>
+                        <h2>Nova Etapa do Kanban Jurídico</h2>
+                        <p>Defina o nome e a cor da nova fase do fluxo jurídico.</p>
+                      </div>
+                      <button type="button" className="icon-button" onClick={() => setShowStatusForm(false)} aria-label="Fechar">
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    <label className="ticket-form-field">
+                      <span>Nome da etapa / fase *</span>
+                      <input
+                        value={statusName}
+                        onChange={(event) => setStatusName(event.target.value)}
+                        placeholder="Ex.: Em negociação, Aguardando perícia..."
+                        maxLength={80}
+                        autoFocus
+                        required
+                      />
+                    </label>
+
+                    <div className="ticket-form-field">
+                      <span>Cor da etapa</span>
+                      <div className="legal-status-color-presets">
+                        {['#2563eb', '#0f766e', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0284c7', '#475569'].map((hex) => (
+                          <button
+                            key={hex}
+                            type="button"
+                            className={`legal-status-color-swatch ${statusColor.toLowerCase() === hex ? 'is-selected' : ''}`}
+                            style={{ backgroundColor: hex }}
+                            onClick={() => setStatusColor(hex)}
+                            aria-label={`Selecionar cor ${hex}`}
+                          />
+                        ))}
+                        <input
+                          type="color"
+                          value={statusColor}
+                          onChange={(event) => setStatusColor(event.target.value)}
+                          aria-label="Cor personalizada da etapa"
+                          style={{ width: '32px', height: '32px', padding: '2px', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="legal-status-preview" style={{ '--preview-color': statusColor } as CSSProperties}>
+                      <span className="legal-status-preview-title">
+                        <span className="legal-status-preview-dot" />
+                        {statusName.trim() || 'Pré-visualização da etapa'}
+                      </span>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', background: '#e2e8f0', borderRadius: '999px', padding: '1px 8px' }}>0</span>
+                    </div>
+
+                    <div className="legal-status-modal-footer">
+                      <button className="secondary-button" type="button" onClick={() => setShowStatusForm(false)}>Cancelar</button>
+                      <button className="primary-button" type="submit">Criar etapa</button>
+                    </div>
+                  </form>
+                </div>
+              )}
 
           {/* CONTEÚDO PRINCIPAL (QUADRO OU LISTA) */}
           {loading ? (
@@ -2497,7 +2626,7 @@ export default function LegalProcessesPage({
                 })}
                 {activeFiltersCount === 0 && (
                   <section className="legal-new-column">
-                    <button type="button" onClick={() => setShowStatusForm(true)}>
+                    <button type="button" onClick={() => { setStatusManagerOpen(true); setShowStatusForm(true) }}>
                       <Plus size={15} /> Nova situação
                     </button>
                   </section>

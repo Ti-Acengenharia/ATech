@@ -31,7 +31,7 @@ export interface DailyAppointment {
   cancelled?: boolean
   cancellation_reason_type?: string | null
   cancellation_reason?: string | null
-  programming_type: 'general' | 'foreman'
+  programming_type: 'general' | 'foreman' | 'post_work'
   collaborator_name: string
   collaborator_role: string
   collaborator_role_label: string
@@ -99,7 +99,7 @@ export function buildScheduleCaption({
   date,
   recipientName,
 }: {
-  programmingType: 'general' | 'foreman'
+  programmingType: 'general' | 'foreman' | 'post_work'
   date: string
   recipientName?: string | null
 }): string {
@@ -130,7 +130,7 @@ function displayTimePt(date: Date): string {
  */
 export async function fetchDailyProgrammingData(
   date: string,
-  programmingType: 'general' | 'foreman',
+  programmingType: 'general' | 'foreman' | 'post_work',
   collaboratorId?: string | number | null,
 ): Promise<DailyProgrammingData> {
   const colId = collaboratorId ? String(collaboratorId) : null
@@ -155,7 +155,8 @@ export async function fetchDailyProgrammingData(
          AND abs.start_date <= $1::date AND abs.end_date >= $1::date
        WHERE (c.termination_date IS NULL OR c.termination_date > $1::date)
          AND (($2 = 'foreman' AND c.role = 'encarregado')
-           OR ($2 = 'general' AND c.role <> 'encarregado'))
+           OR ($2 = 'general' AND c.role <> 'encarregado' AND COALESCE(c.cost_center, 'assistencia_tecnica') = 'assistencia_tecnica')
+           OR ($2 = 'post_work' AND c.role <> 'encarregado' AND c.cost_center = 'pos_obra'))
          AND ($3::bigint IS NULL OR c.id = $3::bigint)
        ORDER BY lower(c.name), c.id`,
       [date, programmingType, colId],
@@ -183,7 +184,7 @@ export async function fetchDailyProgrammingData(
       completed: boolean
       is_finalization: boolean
       completion_term_delivered: boolean
-      programming_type: 'general' | 'foreman'
+      programming_type: 'general' | 'foreman' | 'post_work'
       collaborator_name: string
       collaborator_role: string
       collaborator_role_label: string
@@ -212,7 +213,8 @@ export async function fetchDailyProgrammingData(
          AND p.programming_type = $2
          AND COALESCE(p.cancelled, FALSE) = FALSE
          AND (($2 = 'foreman' AND c.role = 'encarregado')
-           OR ($2 = 'general' AND c.role <> 'encarregado'))
+           OR ($2 = 'general' AND c.role <> 'encarregado' AND COALESCE(c.cost_center, 'assistencia_tecnica') = 'assistencia_tecnica')
+           OR ($2 = 'post_work' AND c.role <> 'encarregado' AND c.cost_center = 'pos_obra'))
          AND ($3::bigint IS NULL OR c.id = $3::bigint)
        ORDER BY p.starts_at, c.id`,
       [date, programmingType, colId],
@@ -301,7 +303,7 @@ export async function generateSchedulePdf({
   data,
 }: {
   date: string
-  programmingType: 'general' | 'foreman'
+  programmingType: 'general' | 'foreman' | 'post_work'
   collaboratorId?: string | number | null
   recipientName?: string | null
   data?: DailyProgrammingData
@@ -391,7 +393,7 @@ export async function generateSchedulePdf({
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(16)
       doc.text(
-        `AC Engenharia · ATech | ${programmingType === 'general' ? 'Programação Geral' : 'Programação de Encarregados'}`,
+        `AC Engenharia · ATech | ${programmingType === 'general' ? 'Programação Assistência Técnica' : programmingType === 'post_work' ? 'Programação Pós-Obra' : 'Programação de Encarregados'}`,
         textX,
         16,
       )
@@ -412,7 +414,7 @@ export async function generateSchedulePdf({
       doc.setFontSize(8)
       doc.setTextColor(49, 87, 119)
       doc.text(
-        `ATECH  /  ${programmingType === 'general' ? 'PROGRAMAÇÃO GERAL' : 'PROGRAMAÇÃO DE ENCARREGADOS'}  /  ${dateLabel.toUpperCase()}`,
+        `ATECH  /  ${programmingType === 'general' ? 'PROGRAMAÇÃO ASSISTÊNCIA TÉCNICA' : programmingType === 'post_work' ? 'PROGRAMAÇÃO PÓS-OBRA' : 'PROGRAMAÇÃO DE ENCARREGADOS'}  /  ${dateLabel.toUpperCase()}`,
         margin,
         y,
       )

@@ -89,6 +89,7 @@ interface CollaboratorReport {
   nickname: string
   registrationNumber: string
   role: CollaboratorRole
+  costCenter?: 'assistencia_tecnica' | 'pos_obra'
   cpf: string
   phone: string
   gender: CollaboratorGender
@@ -246,6 +247,7 @@ interface CollaboratorForm {
   nickname: string
   registrationNumber: string
   role: CollaboratorRole
+  costCenter?: 'assistencia_tecnica' | 'pos_obra'
   cpf: string
   phone: string
   gender: CollaboratorGender
@@ -266,6 +268,7 @@ function emptyForm(): CollaboratorForm {
     nickname: '',
     registrationNumber: '',
     role: 'pedreiro',
+    costCenter: 'assistencia_tecnica',
     cpf: '',
     phone: '',
     gender: 'nao_informar',
@@ -1063,6 +1066,7 @@ export default function CollaboratorsPage({
       nickname: report.nickname,
       registrationNumber: report.registrationNumber,
       role: report.role,
+      costCenter: report.costCenter || 'assistencia_tecnica',
       cpf: formatCpf(report.cpf),
       phone: report.phone,
       gender: report.gender,
@@ -1779,6 +1783,7 @@ export default function CollaboratorsPage({
                 <dl className="report-grid">
                   <div><dt>Nome</dt><dd>{report.name}</dd></div><div><dt>Apelido</dt><dd>{report.nickname || 'Não informado'}</dd></div>
                   <div><dt>Matrícula</dt><dd>{report.registrationNumber || 'Não informada'}</dd></div>
+                  <div><dt>Centro de Custo</dt><dd>{report.costCenter === 'pos_obra' ? 'Pós-obra' : 'Assistência Técnica'}</dd></div>
                   <div><dt>Função</dt><dd>{roleLabel(report.role, roleOptions)}</dd></div><div><dt>CPF · dado pessoal</dt><dd className="sensitive-value">{report.cpf ? formatCpf(report.cpf) : 'Não informado'}</dd></div>
                   <div><dt>Telefone · dado pessoal</dt><dd className="sensitive-value">{report.phone || 'Não informado'}</dd></div><div><dt>Gênero</dt><dd>{genderOptions.find((gender) => gender.value === report.gender)?.label ?? report.gender}</dd></div>
                   <div><dt>Data de nascimento</dt><dd>{formatDate(report.birthDate)}</dd></div><div><dt>Data de admissão</dt><dd>{formatDate(report.admissionDate)}</dd></div>
@@ -1865,6 +1870,16 @@ export default function CollaboratorsPage({
 
                 </div>
                 <label className="form-field"><span>Matrícula</span><input maxLength={80} value={form.registrationNumber} onChange={(event) => updateField('registrationNumber', event.target.value)} /></label>
+                <label className="form-field">
+                  <span>Centro de Custo</span>
+                  <select
+                    value={form.costCenter}
+                    onChange={(event) => updateField('costCenter', event.target.value === 'pos_obra' ? 'pos_obra' : 'assistencia_tecnica')}
+                  >
+                    <option value="assistencia_tecnica">Assistência Técnica</option>
+                    <option value="pos_obra">Pós-obra</option>
+                  </select>
+                </label>
                 <label className="form-field"><span>Apelido</span><input maxLength={80} value={form.nickname} onChange={(event) => updateField('nickname', event.target.value)} /></label>
                 <label className="form-field"><span>Função *</span><select value={form.role} onChange={(event) => updateField('role', event.target.value)}>{roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label>
                 <div className="form-field form-field-wide role-creation">
